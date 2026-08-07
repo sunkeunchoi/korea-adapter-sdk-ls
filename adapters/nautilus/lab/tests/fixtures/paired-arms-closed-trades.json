@@ -1,0 +1,5829 @@
+{
+ "_comment": "Closed-trade slices of the head-v35 run and the six 2026-07-31 cost-aware off-flip arms, extracted 2026-08-07 for plan 2026-08-07-001 U2. `data/` is gitignored, so this fixture is the only way CI can hold the distribution the paired-power verdict rests on — the same reason `v35-closed-trades.json` exists. Fields are verbatim from each run's performance.json and manifest.json; `session` is the KST date of ts_opened. NOTHING HERE IS DERIVED. `param_diff` is the manifest param diff against the head with `strategy_version` excluded, recorded AS EXTRACTED — the v95 arm carries TWO entries because it flips `risk_per_trade_krw` and `ratio_atr_alpha` together, while the frozen record labels it by the first alone (KTD6: report the confound, do not drop the arm). `frozen_record` cites config/sample-margin.json's `cross_trial_arms` verbatim, including its four-decimal rounding, so a recomputation can be checked against it.",
+ "extracted_utc": "2026-08-07",
+ "plan": "docs/plans/2026-08-07-001-docs-orb-sample-acquisition-decision-plan.md",
+ "head": {
+  "run_id": "20260731T023138Z-backtest-orb-v35",
+  "strategy_version": 35,
+  "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+  "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+  "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+  "trade_records": 113,
+  "closed_trades": 111,
+  "trades": [
+   {
+    "session": "20260521",
+    "realized_r": -1.18796,
+    "risk_capital": 180000.0,
+    "realized_pnl": -213832.8
+   },
+   {
+    "session": "20260522",
+    "realized_r": -0.7616919999999999,
+    "risk_capital": 275000.0,
+    "realized_pnl": -209465.3
+   },
+   {
+    "session": "20260522",
+    "realized_r": -0.7260988888888888,
+    "risk_capital": 292500.0,
+    "realized_pnl": -212383.925
+   },
+   {
+    "session": "20260526",
+    "realized_r": 0.1933864077669903,
+    "risk_capital": 206000.0,
+    "realized_pnl": 39837.6
+   },
+   {
+    "session": "20260526",
+    "realized_r": 0.7258116279069767,
+    "risk_capital": 172000.0,
+    "realized_pnl": 124839.6
+   },
+   {
+    "session": "20260526",
+    "realized_r": 0.8521474137931034,
+    "risk_capital": 290000.0,
+    "realized_pnl": 247122.75
+   },
+   {
+    "session": "20260526",
+    "realized_r": 1.00839375,
+    "risk_capital": 288000.0,
+    "realized_pnl": 290417.4
+   },
+   {
+    "session": "20260527",
+    "realized_r": 0.8938191666666667,
+    "risk_capital": 240000.0,
+    "realized_pnl": 214516.6
+   },
+   {
+    "session": "20260528",
+    "realized_r": -0.102014,
+    "risk_capital": 275000.0,
+    "realized_pnl": -28053.85
+   },
+   {
+    "session": "20260528",
+    "realized_r": -0.07705000000000001,
+    "risk_capital": 288000.0,
+    "realized_pnl": -22190.4
+   },
+   {
+    "session": "20260528",
+    "realized_r": 0.01914607843137255,
+    "risk_capital": 280500.0,
+    "realized_pnl": 5370.475
+   },
+   {
+    "session": "20260529",
+    "realized_r": 0.919098717948718,
+    "risk_capital": 234000.0,
+    "realized_pnl": 215069.1
+   },
+   {
+    "session": "20260529",
+    "realized_r": -1.0955178571428572,
+    "risk_capital": 224000.0,
+    "realized_pnl": -245396.0
+   },
+   {
+    "session": "20260529",
+    "realized_r": -1.02482,
+    "risk_capital": 275000.0,
+    "realized_pnl": -281825.5
+   },
+   {
+    "session": "20260529",
+    "realized_r": 0.253321875,
+    "risk_capital": 296000.0,
+    "realized_pnl": 74983.275
+   },
+   {
+    "session": "20260529",
+    "realized_r": -0.14653194444444442,
+    "risk_capital": 288000.0,
+    "realized_pnl": -42201.2
+   },
+   {
+    "session": "20260529",
+    "realized_r": 1.006819696969697,
+    "risk_capital": 297000.0,
+    "realized_pnl": 299025.45
+   },
+   {
+    "session": "20260529",
+    "realized_r": 0.9320516129032258,
+    "risk_capital": 294500.0,
+    "realized_pnl": 274489.2
+   },
+   {
+    "session": "20260529",
+    "realized_r": 0.43699016393442625,
+    "risk_capital": 274500.0,
+    "realized_pnl": 119953.8
+   },
+   {
+    "session": "20260601",
+    "realized_r": -0.07864865384615385,
+    "risk_capital": 260000.0,
+    "realized_pnl": -20448.65
+   },
+   {
+    "session": "20260601",
+    "realized_r": 0.7830142857142858,
+    "risk_capital": 294000.0,
+    "realized_pnl": 230206.2
+   },
+   {
+    "session": "20260601",
+    "realized_r": -0.0030517857142857143,
+    "risk_capital": 280000.0,
+    "realized_pnl": -854.5
+   },
+   {
+    "session": "20260601",
+    "realized_r": -1.0248041666666665,
+    "risk_capital": 294000.0,
+    "realized_pnl": -301292.425
+   },
+   {
+    "session": "20260601",
+    "realized_r": 0.8755346153846154,
+    "risk_capital": 299000.0,
+    "realized_pnl": 261784.85
+   },
+   {
+    "session": "20260601",
+    "realized_r": -0.09046666666666667,
+    "risk_capital": 247500.0,
+    "realized_pnl": -22390.5
+   },
+   {
+    "session": "20260604",
+    "realized_r": 0.11668913043478261,
+    "risk_capital": 299000.0,
+    "realized_pnl": 34890.05
+   },
+   {
+    "session": "20260604",
+    "realized_r": -0.511366,
+    "risk_capital": 298750.0,
+    "realized_pnl": -152770.5925
+   },
+   {
+    "session": "20260604",
+    "realized_r": -0.04190912977867204,
+    "risk_capital": 298200.0,
+    "realized_pnl": -12497.302500000002
+   },
+   {
+    "session": "20260604",
+    "realized_r": 0.8489,
+    "risk_capital": 288000.0,
+    "realized_pnl": 244483.2
+   },
+   {
+    "session": "20260604",
+    "realized_r": -0.4485922764227642,
+    "risk_capital": 295200.0,
+    "realized_pnl": -132424.44
+   },
+   {
+    "session": "20260604",
+    "realized_r": 0.0036659999999999987,
+    "risk_capital": 275000.0,
+    "realized_pnl": 1008.1499999999996
+   },
+   {
+    "session": "20260609",
+    "realized_r": 0.1085127659574468,
+    "risk_capital": 291400.0,
+    "realized_pnl": 31620.62
+   },
+   {
+    "session": "20260609",
+    "realized_r": -0.11364777777777778,
+    "risk_capital": 297000.0,
+    "realized_pnl": -33753.39
+   },
+   {
+    "session": "20260609",
+    "realized_r": -0.04400384615384616,
+    "risk_capital": 296400.0,
+    "realized_pnl": -13042.740000000002
+   },
+   {
+    "session": "20260609",
+    "realized_r": -0.14489772727272726,
+    "risk_capital": 297000.0,
+    "realized_pnl": -43034.625
+   },
+   {
+    "session": "20260609",
+    "realized_r": -0.5402692307692307,
+    "risk_capital": 299000.0,
+    "realized_pnl": -161540.5
+   },
+   {
+    "session": "20260609",
+    "realized_r": 0.8030925,
+    "risk_capital": 280000.0,
+    "realized_pnl": 224865.9
+   },
+   {
+    "session": "20260609",
+    "realized_r": 0.5896366071428571,
+    "risk_capital": 224000.0,
+    "realized_pnl": 132078.6
+   },
+   {
+    "session": "20260609",
+    "realized_r": -0.5167264705882353,
+    "risk_capital": 289000.0,
+    "realized_pnl": -149333.95
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.09272631578947368,
+    "risk_capital": 247000.0,
+    "realized_pnl": -22903.4
+   },
+   {
+    "session": "20260612",
+    "realized_r": 0.022735000000000005,
+    "risk_capital": 290000.0,
+    "realized_pnl": 6593.1500000000015
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.9382264705882353,
+    "risk_capital": 297500.0,
+    "realized_pnl": -279122.375
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.066825,
+    "risk_capital": 238000.0,
+    "realized_pnl": -15904.35
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.014074999999999999,
+    "risk_capital": 330300.0,
+    "realized_pnl": -4648.9725
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.05796,
+    "risk_capital": 200000.0,
+    "realized_pnl": -11592.0
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.006925,
+    "risk_capital": 210000.0,
+    "realized_pnl": -1454.25
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.058468421052631586,
+    "risk_capital": 209000.0,
+    "realized_pnl": -12219.900000000001
+   },
+   {
+    "session": "20260612",
+    "realized_r": 0.9205560606060605,
+    "risk_capital": 264000.0,
+    "realized_pnl": 243026.8
+   },
+   {
+    "session": "20260612",
+    "realized_r": -0.074796,
+    "risk_capital": 275000.0,
+    "realized_pnl": -20568.9
+   },
+   {
+    "session": "20260612",
+    "realized_r": 0.014596428571428573,
+    "risk_capital": 224000.0,
+    "realized_pnl": 3269.6000000000004
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.6107732558139535,
+    "risk_capital": 172000.0,
+    "realized_pnl": -105053.0
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.6034645833333333,
+    "risk_capital": 264000.0,
+    "realized_pnl": -159314.65
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.03356296296296296,
+    "risk_capital": 135000.0,
+    "realized_pnl": -4531.0
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.005643103448275865,
+    "risk_capital": 232000.0,
+    "realized_pnl": -1309.2000000000007
+   },
+   {
+    "session": "20260615",
+    "realized_r": 0.19853559322033898,
+    "risk_capital": 206500.0,
+    "realized_pnl": 40997.6
+   },
+   {
+    "session": "20260615",
+    "realized_r": 0.08998676470588235,
+    "risk_capital": 238000.0,
+    "realized_pnl": 21416.85
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.12388166666666667,
+    "risk_capital": 252000.0,
+    "realized_pnl": -31218.18
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.6146908163265306,
+    "risk_capital": 196000.0,
+    "realized_pnl": -120479.4
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.6310551282051282,
+    "risk_capital": 234000.0,
+    "realized_pnl": -147666.9
+   },
+   {
+    "session": "20260615",
+    "realized_r": -0.17109444444444447,
+    "risk_capital": 126000.0,
+    "realized_pnl": -21557.9
+   },
+   {
+    "session": "20260618",
+    "realized_r": 0.9271918604651163,
+    "risk_capital": 258000.0,
+    "realized_pnl": 239215.5
+   },
+   {
+    "session": "20260618",
+    "realized_r": 0.271975,
+    "risk_capital": 280000.0,
+    "realized_pnl": 76153.0
+   },
+   {
+    "session": "20260619",
+    "realized_r": -0.07232012987012987,
+    "risk_capital": 231000.0,
+    "realized_pnl": -16705.95
+   },
+   {
+    "session": "20260619",
+    "realized_r": 0.124626267281106,
+    "risk_capital": 217000.0,
+    "realized_pnl": 27043.9
+   },
+   {
+    "session": "20260619",
+    "realized_r": -0.05497741935483871,
+    "risk_capital": 310000.0,
+    "realized_pnl": -17043.0
+   },
+   {
+    "session": "20260619",
+    "realized_r": -0.060221126760563376,
+    "risk_capital": 284000.0,
+    "realized_pnl": -17102.8
+   },
+   {
+    "session": "20260624",
+    "realized_r": -1.1096233944954128,
+    "risk_capital": 218000.0,
+    "realized_pnl": -241897.9
+   },
+   {
+    "session": "20260625",
+    "realized_r": 0.8874217391304348,
+    "risk_capital": 207000.0,
+    "realized_pnl": 183696.3
+   },
+   {
+    "session": "20260625",
+    "realized_r": -1.1877392857142857,
+    "risk_capital": 189000.0,
+    "realized_pnl": -224482.725
+   },
+   {
+    "session": "20260625",
+    "realized_r": 0.9273166666666667,
+    "risk_capital": 307500.0,
+    "realized_pnl": 285149.875
+   },
+   {
+    "session": "20260625",
+    "realized_r": -0.023314444444444443,
+    "risk_capital": 249750.0,
+    "realized_pnl": -5822.782499999999
+   },
+   {
+    "session": "20260625",
+    "realized_r": -0.11130599999999999,
+    "risk_capital": 321250.0,
+    "realized_pnl": -35757.0525
+   },
+   {
+    "session": "20260625",
+    "realized_r": -0.5850645833333333,
+    "risk_capital": 264000.0,
+    "realized_pnl": -154457.05
+   },
+   {
+    "session": "20260625",
+    "realized_r": -1.0537523076923077,
+    "risk_capital": 247000.0,
+    "realized_pnl": -260276.82
+   },
+   {
+    "session": "20260629",
+    "realized_r": -0.10450689655172414,
+    "risk_capital": 203000.0,
+    "realized_pnl": -21214.9
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.9144692307692308,
+    "risk_capital": 347100.0,
+    "realized_pnl": 317412.27
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.8921553191489362,
+    "risk_capital": 267900.0,
+    "realized_pnl": 239008.41
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.19441354166666666,
+    "risk_capital": 211200.0,
+    "realized_pnl": 41060.14
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.9162454545454546,
+    "risk_capital": 247500.0,
+    "realized_pnl": 226770.75
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.8874592105263158,
+    "risk_capital": 266000.0,
+    "realized_pnl": 236064.15
+   },
+   {
+    "session": "20260629",
+    "realized_r": 0.8393448275862069,
+    "risk_capital": 304500.0,
+    "realized_pnl": 255580.5
+   },
+   {
+    "session": "20260630",
+    "realized_r": -0.24423035714285715,
+    "risk_capital": 347200.0,
+    "realized_pnl": -84796.78
+   },
+   {
+    "session": "20260701",
+    "realized_r": -0.15681309523809525,
+    "risk_capital": 210000.0,
+    "realized_pnl": -32930.75
+   },
+   {
+    "session": "20260701",
+    "realized_r": 0.002983333333333335,
+    "risk_capital": 234000.0,
+    "realized_pnl": 698.1000000000004
+   },
+   {
+    "session": "20260701",
+    "realized_r": -1.055897619047619,
+    "risk_capital": 252000.0,
+    "realized_pnl": -266086.2
+   },
+   {
+    "session": "20260703",
+    "realized_r": 0.8731842105263158,
+    "risk_capital": 247000.0,
+    "realized_pnl": 215676.5
+   },
+   {
+    "session": "20260703",
+    "realized_r": 0.8792597222222222,
+    "risk_capital": 259200.0,
+    "realized_pnl": 227904.12
+   },
+   {
+    "session": "20260703",
+    "realized_r": -0.04391969696969696,
+    "risk_capital": 306900.0,
+    "realized_pnl": -13478.954999999998
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0681975,
+    "risk_capital": 180000.0,
+    "realized_pnl": -192275.55
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0913967741935484,
+    "risk_capital": 201500.0,
+    "realized_pnl": -219916.45
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0584166666666666,
+    "risk_capital": 192000.0,
+    "realized_pnl": -203216.0
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0070652173913044,
+    "risk_capital": 210220.0,
+    "realized_pnl": -211705.25
+   },
+   {
+    "session": "20260709",
+    "realized_r": -0.12876612903225806,
+    "risk_capital": 201500.0,
+    "realized_pnl": -25946.375
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0520169642857142,
+    "risk_capital": 210000.0,
+    "realized_pnl": -220923.5625
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.0555345195729537,
+    "risk_capital": 140500.0,
+    "realized_pnl": -148302.6
+   },
+   {
+    "session": "20260709",
+    "realized_r": -1.2208516949152541,
+    "risk_capital": 177000.0,
+    "realized_pnl": -216090.75
+   },
+   {
+    "session": "20260710",
+    "realized_r": 0.864255,
+    "risk_capital": 180000.0,
+    "realized_pnl": 155565.9
+   },
+   {
+    "session": "20260710",
+    "realized_r": -0.058235999999999996,
+    "risk_capital": 350000.0,
+    "realized_pnl": -20382.6
+   },
+   {
+    "session": "20260710",
+    "realized_r": 0.8757729166666667,
+    "risk_capital": 254400.0,
+    "realized_pnl": 222796.63
+   },
+   {
+    "session": "20260710",
+    "realized_r": 0.22865666666666667,
+    "risk_capital": 210000.0,
+    "realized_pnl": 48017.9
+   },
+   {
+    "session": "20260710",
+    "realized_r": 0.00545135135135135,
+    "risk_capital": 259000.0,
+    "realized_pnl": 1411.8999999999996
+   },
+   {
+    "session": "20260710",
+    "realized_r": -0.06286666666666667,
+    "risk_capital": 192000.0,
+    "realized_pnl": -12070.400000000001
+   },
+   {
+    "session": "20260710",
+    "realized_r": -0.03433653846153846,
+    "risk_capital": 208000.0,
+    "realized_pnl": -7142.0
+   },
+   {
+    "session": "20260710",
+    "realized_r": -0.09013150684931506,
+    "risk_capital": 284700.0,
+    "realized_pnl": -25660.44
+   },
+   {
+    "session": "20260713",
+    "realized_r": -0.017851250000000003,
+    "risk_capital": 248000.0,
+    "realized_pnl": -4427.110000000001
+   },
+   {
+    "session": "20260713",
+    "realized_r": 0.89240375,
+    "risk_capital": 284000.0,
+    "realized_pnl": 253442.665
+   },
+   {
+    "session": "20260713",
+    "realized_r": -1.0426158536585366,
+    "risk_capital": 266500.0,
+    "realized_pnl": -277857.125
+   },
+   {
+    "session": "20260715",
+    "realized_r": 0.10968285714285715,
+    "risk_capital": 210000.0,
+    "realized_pnl": 23033.4
+   },
+   {
+    "session": "20260715",
+    "realized_r": 0.029762195121951218,
+    "risk_capital": 205000.0,
+    "realized_pnl": 6101.25
+   },
+   {
+    "session": "20260715",
+    "realized_r": -0.6762181818181818,
+    "risk_capital": 173800.0,
+    "realized_pnl": -117526.72
+   },
+   {
+    "session": "20260722",
+    "realized_r": -0.5465965517241379,
+    "risk_capital": 232000.0,
+    "realized_pnl": -126810.4
+   }
+  ],
+  "frozen_record": {
+   "cross_trial_arms_index": 0,
+   "arm": "v35 baseline (all six levers ON)",
+   "net_ror": -0.0006
+  }
+ },
+ "arms": {
+  "92": {
+   "run_id": "20260731T023248Z-backtest-orb-v92",
+   "strategy_version": 92,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 128,
+   "closed_trades": 126,
+   "trades": [
+    {
+     "session": "20260521",
+     "realized_r": -0.9091153846153847,
+     "risk_capital": 156000.0,
+     "realized_pnl": -141822.0
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.746756862745098,
+     "risk_capital": 280500.0,
+     "realized_pnl": -209465.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 292500.0,
+     "realized_pnl": -212383.925
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1879132075471698,
+     "risk_capital": 212000.0,
+     "realized_pnl": 39837.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.176175,
+     "risk_capital": 286000.0,
+     "realized_pnl": -50386.05
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.5978444444444444,
+     "risk_capital": 148500.0,
+     "realized_pnl": -88779.9
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8377042372881356,
+     "risk_capital": 295000.0,
+     "realized_pnl": 247122.75
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.9778363636363637,
+     "risk_capital": 297000.0,
+     "realized_pnl": 290417.4
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260527",
+     "realized_r": -1.0606576923076922,
+     "risk_capital": 286000.0,
+     "realized_pnl": -303348.1
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.09041481481481482,
+     "risk_capital": 297000.0,
+     "realized_pnl": 26853.2
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.07705000000000001,
+     "risk_capital": 288000.0,
+     "realized_pnl": -22190.4
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.06501195652173913,
+     "risk_capital": 299000.0,
+     "realized_pnl": 19438.575
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.914821511627907,
+     "risk_capital": 258000.0,
+     "realized_pnl": 236023.95
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.076298245614035,
+     "risk_capital": 228000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 275000.0,
+     "realized_pnl": -281825.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.35608529411764706,
+     "risk_capital": 297500.0,
+     "realized_pnl": 105935.375
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.02092866666666666,
+     "risk_capital": 225000.0,
+     "realized_pnl": -4708.949999999999
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 297000.0,
+     "realized_pnl": 299025.45
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.060989062499999996,
+     "risk_capital": 288000.0,
+     "realized_pnl": 17564.85
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43213359375000004,
+     "risk_capital": 288000.0,
+     "realized_pnl": 124454.475
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.6385223880597015,
+     "risk_capital": 268000.0,
+     "realized_pnl": -171124.0
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": 230206.2
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.0029982456140350876,
+     "risk_capital": 285000.0,
+     "realized_pnl": -854.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666665,
+     "risk_capital": 294000.0,
+     "realized_pnl": -301292.425
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846154,
+     "risk_capital": 299000.0,
+     "realized_pnl": 261784.85
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.023790000000000006,
+     "risk_capital": 247500.0,
+     "realized_pnl": -5888.0250000000015
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.07034583333333333,
+     "risk_capital": 297600.0,
+     "realized_pnl": 20934.92
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.49169807692307693,
+     "risk_capital": 299000.0,
+     "realized_pnl": -147017.725
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.04190912977867204,
+     "risk_capital": 298200.0,
+     "realized_pnl": -12497.302500000002
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.9565893939393939,
+     "risk_capital": 297000.0,
+     "realized_pnl": 284107.05
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4344633858267717,
+     "risk_capital": 298450.0,
+     "realized_pnl": -129665.5975
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.04199230769230769,
+     "risk_capital": 286000.0,
+     "realized_pnl": 12009.8
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.10200200000000001,
+     "risk_capital": 290000.0,
+     "realized_pnl": 29580.58
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8679576923076924,
+     "risk_capital": 208000.0,
+     "realized_pnl": 180535.2
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.7640294117647058,
+     "risk_capital": 297500.0,
+     "realized_pnl": -227298.75
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.10881170212765957,
+     "risk_capital": 296100.0,
+     "realized_pnl": -32219.145
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.031935000000000005,
+     "risk_capital": 296000.0,
+     "realized_pnl": 9452.760000000002
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.0256827868852459,
+     "risk_capital": 298900.0,
+     "realized_pnl": -7676.584999999999
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5320833333333334,
+     "risk_capital": 290400.0,
+     "realized_pnl": -154517.0
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.7300840909090909,
+     "risk_capital": 286000.0,
+     "realized_pnl": 208804.05
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.5844185840707965,
+     "risk_capital": 226000.0,
+     "realized_pnl": 132078.6
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5019628571428572,
+     "risk_capital": 297500.0,
+     "realized_pnl": -149333.95
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.9789404761904762,
+     "risk_capital": 294000.0,
+     "realized_pnl": 287808.5
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.09272631578947368,
+     "risk_capital": 247000.0,
+     "realized_pnl": -22903.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.024294736842105265,
+     "risk_capital": 275500.0,
+     "realized_pnl": 6693.200000000001
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.066825,
+     "risk_capital": 238000.0,
+     "realized_pnl": -15904.35
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.09194473684210526,
+     "risk_capital": 347700.0,
+     "realized_pnl": 31969.184999999998
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.02102692307692308,
+     "risk_capital": 208000.0,
+     "realized_pnl": 4373.6
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.12658333333333333,
+     "risk_capital": 210000.0,
+     "realized_pnl": 26582.5
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9613634615384614,
+     "risk_capital": 150800.0,
+     "realized_pnl": 144973.61
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.8964628571428571,
+     "risk_capital": 280000.0,
+     "realized_pnl": 251009.6
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.074796,
+     "risk_capital": 275000.0,
+     "realized_pnl": -20568.9
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.014596428571428573,
+     "risk_capital": 224000.0,
+     "realized_pnl": 3269.6000000000004
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.5968920454545454,
+     "risk_capital": 176000.0,
+     "realized_pnl": -105053.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.5617916666666667,
+     "risk_capital": 264000.0,
+     "realized_pnl": -148313.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.25367105263157896,
+     "risk_capital": 237500.0,
+     "realized_pnl": -60246.875
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.06333275862068966,
+     "risk_capital": 232000.0,
+     "realized_pnl": 14693.199999999999
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 206500.0,
+     "realized_pnl": 40997.6
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.1194029411764706,
+     "risk_capital": 238000.0,
+     "realized_pnl": 28417.9
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265306,
+     "risk_capital": 196000.0,
+     "realized_pnl": -120479.4
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.4591117647058824,
+     "risk_capital": 238000.0,
+     "realized_pnl": -109268.6
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.05996666666666666,
+     "risk_capital": 126000.0,
+     "realized_pnl": -7555.799999999999
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.25727364864864866,
+     "risk_capital": 296000.0,
+     "realized_pnl": 76153.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.069608125,
+     "risk_capital": 240000.0,
+     "realized_pnl": -16705.95
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.124626267281106,
+     "risk_capital": 217000.0,
+     "realized_pnl": 27043.9
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.053259375,
+     "risk_capital": 320000.0,
+     "realized_pnl": -17043.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.05148749999999999,
+     "risk_capital": 288000.0,
+     "realized_pnl": 14828.399999999998
+    },
+    {
+     "session": "20260622",
+     "realized_r": 0.8770529411764705,
+     "risk_capital": 204000.0,
+     "realized_pnl": 178918.8
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.0995359090909091,
+     "risk_capital": 220000.0,
+     "realized_pnl": -241897.9
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8889992857142858,
+     "risk_capital": 210000.0,
+     "realized_pnl": 186689.85
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.1163,
+     "risk_capital": 189000.0,
+     "realized_pnl": -210980.7
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 307500.0,
+     "realized_pnl": 285149.875
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.022807608695652175,
+     "risk_capital": 248400.0,
+     "realized_pnl": -5665.41
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.007811111111111118,
+     "risk_capital": 346950.0,
+     "realized_pnl": 2710.0650000000023
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.561662,
+     "risk_capital": 250000.0,
+     "realized_pnl": -140415.5
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.10481000000000001,
+     "risk_capital": 210000.0,
+     "realized_pnl": 22010.100000000002
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0377863636363636,
+     "risk_capital": 244200.0,
+     "realized_pnl": -253427.43
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.72371,
+     "risk_capital": 267500.0,
+     "realized_pnl": -193592.425
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.9048,
+     "risk_capital": 232000.0,
+     "realized_pnl": -209913.6
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172414,
+     "risk_capital": 203000.0,
+     "realized_pnl": -21214.9
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8916074999999999,
+     "risk_capital": 348000.0,
+     "realized_pnl": 310279.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.23126836734693879,
+     "risk_capital": 210700.0,
+     "realized_pnl": 48728.245
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9137789473684211,
+     "risk_capital": 266000.0,
+     "realized_pnl": 243065.2
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.03285540540540541,
+     "risk_capital": 277500.0,
+     "realized_pnl": 9117.375
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.975774074074074,
+     "risk_capital": 310500.0,
+     "realized_pnl": 302977.85
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.2399456140350877,
+     "risk_capital": 353400.0,
+     "realized_pnl": -84796.78
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.15681309523809525,
+     "risk_capital": 210000.0,
+     "realized_pnl": -32930.75
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.1561964788732395,
+     "risk_capital": 213000.0,
+     "realized_pnl": -246269.85
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.002902702702702706,
+     "risk_capital": 233100.0,
+     "realized_pnl": 676.6200000000008
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.0079022727272726,
+     "risk_capital": 220000.0,
+     "realized_pnl": -221738.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8850571428571429,
+     "risk_capital": 252000.0,
+     "realized_pnl": 223034.4
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8792597222222222,
+     "risk_capital": 259200.0,
+     "realized_pnl": 227904.12
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.04391969696969696,
+     "risk_capital": 306900.0,
+     "realized_pnl": -13478.954999999998
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0506860655737704,
+     "risk_capital": 183000.0,
+     "realized_pnl": -192275.55
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0611,
+     "risk_capital": 210000.0,
+     "realized_pnl": -222831.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0174652173913044,
+     "risk_capital": 207000.0,
+     "realized_pnl": -210615.3
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.9265,
+     "risk_capital": 210250.0,
+     "realized_pnl": -194796.625
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 201500.0,
+     "realized_pnl": -25946.375
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0520169642857142,
+     "risk_capital": 210000.0,
+     "realized_pnl": -220923.5625
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0054413559322035,
+     "risk_capital": 147500.0,
+     "realized_pnl": -148302.6
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.196955357142857,
+     "risk_capital": 168000.0,
+     "realized_pnl": -201088.5
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8944701030927835,
+     "risk_capital": 194000.0,
+     "realized_pnl": 173527.2
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.05599615384615385,
+     "risk_capital": 351000.0,
+     "realized_pnl": -19654.65
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.09594761904761906,
+     "risk_capital": 231000.0,
+     "realized_pnl": 22163.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.04856590909090909,
+     "risk_capital": 254100.0,
+     "realized_pnl": 12340.5975
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.055857142857142855,
+     "risk_capital": 210000.0,
+     "realized_pnl": -11730.0
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.22865666666666667,
+     "risk_capital": 210000.0,
+     "realized_pnl": 48017.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.00545135135135135,
+     "risk_capital": 259000.0,
+     "realized_pnl": 1411.8999999999996
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.059482,
+     "risk_capital": 200000.0,
+     "realized_pnl": 11896.4
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03306481481481481,
+     "risk_capital": 207900.0,
+     "realized_pnl": -6874.174999999999
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.933995652173913,
+     "risk_capital": 253000.0,
+     "realized_pnl": -236300.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.5798127659574468,
+     "risk_capital": 188000.0,
+     "realized_pnl": -109004.8
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03632394366197183,
+     "risk_capital": 284000.0,
+     "realized_pnl": -10316.0
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.030515476190476187,
+     "risk_capital": 256200.0,
+     "realized_pnl": 7818.064999999999
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 266500.0,
+     "realized_pnl": -277857.125
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.9518966666666666,
+     "risk_capital": 225000.0,
+     "realized_pnl": -214176.75
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10663611111111111,
+     "risk_capital": 216000.0,
+     "realized_pnl": 23033.4
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.876825,
+     "risk_capital": 240000.0,
+     "realized_pnl": -210438.0
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.05161470588235294,
+     "risk_capital": 221000.0,
+     "realized_pnl": -11406.849999999999
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.5852954545454546,
+     "risk_capital": 173800.0,
+     "realized_pnl": -101724.35
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 232000.0,
+     "realized_pnl": -126810.4
+    }
+   ],
+   "param_diff": {
+    "entry_confirm": {
+     "head": 1.0,
+     "arm": 0.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 1,
+    "arm": "entry_confirm 1.0->0.0",
+    "net_ror": -0.0325
+   }
+  },
+  "93": {
+   "run_id": "20260731T023255Z-backtest-orb-v93",
+   "strategy_version": 93,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 130,
+   "closed_trades": 128,
+   "trades": [
+    {
+     "session": "20260521",
+     "realized_r": -1.18796,
+     "risk_capital": 180000.0,
+     "realized_pnl": -213832.8
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7616919999999999,
+     "risk_capital": 275000.0,
+     "realized_pnl": -209465.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 292500.0,
+     "realized_pnl": -212383.925
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1933864077669903,
+     "risk_capital": 206000.0,
+     "realized_pnl": 39837.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8521474137931034,
+     "risk_capital": 290000.0,
+     "realized_pnl": 247122.75
+    },
+    {
+     "session": "20260526",
+     "realized_r": 1.00839375,
+     "risk_capital": 288000.0,
+     "realized_pnl": 290417.4
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.102014,
+     "risk_capital": 275000.0,
+     "realized_pnl": -28053.85
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.07705000000000001,
+     "risk_capital": 288000.0,
+     "realized_pnl": -22190.4
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.01914607843137255,
+     "risk_capital": 280500.0,
+     "realized_pnl": 5370.475
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.919098717948718,
+     "risk_capital": 234000.0,
+     "realized_pnl": 215069.1
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.0955178571428572,
+     "risk_capital": 224000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 275000.0,
+     "realized_pnl": -281825.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.253321875,
+     "risk_capital": 296000.0,
+     "realized_pnl": 74983.275
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.14653194444444442,
+     "risk_capital": 288000.0,
+     "realized_pnl": -42201.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 297000.0,
+     "realized_pnl": 299025.45
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9320516129032258,
+     "risk_capital": 294500.0,
+     "realized_pnl": 274489.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43699016393442625,
+     "risk_capital": 274500.0,
+     "realized_pnl": 119953.8
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.07864865384615385,
+     "risk_capital": 260000.0,
+     "realized_pnl": -20448.65
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": 230206.2
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.0030517857142857143,
+     "risk_capital": 280000.0,
+     "realized_pnl": -854.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666665,
+     "risk_capital": 294000.0,
+     "realized_pnl": -301292.425
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846154,
+     "risk_capital": 299000.0,
+     "realized_pnl": 261784.85
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.09046666666666667,
+     "risk_capital": 247500.0,
+     "realized_pnl": -22390.5
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.11668913043478261,
+     "risk_capital": 299000.0,
+     "realized_pnl": 34890.05
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.511366,
+     "risk_capital": 298750.0,
+     "realized_pnl": -152770.5925
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.04190912977867204,
+     "risk_capital": 298200.0,
+     "realized_pnl": -12497.302500000002
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8489,
+     "risk_capital": 288000.0,
+     "realized_pnl": 244483.2
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4485922764227642,
+     "risk_capital": 295200.0,
+     "realized_pnl": -132424.44
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.0036659999999999987,
+     "risk_capital": 275000.0,
+     "realized_pnl": 1008.1499999999996
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.1085127659574468,
+     "risk_capital": 291400.0,
+     "realized_pnl": 31620.62
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.11364777777777778,
+     "risk_capital": 297000.0,
+     "realized_pnl": -33753.39
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.04400384615384616,
+     "risk_capital": 296400.0,
+     "realized_pnl": -13042.740000000002
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.14489772727272726,
+     "risk_capital": 297000.0,
+     "realized_pnl": -43034.625
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5402692307692307,
+     "risk_capital": 299000.0,
+     "realized_pnl": -161540.5
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8030925,
+     "risk_capital": 280000.0,
+     "realized_pnl": 224865.9
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.5896366071428571,
+     "risk_capital": 224000.0,
+     "realized_pnl": 132078.6
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5167264705882353,
+     "risk_capital": 289000.0,
+     "realized_pnl": -149333.95
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.09272631578947368,
+     "risk_capital": 247000.0,
+     "realized_pnl": -22903.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.022735000000000005,
+     "risk_capital": 290000.0,
+     "realized_pnl": 6593.1500000000015
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.9382264705882353,
+     "risk_capital": 297500.0,
+     "realized_pnl": -279122.375
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.066825,
+     "risk_capital": 238000.0,
+     "realized_pnl": -15904.35
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.014074999999999999,
+     "risk_capital": 330300.0,
+     "realized_pnl": -4648.9725
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.05796,
+     "risk_capital": 200000.0,
+     "realized_pnl": -11592.0
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.049167647058823524,
+     "risk_capital": 306000.0,
+     "realized_pnl": 15045.3
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.006925,
+     "risk_capital": 210000.0,
+     "realized_pnl": -1454.25
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9205560606060605,
+     "risk_capital": 264000.0,
+     "realized_pnl": 243026.8
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.074796,
+     "risk_capital": 275000.0,
+     "realized_pnl": -20568.9
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.014596428571428573,
+     "risk_capital": 224000.0,
+     "realized_pnl": 3269.6000000000004
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6107732558139535,
+     "risk_capital": 172000.0,
+     "realized_pnl": -105053.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.005643103448275865,
+     "risk_capital": 232000.0,
+     "realized_pnl": -1309.2000000000007
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.06519310344827586,
+     "risk_capital": 352350.0,
+     "realized_pnl": -22970.79
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 206500.0,
+     "realized_pnl": 40997.6
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.08998676470588235,
+     "risk_capital": 238000.0,
+     "realized_pnl": 21416.85
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.05017755102040816,
+     "risk_capital": 421400.0,
+     "realized_pnl": -21144.82
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265306,
+     "risk_capital": 196000.0,
+     "realized_pnl": -120479.4
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.4644548780487805,
+     "risk_capital": 258300.0,
+     "realized_pnl": -119968.695
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6310551282051282,
+     "risk_capital": 234000.0,
+     "realized_pnl": -147666.9
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.1510653846153846,
+     "risk_capital": 286000.0,
+     "realized_pnl": -43204.7
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.2985265151515151,
+     "risk_capital": 330000.0,
+     "realized_pnl": -98513.75
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.271975,
+     "risk_capital": 280000.0,
+     "realized_pnl": 76153.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.07232012987012987,
+     "risk_capital": 231000.0,
+     "realized_pnl": -16705.95
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.033379487179487174,
+     "risk_capital": 273000.0,
+     "realized_pnl": -9112.599999999999
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.124626267281106,
+     "risk_capital": 217000.0,
+     "realized_pnl": 27043.9
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.6195215384615385,
+     "risk_capital": 260000.0,
+     "realized_pnl": -161075.6
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.05497741935483871,
+     "risk_capital": 310000.0,
+     "realized_pnl": -17043.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.060221126760563376,
+     "risk_capital": 284000.0,
+     "realized_pnl": -17102.8
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.1096233944954128,
+     "risk_capital": 218000.0,
+     "realized_pnl": -241897.9
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.0754936170212766,
+     "risk_capital": 282000.0,
+     "realized_pnl": -21289.2
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.7072204545454546,
+     "risk_capital": 176000.0,
+     "realized_pnl": -124470.8
+    },
+    {
+     "session": "20260624",
+     "realized_r": 0.010550704225352111,
+     "risk_capital": 282296.0,
+     "realized_pnl": 2978.4215999999997
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8874217391304348,
+     "risk_capital": 207000.0,
+     "realized_pnl": 183696.3
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.1877392857142857,
+     "risk_capital": 189000.0,
+     "realized_pnl": -224482.725
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 307500.0,
+     "realized_pnl": 285149.875
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.023314444444444443,
+     "risk_capital": 249750.0,
+     "realized_pnl": -5822.782499999999
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.11130599999999999,
+     "risk_capital": 321250.0,
+     "realized_pnl": -35757.0525
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.5850645833333333,
+     "risk_capital": 264000.0,
+     "realized_pnl": -154457.05
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.17962307692307694,
+     "risk_capital": 234000.0,
+     "realized_pnl": 42031.8
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0537523076923077,
+     "risk_capital": 247000.0,
+     "realized_pnl": -260276.82
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172414,
+     "risk_capital": 203000.0,
+     "realized_pnl": -21214.9
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9144692307692308,
+     "risk_capital": 347100.0,
+     "realized_pnl": 317412.27
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.0713594606273194,
+     "risk_capital": 393420.0,
+     "realized_pnl": -28074.239
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.19441354166666666,
+     "risk_capital": 211200.0,
+     "realized_pnl": 41060.14
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.5484904109589042,
+     "risk_capital": 292000.0,
+     "realized_pnl": 160159.2
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.09242045454545454,
+     "risk_capital": 206800.0,
+     "realized_pnl": -19112.55
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9162454545454546,
+     "risk_capital": 247500.0,
+     "realized_pnl": 226770.75
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8874592105263158,
+     "risk_capital": 266000.0,
+     "realized_pnl": 236064.15
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8393448275862069,
+     "risk_capital": 304500.0,
+     "realized_pnl": 255580.5
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.24423035714285715,
+     "risk_capital": 347200.0,
+     "realized_pnl": -84796.78
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.15681309523809525,
+     "risk_capital": 210000.0,
+     "realized_pnl": -32930.75
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.026925,
+     "risk_capital": 270000.0,
+     "realized_pnl": -7269.75
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.002983333333333335,
+     "risk_capital": 234000.0,
+     "realized_pnl": 698.1000000000004
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.055897619047619,
+     "risk_capital": 252000.0,
+     "realized_pnl": -266086.2
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.054071860465116285,
+     "risk_capital": 215000.0,
+     "realized_pnl": -11625.45
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8731842105263158,
+     "risk_capital": 247000.0,
+     "realized_pnl": 215676.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8792597222222222,
+     "risk_capital": 259200.0,
+     "realized_pnl": 227904.12
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.04391969696969696,
+     "risk_capital": 306900.0,
+     "realized_pnl": -13478.954999999998
+    },
+    {
+     "session": "20260706",
+     "realized_r": -0.9867971698113208,
+     "risk_capital": 254400.0,
+     "realized_pnl": -251041.2
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0681975,
+     "risk_capital": 180000.0,
+     "realized_pnl": -192275.55
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0913967741935484,
+     "risk_capital": 201500.0,
+     "realized_pnl": -219916.45
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0584166666666666,
+     "risk_capital": 192000.0,
+     "realized_pnl": -203216.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0070652173913044,
+     "risk_capital": 210220.0,
+     "realized_pnl": -211705.25
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 201500.0,
+     "realized_pnl": -25946.375
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0520169642857142,
+     "risk_capital": 210000.0,
+     "realized_pnl": -220923.5625
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0555345195729537,
+     "risk_capital": 140500.0,
+     "realized_pnl": -148302.6
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.2208516949152541,
+     "risk_capital": 177000.0,
+     "realized_pnl": -216090.75
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.864255,
+     "risk_capital": 180000.0,
+     "realized_pnl": 155565.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.058235999999999996,
+     "risk_capital": 350000.0,
+     "realized_pnl": -20382.6
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8757729166666667,
+     "risk_capital": 254400.0,
+     "realized_pnl": 222796.63
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.17364137931034482,
+     "risk_capital": 307400.0,
+     "realized_pnl": -53377.36
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.22865666666666667,
+     "risk_capital": 210000.0,
+     "realized_pnl": 48017.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.00545135135135135,
+     "risk_capital": 259000.0,
+     "realized_pnl": 1411.8999999999996
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.06286666666666667,
+     "risk_capital": 192000.0,
+     "realized_pnl": -12070.400000000001
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.034094444444444455,
+     "risk_capital": 367200.0,
+     "realized_pnl": -12519.480000000003
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03433653846153846,
+     "risk_capital": 208000.0,
+     "realized_pnl": -7142.0
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.09013150684931506,
+     "risk_capital": 284700.0,
+     "realized_pnl": -25660.44
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.017851250000000003,
+     "risk_capital": 248000.0,
+     "realized_pnl": -4427.110000000001
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.8982654929577464,
+     "risk_capital": 213000.0,
+     "realized_pnl": -191330.55
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 266500.0,
+     "realized_pnl": -277857.125
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10968285714285715,
+     "risk_capital": 210000.0,
+     "realized_pnl": 23033.4
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.029762195121951218,
+     "risk_capital": 205000.0,
+     "realized_pnl": 6101.25
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.6762181818181818,
+     "risk_capital": 173800.0,
+     "realized_pnl": -117526.72
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 232000.0,
+     "realized_pnl": -126810.4
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.1344195205479452,
+     "risk_capital": 321200.0,
+     "realized_pnl": -43175.55
+    }
+   ],
+   "param_diff": {
+    "or_width_max_atr": {
+     "head": 0.666,
+     "arm": 0.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 2,
+    "arm": "or_width_max_atr 0.666->0.0",
+    "net_ror": -0.0243
+   }
+  },
+  "94": {
+   "run_id": "20260731T023302Z-backtest-orb-v94",
+   "strategy_version": 94,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 106,
+   "closed_trades": 104,
+   "trades": [
+    {
+     "session": "20260521",
+     "realized_r": -1.18796,
+     "risk_capital": 180000.0,
+     "realized_pnl": -213832.8
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7616919999999999,
+     "risk_capital": 275000.0,
+     "realized_pnl": -209465.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 292500.0,
+     "realized_pnl": -212383.925
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1933864077669903,
+     "risk_capital": 206000.0,
+     "realized_pnl": 39837.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8521474137931034,
+     "risk_capital": 290000.0,
+     "realized_pnl": 247122.75
+    },
+    {
+     "session": "20260526",
+     "realized_r": 1.00839375,
+     "risk_capital": 288000.0,
+     "realized_pnl": 290417.4
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260528",
+     "realized_r": -1.05995,
+     "risk_capital": 275000.0,
+     "realized_pnl": -291486.25
+    },
+    {
+     "session": "20260528",
+     "realized_r": -1.0333229166666666,
+     "risk_capital": 288000.0,
+     "realized_pnl": -297597.0
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.01914607843137255,
+     "risk_capital": 280500.0,
+     "realized_pnl": 5370.475
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.919098717948718,
+     "risk_capital": 234000.0,
+     "realized_pnl": 215069.1
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.0955178571428572,
+     "risk_capital": 224000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 275000.0,
+     "realized_pnl": -281825.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.253321875,
+     "risk_capital": 296000.0,
+     "realized_pnl": 74983.275
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9621902777777778,
+     "risk_capital": 288000.0,
+     "realized_pnl": 277110.8
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 297000.0,
+     "realized_pnl": 299025.45
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9320516129032258,
+     "risk_capital": 294500.0,
+     "realized_pnl": 274489.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43699016393442625,
+     "risk_capital": 274500.0,
+     "realized_pnl": 119953.8
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.6581692307692307,
+     "risk_capital": 260000.0,
+     "realized_pnl": -171124.0
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": 230206.2
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.4307017857142857,
+     "risk_capital": 280000.0,
+     "realized_pnl": -120596.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666665,
+     "risk_capital": 294000.0,
+     "realized_pnl": -301292.425
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846154,
+     "risk_capital": 299000.0,
+     "realized_pnl": 261784.85
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.4230833333333333,
+     "risk_capital": 247500.0,
+     "realized_pnl": -104713.125
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.11668913043478261,
+     "risk_capital": 299000.0,
+     "realized_pnl": 34890.05
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.511366,
+     "risk_capital": 298750.0,
+     "realized_pnl": -152770.5925
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.2881926978537894,
+     "risk_capital": 298200.0,
+     "realized_pnl": -85939.0625
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8489,
+     "risk_capital": 288000.0,
+     "realized_pnl": 244483.2
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4485922764227642,
+     "risk_capital": 295200.0,
+     "realized_pnl": -132424.44
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.694829,
+     "risk_capital": 275000.0,
+     "realized_pnl": -191077.975
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.1085127659574468,
+     "risk_capital": 291400.0,
+     "realized_pnl": 31620.62
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.11364777777777778,
+     "risk_capital": 297000.0,
+     "realized_pnl": -33753.39
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.26302692307692305,
+     "risk_capital": 296400.0,
+     "realized_pnl": 77961.18
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.14489772727272726,
+     "risk_capital": 297000.0,
+     "realized_pnl": -43034.625
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5402692307692307,
+     "risk_capital": 299000.0,
+     "realized_pnl": -161540.5
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8030925,
+     "risk_capital": 280000.0,
+     "realized_pnl": 224865.9
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5167264705882353,
+     "risk_capital": 289000.0,
+     "realized_pnl": -149333.95
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.8805026315789474,
+     "risk_capital": 247000.0,
+     "realized_pnl": -217484.15
+    },
+    {
+     "session": "20260612",
+     "realized_r": -1.0749,
+     "risk_capital": 290000.0,
+     "realized_pnl": -311721.0
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.6831441176470587,
+     "risk_capital": 238000.0,
+     "realized_pnl": -162588.3
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.7347444444444444,
+     "risk_capital": 330300.0,
+     "realized_pnl": -242686.09
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.776412,
+     "risk_capital": 200000.0,
+     "realized_pnl": -155282.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.848375,
+     "risk_capital": 210000.0,
+     "realized_pnl": 178158.75
+    },
+    {
+     "session": "20260612",
+     "realized_r": -1.192388,
+     "risk_capital": 275000.0,
+     "realized_pnl": -327906.7
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.3595973214285714,
+     "risk_capital": 224000.0,
+     "realized_pnl": -80549.8
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6107732558139535,
+     "risk_capital": 172000.0,
+     "realized_pnl": -105053.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.3063105263157895,
+     "risk_capital": 237500.0,
+     "realized_pnl": -72748.75
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.03356296296296296,
+     "risk_capital": 135000.0,
+     "realized_pnl": -4531.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.4416689655172414,
+     "risk_capital": 232000.0,
+     "realized_pnl": 102467.2
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 206500.0,
+     "realized_pnl": 40997.6
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.08998676470588235,
+     "risk_capital": 238000.0,
+     "realized_pnl": 21416.85
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.8739683333333333,
+     "risk_capital": 252000.0,
+     "realized_pnl": 220240.02
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265306,
+     "risk_capital": 196000.0,
+     "realized_pnl": -120479.4
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.271975,
+     "risk_capital": 280000.0,
+     "realized_pnl": 76153.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.8887428571428572,
+     "risk_capital": 231000.0,
+     "realized_pnl": -205299.6
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.9973801843317972,
+     "risk_capital": 217000.0,
+     "realized_pnl": -216431.5
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.98845,
+     "risk_capital": 310000.0,
+     "realized_pnl": -306419.5
+    },
+    {
+     "session": "20260619",
+     "realized_r": -1.156450704225352,
+     "risk_capital": 284000.0,
+     "realized_pnl": -328432.0
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.1096233944954128,
+     "risk_capital": 218000.0,
+     "realized_pnl": -241897.9
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8874217391304348,
+     "risk_capital": 207000.0,
+     "realized_pnl": 183696.3
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.1877392857142857,
+     "risk_capital": 189000.0,
+     "realized_pnl": -224482.725
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 307500.0,
+     "realized_pnl": 285149.875
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.3559311111111111,
+     "risk_capital": 249750.0,
+     "realized_pnl": -88893.795
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.008436000000000008,
+     "risk_capital": 321250.0,
+     "realized_pnl": 2710.0650000000023
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.5850645833333333,
+     "risk_capital": 264000.0,
+     "realized_pnl": -154457.05
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0537523076923077,
+     "risk_capital": 247000.0,
+     "realized_pnl": -260276.82
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172414,
+     "risk_capital": 203000.0,
+     "realized_pnl": -21214.9
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9144692307692308,
+     "risk_capital": 347100.0,
+     "realized_pnl": 317412.27
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.19441354166666666,
+     "risk_capital": 211200.0,
+     "realized_pnl": 41060.14
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9162454545454546,
+     "risk_capital": 247500.0,
+     "realized_pnl": 226770.75
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8874592105263158,
+     "risk_capital": 266000.0,
+     "realized_pnl": 236064.15
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8393448275862069,
+     "risk_capital": 304500.0,
+     "realized_pnl": 255580.5
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.24423035714285715,
+     "risk_capital": 347200.0,
+     "realized_pnl": -84796.78
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.8410369047619047,
+     "risk_capital": 210000.0,
+     "realized_pnl": 176617.75
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.16929166666666667,
+     "risk_capital": 234000.0,
+     "realized_pnl": 39614.25
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.055897619047619,
+     "risk_capital": 252000.0,
+     "realized_pnl": -266086.2
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8731842105263158,
+     "risk_capital": 247000.0,
+     "realized_pnl": 215676.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8792597222222222,
+     "risk_capital": 259200.0,
+     "realized_pnl": 227904.12
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.2584590909090909,
+     "risk_capital": 306900.0,
+     "realized_pnl": 79321.095
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0681975,
+     "risk_capital": 180000.0,
+     "realized_pnl": -192275.55
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0913967741935484,
+     "risk_capital": 201500.0,
+     "realized_pnl": -219916.45
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0584166666666666,
+     "risk_capital": 192000.0,
+     "realized_pnl": -203216.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0070652173913044,
+     "risk_capital": 210220.0,
+     "realized_pnl": -211705.25
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 201500.0,
+     "realized_pnl": -25946.375
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0520169642857142,
+     "risk_capital": 210000.0,
+     "realized_pnl": -220923.5625
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0555345195729537,
+     "risk_capital": 140500.0,
+     "realized_pnl": -148302.6
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.2208516949152541,
+     "risk_capital": 177000.0,
+     "realized_pnl": -216090.75
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.864255,
+     "risk_capital": 180000.0,
+     "realized_pnl": 155565.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.058235999999999996,
+     "risk_capital": 350000.0,
+     "realized_pnl": -20382.6
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8757729166666667,
+     "risk_capital": 254400.0,
+     "realized_pnl": 222796.63
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.7608433333333333,
+     "risk_capital": 210000.0,
+     "realized_pnl": 159777.1
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.2212027027027027,
+     "risk_capital": 259000.0,
+     "realized_pnl": 57291.5
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.07271538461538461,
+     "risk_capital": 208000.0,
+     "realized_pnl": -15124.8
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.049123972602739714,
+     "risk_capital": 284700.0,
+     "realized_pnl": -13985.594999999998
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.4419375,
+     "risk_capital": 248000.0,
+     "realized_pnl": -109600.5
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 266500.0,
+     "realized_pnl": -277857.125
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10968285714285715,
+     "risk_capital": 210000.0,
+     "realized_pnl": 23033.4
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.029762195121951218,
+     "risk_capital": 205000.0,
+     "realized_pnl": 6101.25
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.6762181818181818,
+     "risk_capital": 173800.0,
+     "realized_pnl": -117526.72
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 232000.0,
+     "realized_pnl": -126810.4
+    }
+   ],
+   "param_diff": {
+    "breakeven_trigger_r": {
+     "head": 0.41,
+     "arm": 0.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 3,
+    "arm": "breakeven_trigger_r 0.41->0.0",
+    "net_ror": -0.0817
+   }
+  },
+  "95": {
+   "run_id": "20260731T023309Z-backtest-orb-v95",
+   "strategy_version": 95,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 113,
+   "closed_trades": 111,
+   "trades": [
+    {
+     "session": "20260521",
+     "realized_r": -1.18796,
+     "risk_capital": 180000.0,
+     "realized_pnl": -213832.8
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7616919999999999,
+     "risk_capital": 525000.0,
+     "realized_pnl": -399888.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 585000.0,
+     "realized_pnl": -424767.85
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1933864077669903,
+     "risk_capital": 515000.0,
+     "realized_pnl": 99594.0
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8521474137931034,
+     "risk_capital": 348000.0,
+     "realized_pnl": 296547.3
+    },
+    {
+     "session": "20260526",
+     "realized_r": 1.00839375,
+     "risk_capital": 416000.0,
+     "realized_pnl": 419491.8
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.10201400000000001,
+     "risk_capital": 350000.0,
+     "realized_pnl": -35704.9
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.07705000000000001,
+     "risk_capital": 288000.0,
+     "realized_pnl": -22190.4
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.01914607843137255,
+     "risk_capital": 561000.0,
+     "realized_pnl": 10740.95
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.919098717948718,
+     "risk_capital": 390000.0,
+     "realized_pnl": 358448.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.0955178571428572,
+     "risk_capital": 224000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 325000.0,
+     "realized_pnl": -333066.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.25332187500000003,
+     "risk_capital": 392000.0,
+     "realized_pnl": 99302.175
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.14653194444444445,
+     "risk_capital": 360000.0,
+     "realized_pnl": -52751.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 429000.0,
+     "realized_pnl": 431925.65
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9320516129032257,
+     "risk_capital": 682000.0,
+     "realized_pnl": 635659.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43699016393442625,
+     "risk_capital": 1067500.0,
+     "realized_pnl": 466487.0
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.07864865384615385,
+     "risk_capital": 1040000.0,
+     "realized_pnl": -81794.6
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142857,
+     "risk_capital": 315000.0,
+     "realized_pnl": 246649.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.0030517857142857156,
+     "risk_capital": 588000.0,
+     "realized_pnl": -1794.4500000000007
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666667,
+     "risk_capital": 522000.0,
+     "realized_pnl": -534947.775
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846153,
+     "risk_capital": 494000.0,
+     "realized_pnl": 432514.1
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.09046666666666667,
+     "risk_capital": 247500.0,
+     "realized_pnl": -22390.5
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.11668913043478263,
+     "risk_capital": 400200.0,
+     "realized_pnl": 46698.990000000005
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.5113660000000001,
+     "risk_capital": 317500.0,
+     "realized_pnl": -162358.70500000002
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.04539182269995377,
+     "risk_capital": 432600.0,
+     "realized_pnl": -19636.5025
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8489,
+     "risk_capital": 594000.0,
+     "realized_pnl": 504246.6
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4485922764227642,
+     "risk_capital": 1230000.0,
+     "realized_pnl": -551768.5
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.003666,
+     "risk_capital": 625000.0,
+     "realized_pnl": 2291.25
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.10851276595744681,
+     "risk_capital": 573400.0,
+     "realized_pnl": 62221.22
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.11364777777777778,
+     "risk_capital": 486000.0,
+     "realized_pnl": -55232.82
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.04400384615384615,
+     "risk_capital": 327600.0,
+     "realized_pnl": -14415.66
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.1448977272727273,
+     "risk_capital": 587400.0,
+     "realized_pnl": -85112.925
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5402692307692307,
+     "risk_capital": 676000.0,
+     "realized_pnl": -365222.0
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8030925,
+     "risk_capital": 500000.0,
+     "realized_pnl": 401546.25
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.5896366071428571,
+     "risk_capital": 224000.0,
+     "realized_pnl": 132078.6
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5167264705882353,
+     "risk_capital": 476000.0,
+     "realized_pnl": -245961.8
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.09272631578947368,
+     "risk_capital": 247000.0,
+     "realized_pnl": -22903.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.022735000000000005,
+     "risk_capital": 290000.0,
+     "realized_pnl": 6593.1500000000015
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.9382264705882353,
+     "risk_capital": 391000.0,
+     "realized_pnl": -366846.55
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.066825,
+     "risk_capital": 612000.0,
+     "realized_pnl": -40896.899999999994
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.014074999999999999,
+     "risk_capital": 330300.0,
+     "realized_pnl": -4648.9725
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.05796,
+     "risk_capital": 375000.0,
+     "realized_pnl": -21735.0
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.006925000000000002,
+     "risk_capital": 294000.0,
+     "realized_pnl": -2035.9500000000007
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.05846842105263157,
+     "risk_capital": 389500.0,
+     "realized_pnl": -22773.449999999997
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9205560606060607,
+     "risk_capital": 297000.0,
+     "realized_pnl": 273405.15
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.07479600000000002,
+     "risk_capital": 300000.0,
+     "realized_pnl": -22438.800000000003
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.01459642857142857,
+     "risk_capital": 392000.0,
+     "realized_pnl": 5721.799999999999
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6107732558139535,
+     "risk_capital": 172000.0,
+     "realized_pnl": -105053.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6034645833333333,
+     "risk_capital": 360000.0,
+     "realized_pnl": -217247.25
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.03356296296296296,
+     "risk_capital": 675000.0,
+     "realized_pnl": -22655.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.005643103448275861,
+     "risk_capital": 565500.0,
+     "realized_pnl": -3191.1749999999993
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 590000.0,
+     "realized_pnl": 117136.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.08998676470588235,
+     "risk_capital": 391000.0,
+     "realized_pnl": 35184.825
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.12388166666666667,
+     "risk_capital": 252000.0,
+     "realized_pnl": -31218.18
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265307,
+     "risk_capital": 931000.0,
+     "realized_pnl": -572277.15
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6310551282051282,
+     "risk_capital": 526500.0,
+     "realized_pnl": -332250.525
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.17109444444444447,
+     "risk_capital": 126000.0,
+     "realized_pnl": -21557.9
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.271975,
+     "risk_capital": 350000.0,
+     "realized_pnl": 95191.25
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.07232012987012987,
+     "risk_capital": 231000.0,
+     "realized_pnl": -16705.95
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.124626267281106,
+     "risk_capital": 434000.0,
+     "realized_pnl": 54087.8
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.054977419354838714,
+     "risk_capital": 403000.0,
+     "realized_pnl": -22155.9
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.06022112676056338,
+     "risk_capital": 355000.0,
+     "realized_pnl": -21378.5
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.1096233944954128,
+     "risk_capital": 327000.0,
+     "realized_pnl": -362846.85
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8874217391304348,
+     "risk_capital": 207000.0,
+     "realized_pnl": 183696.3
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.1877392857142857,
+     "risk_capital": 189000.0,
+     "realized_pnl": -224482.725
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 322500.0,
+     "realized_pnl": 299059.625
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.023314444444444443,
+     "risk_capital": 504000.0,
+     "realized_pnl": -11750.48
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.11130599999999999,
+     "risk_capital": 321250.0,
+     "realized_pnl": -35757.0525
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.5850645833333333,
+     "risk_capital": 504000.0,
+     "realized_pnl": -294872.55
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0537523076923079,
+     "risk_capital": 565500.0,
+     "realized_pnl": -595896.93
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172413,
+     "risk_capital": 638000.0,
+     "realized_pnl": -66675.4
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9144692307692307,
+     "risk_capital": 397800.0,
+     "realized_pnl": 363775.86
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.19441354166666666,
+     "risk_capital": 667200.0,
+     "realized_pnl": 129712.715
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9162454545454545,
+     "risk_capital": 445500.0,
+     "realized_pnl": 408187.35
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8874592105263158,
+     "risk_capital": 266000.0,
+     "realized_pnl": 236064.15
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8393448275862069,
+     "risk_capital": 406000.0,
+     "realized_pnl": 340774.0
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.24423035714285715,
+     "risk_capital": 347200.0,
+     "realized_pnl": -84796.78
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.15681309523809522,
+     "risk_capital": 252000.0,
+     "realized_pnl": -39516.899999999994
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.0029833333333333352,
+     "risk_capital": 435600.0,
+     "realized_pnl": 1299.5400000000009
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.055897619047619,
+     "risk_capital": 378000.0,
+     "realized_pnl": -399129.3
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8731842105263158,
+     "risk_capital": 313500.0,
+     "realized_pnl": 273743.25
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8792597222222223,
+     "risk_capital": 360000.0,
+     "realized_pnl": 316533.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.04391969696969696,
+     "risk_capital": 306900.0,
+     "realized_pnl": -13478.954999999998
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0681975,
+     "risk_capital": 240000.0,
+     "realized_pnl": -256367.4
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0913967741935484,
+     "risk_capital": 372000.0,
+     "realized_pnl": -405999.6
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0584166666666666,
+     "risk_capital": 360000.0,
+     "realized_pnl": -381030.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0161255849324153,
+     "risk_capital": 437230.0,
+     "realized_pnl": -444280.5895
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 713000.0,
+     "realized_pnl": -91810.25
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0520169642857142,
+     "risk_capital": 630000.0,
+     "realized_pnl": -662770.6875
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0555345195729537,
+     "risk_capital": 421500.0,
+     "realized_pnl": -444907.8
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.2208516949152541,
+     "risk_capital": 413000.0,
+     "realized_pnl": -504211.75
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.864255,
+     "risk_capital": 630000.0,
+     "realized_pnl": 544480.65
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.05823599999999999,
+     "risk_capital": 387500.0,
+     "realized_pnl": -22566.449999999997
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8757729166666667,
+     "risk_capital": 285600.0,
+     "realized_pnl": 250120.745
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.22865666666666665,
+     "risk_capital": 217500.0,
+     "realized_pnl": 49732.825
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.005451351351351355,
+     "risk_capital": 473600.0,
+     "realized_pnl": 2581.760000000002
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.06286666666666667,
+     "risk_capital": 360000.0,
+     "realized_pnl": -22632.0
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03433653846153847,
+     "risk_capital": 314600.0,
+     "realized_pnl": -10802.275000000001
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.09013150684931506,
+     "risk_capital": 365000.0,
+     "realized_pnl": -32898.0
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.017851250000000003,
+     "risk_capital": 248000.0,
+     "realized_pnl": -4427.110000000001
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 512500.0,
+     "realized_pnl": -534340.625
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10968285714285714,
+     "risk_capital": 350000.0,
+     "realized_pnl": 38389.0
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.029762195121951218,
+     "risk_capital": 512500.0,
+     "realized_pnl": 15253.125
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.6762181818181818,
+     "risk_capital": 173800.0,
+     "realized_pnl": -117526.72
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 348000.0,
+     "realized_pnl": -190215.6
+    }
+   ],
+   "param_diff": {
+    "ratio_atr_alpha": {
+     "head": 1.0,
+     "arm": 0.0
+    },
+    "risk_per_trade_krw": {
+     "head": 299340.0,
+     "arm": 0.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 4,
+    "arm": "risk_per_trade_krw 299,340->0.0",
+    "net_ror": -0.0479
+   }
+  },
+  "96": {
+   "run_id": "20260731T023316Z-backtest-orb-v96",
+   "strategy_version": 96,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 113,
+   "closed_trades": 111,
+   "trades": [
+    {
+     "session": "20260521",
+     "realized_r": -1.18796,
+     "risk_capital": 180000.0,
+     "realized_pnl": -213832.8
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7616919999999999,
+     "risk_capital": 275000.0,
+     "realized_pnl": -209465.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 292500.0,
+     "realized_pnl": -212383.925
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1933864077669903,
+     "risk_capital": 206000.0,
+     "realized_pnl": 39837.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8521474137931034,
+     "risk_capital": 290000.0,
+     "realized_pnl": 247122.75
+    },
+    {
+     "session": "20260526",
+     "realized_r": 1.00839375,
+     "risk_capital": 288000.0,
+     "realized_pnl": 290417.4
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.102014,
+     "risk_capital": 275000.0,
+     "realized_pnl": -28053.85
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.07705000000000001,
+     "risk_capital": 288000.0,
+     "realized_pnl": -22190.4
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.01914607843137255,
+     "risk_capital": 280500.0,
+     "realized_pnl": 5370.475
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.919098717948718,
+     "risk_capital": 234000.0,
+     "realized_pnl": 215069.1
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.0955178571428572,
+     "risk_capital": 224000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 275000.0,
+     "realized_pnl": -281825.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.253321875,
+     "risk_capital": 296000.0,
+     "realized_pnl": 74983.275
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.14653194444444442,
+     "risk_capital": 288000.0,
+     "realized_pnl": -42201.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 297000.0,
+     "realized_pnl": 299025.45
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9320516129032258,
+     "risk_capital": 294500.0,
+     "realized_pnl": 274489.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43699016393442625,
+     "risk_capital": 274500.0,
+     "realized_pnl": 119953.8
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.07864865384615385,
+     "risk_capital": 260000.0,
+     "realized_pnl": -20448.65
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": 230206.2
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.0030517857142857143,
+     "risk_capital": 280000.0,
+     "realized_pnl": -854.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666665,
+     "risk_capital": 294000.0,
+     "realized_pnl": -301292.425
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846154,
+     "risk_capital": 299000.0,
+     "realized_pnl": 261784.85
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.09046666666666667,
+     "risk_capital": 247500.0,
+     "realized_pnl": -22390.5
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.11668913043478261,
+     "risk_capital": 299000.0,
+     "realized_pnl": 34890.05
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.511366,
+     "risk_capital": 298750.0,
+     "realized_pnl": -152770.5925
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.04190912977867204,
+     "risk_capital": 298200.0,
+     "realized_pnl": -12497.302500000002
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8489,
+     "risk_capital": 288000.0,
+     "realized_pnl": 244483.2
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4485922764227642,
+     "risk_capital": 295200.0,
+     "realized_pnl": -132424.44
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.0036659999999999987,
+     "risk_capital": 275000.0,
+     "realized_pnl": 1008.1499999999996
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.1085127659574468,
+     "risk_capital": 291400.0,
+     "realized_pnl": 31620.62
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.11364777777777778,
+     "risk_capital": 297000.0,
+     "realized_pnl": -33753.39
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.04400384615384616,
+     "risk_capital": 296400.0,
+     "realized_pnl": -13042.740000000002
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.14489772727272726,
+     "risk_capital": 297000.0,
+     "realized_pnl": -43034.625
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5402692307692307,
+     "risk_capital": 299000.0,
+     "realized_pnl": -161540.5
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8030925,
+     "risk_capital": 280000.0,
+     "realized_pnl": 224865.9
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.5896366071428571,
+     "risk_capital": 224000.0,
+     "realized_pnl": 132078.6
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5167264705882353,
+     "risk_capital": 289000.0,
+     "realized_pnl": -149333.95
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.09272631578947368,
+     "risk_capital": 247000.0,
+     "realized_pnl": -22903.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.022735000000000005,
+     "risk_capital": 290000.0,
+     "realized_pnl": 6593.1500000000015
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.9382264705882353,
+     "risk_capital": 297500.0,
+     "realized_pnl": -279122.375
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.06682500000000001,
+     "risk_capital": 272000.0,
+     "realized_pnl": -18176.4
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.014075000000000002,
+     "risk_capital": 298800.0,
+     "realized_pnl": -4205.610000000001
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.05796,
+     "risk_capital": 275000.0,
+     "realized_pnl": -15939.0
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.006925000000000002,
+     "risk_capital": 294000.0,
+     "realized_pnl": -2035.9500000000007
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.05846842105263158,
+     "risk_capital": 294500.0,
+     "realized_pnl": -17218.95
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9205560606060607,
+     "risk_capital": 297000.0,
+     "realized_pnl": 273405.15
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.074796,
+     "risk_capital": 287500.0,
+     "realized_pnl": -21503.85
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.014596428571428571,
+     "risk_capital": 280000.0,
+     "realized_pnl": 4087.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6107732558139535,
+     "risk_capital": 172000.0,
+     "realized_pnl": -105053.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6034645833333333,
+     "risk_capital": 288000.0,
+     "realized_pnl": -173797.8
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.03356296296296296,
+     "risk_capital": 270000.0,
+     "realized_pnl": -9062.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.005643103448275862,
+     "risk_capital": 290000.0,
+     "realized_pnl": -1636.5
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 295000.0,
+     "realized_pnl": 58568.0
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.08998676470588235,
+     "risk_capital": 289000.0,
+     "realized_pnl": 26006.175
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.12388166666666667,
+     "risk_capital": 252000.0,
+     "realized_pnl": -31218.18
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265307,
+     "risk_capital": 294000.0,
+     "realized_pnl": -180719.1
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6310551282051282,
+     "risk_capital": 292500.0,
+     "realized_pnl": -184583.625
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.17109444444444447,
+     "risk_capital": 126000.0,
+     "realized_pnl": -21557.9
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.271975,
+     "risk_capital": 280000.0,
+     "realized_pnl": 76153.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.07232012987012987,
+     "risk_capital": 231000.0,
+     "realized_pnl": -16705.95
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.124626267281106,
+     "risk_capital": 217000.0,
+     "realized_pnl": 27043.9
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.054977419354838714,
+     "risk_capital": 279000.0,
+     "realized_pnl": -15338.7
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.060221126760563376,
+     "risk_capital": 284000.0,
+     "realized_pnl": -17102.8
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.1096233944954128,
+     "risk_capital": 218000.0,
+     "realized_pnl": -241897.9
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8874217391304348,
+     "risk_capital": 207000.0,
+     "realized_pnl": 183696.3
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.1877392857142857,
+     "risk_capital": 189000.0,
+     "realized_pnl": -224482.725
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 292500.0,
+     "realized_pnl": 271240.125
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.023314444444444443,
+     "risk_capital": 299250.0,
+     "realized_pnl": -6976.8475
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.11130599999999999,
+     "risk_capital": 298750.0,
+     "realized_pnl": -33252.667499999996
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.5850645833333333,
+     "risk_capital": 288000.0,
+     "realized_pnl": -168498.6
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0537523076923077,
+     "risk_capital": 299000.0,
+     "realized_pnl": -315071.94
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172414,
+     "risk_capital": 290000.0,
+     "realized_pnl": -30307.0
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9144692307692307,
+     "risk_capital": 296400.0,
+     "realized_pnl": 271048.68
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.19441354166666666,
+     "risk_capital": 297600.0,
+     "realized_pnl": 57857.47
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9162454545454546,
+     "risk_capital": 297000.0,
+     "realized_pnl": 272124.9
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8874592105263158,
+     "risk_capital": 266000.0,
+     "realized_pnl": 236064.15
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8393448275862069,
+     "risk_capital": 290000.0,
+     "realized_pnl": 243410.0
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.24423035714285718,
+     "risk_capital": 296800.0,
+     "realized_pnl": -72487.57
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.15681309523809522,
+     "risk_capital": 252000.0,
+     "realized_pnl": -39516.899999999994
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.0029833333333333335,
+     "risk_capital": 298800.0,
+     "realized_pnl": 891.4200000000001
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.055897619047619,
+     "risk_capital": 294000.0,
+     "realized_pnl": -310433.9
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8731842105263158,
+     "risk_capital": 294500.0,
+     "realized_pnl": 257152.75
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8792597222222223,
+     "risk_capital": 295200.0,
+     "realized_pnl": 259557.47
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.04391969696969698,
+     "risk_capital": 297000.0,
+     "realized_pnl": -13044.150000000001
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0681975,
+     "risk_capital": 240000.0,
+     "realized_pnl": -256367.4
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0913967741935484,
+     "risk_capital": 294500.0,
+     "realized_pnl": -321416.35
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0584166666666666,
+     "risk_capital": 288000.0,
+     "realized_pnl": -304824.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0070652173913044,
+     "risk_capital": 299230.0,
+     "realized_pnl": -301344.125
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 294500.0,
+     "realized_pnl": -37921.625
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0520169642857142,
+     "risk_capital": 296800.0,
+     "realized_pnl": -312238.635
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0555345195729537,
+     "risk_capital": 281000.0,
+     "realized_pnl": -296605.2
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.2208516949152541,
+     "risk_capital": 295000.0,
+     "realized_pnl": -360151.25
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.864255,
+     "risk_capital": 270000.0,
+     "realized_pnl": 233348.85
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.058235999999999996,
+     "risk_capital": 287500.0,
+     "realized_pnl": -16742.85
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8757729166666667,
+     "risk_capital": 285600.0,
+     "realized_pnl": 250120.745
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.22865666666666665,
+     "risk_capital": 217500.0,
+     "realized_pnl": 49732.825
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.005451351351351353,
+     "risk_capital": 296000.0,
+     "realized_pnl": 1613.6000000000004
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.06286666666666667,
+     "risk_capital": 288000.0,
+     "realized_pnl": -18105.6
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03433653846153846,
+     "risk_capital": 299000.0,
+     "realized_pnl": -10266.625
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.09013150684931508,
+     "risk_capital": 299300.0,
+     "realized_pnl": -26976.36
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.017851250000000003,
+     "risk_capital": 248000.0,
+     "realized_pnl": -4427.110000000001
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 287000.0,
+     "realized_pnl": -299230.75
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10968285714285715,
+     "risk_capital": 280000.0,
+     "realized_pnl": 30711.2
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.029762195121951218,
+     "risk_capital": 287000.0,
+     "realized_pnl": 8541.75
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.6762181818181818,
+     "risk_capital": 173800.0,
+     "realized_pnl": -117526.72
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 290000.0,
+     "realized_pnl": -158513.0
+    }
+   ],
+   "param_diff": {
+    "ratio_atr_alpha": {
+     "head": 1.0,
+     "arm": 0.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 5,
+    "arm": "ratio_atr_alpha 1.0->0.0",
+    "net_ror": -0.0275
+   }
+  },
+  "97": {
+   "run_id": "20260731T023324Z-backtest-orb-v97",
+   "strategy_version": 97,
+   "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+   "universe_hash": "2dfc00d73f759d7c9da24e534c7935c579cf18a0d002f8b0318fe1578dc87951",
+   "strategy_code_hash": "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c",
+   "trade_records": 258,
+   "closed_trades": 254,
+   "trades": [
+    {
+     "session": "20260519",
+     "realized_r": 0.4232708333333333,
+     "risk_capital": 219600.0,
+     "realized_pnl": 92950.275
+    },
+    {
+     "session": "20260519",
+     "realized_r": -1.22532,
+     "risk_capital": 101000.0,
+     "realized_pnl": -123757.31999999999
+    },
+    {
+     "session": "20260519",
+     "realized_r": -1.1026916666666666,
+     "risk_capital": 219000.0,
+     "realized_pnl": -241489.475
+    },
+    {
+     "session": "20260520",
+     "realized_r": 0.060762500000000004,
+     "risk_capital": 296000.0,
+     "realized_pnl": 17985.7
+    },
+    {
+     "session": "20260521",
+     "realized_r": -0.008403749999999998,
+     "risk_capital": 298000.0,
+     "realized_pnl": -2504.317499999999
+    },
+    {
+     "session": "20260521",
+     "realized_r": -1.18796,
+     "risk_capital": 180000.0,
+     "realized_pnl": -213832.8
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.9859224137931034,
+     "risk_capital": 182700.0,
+     "realized_pnl": -180128.025
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.779922,
+     "risk_capital": 225000.0,
+     "realized_pnl": -175482.45
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.017608823529411757,
+     "risk_capital": 299200.0,
+     "realized_pnl": -5268.559999999998
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7616919999999999,
+     "risk_capital": 275000.0,
+     "realized_pnl": -209465.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.7260988888888888,
+     "risk_capital": 292500.0,
+     "realized_pnl": -212383.925
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.063178125,
+     "risk_capital": 288000.0,
+     "realized_pnl": -18195.3
+    },
+    {
+     "session": "20260522",
+     "realized_r": -0.3272411764705882,
+     "risk_capital": 289000.0,
+     "realized_pnl": -94572.7
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.1933864077669903,
+     "risk_capital": 206000.0,
+     "realized_pnl": 39837.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.7258116279069767,
+     "risk_capital": 172000.0,
+     "realized_pnl": 124839.6
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.7016421052631578,
+     "risk_capital": 285000.0,
+     "realized_pnl": -199968.0
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.8521474137931034,
+     "risk_capital": 290000.0,
+     "realized_pnl": 247122.75
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.079984,
+     "risk_capital": 287500.0,
+     "realized_pnl": 22995.4
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.780009090909091,
+     "risk_capital": 180400.0,
+     "realized_pnl": 140713.64
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.3430035433070866,
+     "risk_capital": 298450.0,
+     "realized_pnl": -102369.4075
+    },
+    {
+     "session": "20260526",
+     "realized_r": 0.9519207692307692,
+     "risk_capital": 299000.0,
+     "realized_pnl": 284624.31
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.0038488888888888865,
+     "risk_capital": 292500.0,
+     "realized_pnl": -1125.7999999999993
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.5317891304347826,
+     "risk_capital": 276000.0,
+     "realized_pnl": -146773.8
+    },
+    {
+     "session": "20260526",
+     "realized_r": -0.9185092592592593,
+     "risk_capital": 297000.0,
+     "realized_pnl": -272797.25
+    },
+    {
+     "session": "20260526",
+     "realized_r": 1.00839375,
+     "risk_capital": 288000.0,
+     "realized_pnl": 290417.4
+    },
+    {
+     "session": "20260527",
+     "realized_r": 0.8938191666666667,
+     "risk_capital": 240000.0,
+     "realized_pnl": 214516.6
+    },
+    {
+     "session": "20260527",
+     "realized_r": -1.0228666666666666,
+     "risk_capital": 240000.0,
+     "realized_pnl": -245488.0
+    },
+    {
+     "session": "20260527",
+     "realized_r": -1.0589642857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": -311335.5
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.102014,
+     "risk_capital": 275000.0,
+     "realized_pnl": -28053.85
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.8095120967741936,
+     "risk_capital": 297600.0,
+     "realized_pnl": 240910.8
+    },
+    {
+     "session": "20260528",
+     "realized_r": -0.07705000000000001,
+     "risk_capital": 288000.0,
+     "realized_pnl": -22190.4
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.79146875,
+     "risk_capital": 281600.0,
+     "realized_pnl": 222877.6
+    },
+    {
+     "session": "20260528",
+     "realized_r": -1.1047279886537904,
+     "risk_capital": 299307.0,
+     "realized_pnl": -330652.8201
+    },
+    {
+     "session": "20260528",
+     "realized_r": 0.01914607843137255,
+     "risk_capital": 280500.0,
+     "realized_pnl": 5370.475
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.919098717948718,
+     "risk_capital": 234000.0,
+     "realized_pnl": 215069.1
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.36982857142857145,
+     "risk_capital": 294000.0,
+     "realized_pnl": -108729.6
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.0955178571428572,
+     "risk_capital": 224000.0,
+     "realized_pnl": -245396.0
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.09331428571428572,
+     "risk_capital": 238000.0,
+     "realized_pnl": -22208.800000000003
+    },
+    {
+     "session": "20260529",
+     "realized_r": -1.02482,
+     "risk_capital": 275000.0,
+     "realized_pnl": -281825.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.253321875,
+     "risk_capital": 296000.0,
+     "realized_pnl": 74983.275
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.14653194444444442,
+     "risk_capital": 288000.0,
+     "realized_pnl": -42201.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": 1.006819696969697,
+     "risk_capital": 297000.0,
+     "realized_pnl": 299025.45
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.390205,
+     "risk_capital": 253000.0,
+     "realized_pnl": -98721.865
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.8924732142857142,
+     "risk_capital": 294000.0,
+     "realized_pnl": 262387.125
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.11343275862068966,
+     "risk_capital": 290000.0,
+     "realized_pnl": 32895.5
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.9320516129032258,
+     "risk_capital": 294500.0,
+     "realized_pnl": 274489.2
+    },
+    {
+     "session": "20260529",
+     "realized_r": -0.46280714285714286,
+     "risk_capital": 299250.0,
+     "realized_pnl": -138495.0375
+    },
+    {
+     "session": "20260529",
+     "realized_r": 0.43699016393442625,
+     "risk_capital": 274500.0,
+     "realized_pnl": 119953.8
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.07864865384615385,
+     "risk_capital": 260000.0,
+     "realized_pnl": -20448.65
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.042027272727272726,
+     "risk_capital": 297000.0,
+     "realized_pnl": -12482.099999999999
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.5233603773584906,
+     "risk_capital": 265000.0,
+     "realized_pnl": -138690.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.7830142857142858,
+     "risk_capital": 294000.0,
+     "realized_pnl": 230206.2
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.0030517857142857143,
+     "risk_capital": 280000.0,
+     "realized_pnl": -854.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0248041666666665,
+     "risk_capital": 294000.0,
+     "realized_pnl": -301292.425
+    },
+    {
+     "session": "20260601",
+     "realized_r": 0.8755346153846154,
+     "risk_capital": 299000.0,
+     "realized_pnl": 261784.85
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.06592749999999999,
+     "risk_capital": 294000.0,
+     "realized_pnl": -19382.684999999998
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.09046666666666667,
+     "risk_capital": 247500.0,
+     "realized_pnl": -22390.5
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.36040210843373494,
+     "risk_capital": 298800.0,
+     "realized_pnl": -107688.15
+    },
+    {
+     "session": "20260601",
+     "realized_r": -1.0611688888888888,
+     "risk_capital": 297000.0,
+     "realized_pnl": -315167.16
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.03365208333333333,
+     "risk_capital": 288000.0,
+     "realized_pnl": -9691.8
+    },
+    {
+     "session": "20260601",
+     "realized_r": -0.5533190476190476,
+     "risk_capital": 252000.0,
+     "realized_pnl": -139436.4
+    },
+    {
+     "session": "20260602",
+     "realized_r": -0.07050142857142858,
+     "risk_capital": 280000.0,
+     "realized_pnl": -19740.4
+    },
+    {
+     "session": "20260602",
+     "realized_r": 0.3100607843137255,
+     "risk_capital": 280500.0,
+     "realized_pnl": 86972.05
+    },
+    {
+     "session": "20260602",
+     "realized_r": 0.10157244897959183,
+     "risk_capital": 294000.0,
+     "realized_pnl": 29862.3
+    },
+    {
+     "session": "20260602",
+     "realized_r": 0.20521153846153847,
+     "risk_capital": 223600.0,
+     "realized_pnl": 45885.3
+    },
+    {
+     "session": "20260602",
+     "realized_r": -0.0391,
+     "risk_capital": 287500.0,
+     "realized_pnl": -11241.25
+    },
+    {
+     "session": "20260602",
+     "realized_r": -0.04976634615384615,
+     "risk_capital": 296400.0,
+     "realized_pnl": -14750.744999999999
+    },
+    {
+     "session": "20260602",
+     "realized_r": -0.32088235294117645,
+     "risk_capital": 299200.0,
+     "realized_pnl": -96008.0
+    },
+    {
+     "session": "20260602",
+     "realized_r": 0.9720006578947368,
+     "risk_capital": 228000.0,
+     "realized_pnl": 221616.15
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.11668913043478261,
+     "risk_capital": 299000.0,
+     "realized_pnl": 34890.05
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.511366,
+     "risk_capital": 298750.0,
+     "realized_pnl": -152770.5925
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8901897435897436,
+     "risk_capital": 273000.0,
+     "realized_pnl": 243021.8
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.04190912977867204,
+     "risk_capital": 298200.0,
+     "realized_pnl": -12497.302500000002
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.8489,
+     "risk_capital": 288000.0,
+     "realized_pnl": 244483.2
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.03807777777777777,
+     "risk_capital": 297000.0,
+     "realized_pnl": -11309.099999999999
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.4485922764227642,
+     "risk_capital": 295200.0,
+     "realized_pnl": -132424.44
+    },
+    {
+     "session": "20260604",
+     "realized_r": -0.10739230769230768,
+     "risk_capital": 213850.0,
+     "realized_pnl": -22965.844999999998
+    },
+    {
+     "session": "20260604",
+     "realized_r": 0.0036659999999999987,
+     "risk_capital": 275000.0,
+     "realized_pnl": 1008.1499999999996
+    },
+    {
+     "session": "20260605",
+     "realized_r": -0.38664615384615386,
+     "risk_capital": 286000.0,
+     "realized_pnl": -110580.8
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.1085127659574468,
+     "risk_capital": 291400.0,
+     "realized_pnl": 31620.62
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8458450980392157,
+     "risk_capital": 204000.0,
+     "realized_pnl": 172552.4
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8105153846153846,
+     "risk_capital": 208000.0,
+     "realized_pnl": 168587.2
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.06025,
+     "risk_capital": 276000.0,
+     "realized_pnl": -16629.0
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.11364777777777778,
+     "risk_capital": 297000.0,
+     "realized_pnl": -33753.39
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.04400384615384616,
+     "risk_capital": 296400.0,
+     "realized_pnl": -13042.740000000002
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.14489772727272726,
+     "risk_capital": 297000.0,
+     "realized_pnl": -43034.625
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.5402692307692307,
+     "risk_capital": 299000.0,
+     "realized_pnl": -161540.5
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.023592307692307694,
+     "risk_capital": 299000.0,
+     "realized_pnl": 7054.1
+    },
+    {
+     "session": "20260609",
+     "realized_r": -0.09128125,
+     "risk_capital": 224000.0,
+     "realized_pnl": -20447.0
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.8030925,
+     "risk_capital": 280000.0,
+     "realized_pnl": 224865.9
+    },
+    {
+     "session": "20260609",
+     "realized_r": 0.5896366071428571,
+     "risk_capital": 224000.0,
+     "realized_pnl": 132078.6
+    },
+    {
+     "session": "20260609",
+     "realized_r": 1.0334611111111112,
+     "risk_capital": 298800.0,
+     "realized_pnl": 308798.18
+    },
+    {
+     "session": "20260610",
+     "realized_r": -1.0419864615794379,
+     "risk_capital": 187725.0,
+     "realized_pnl": -195606.9085
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.022735000000000005,
+     "risk_capital": 290000.0,
+     "realized_pnl": 6593.1500000000015
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.066825,
+     "risk_capital": 238000.0,
+     "realized_pnl": -15904.35
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.014074999999999999,
+     "risk_capital": 330300.0,
+     "realized_pnl": -4648.9725
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.006925,
+     "risk_capital": 210000.0,
+     "realized_pnl": -1454.25
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9258838235294118,
+     "risk_capital": 221000.0,
+     "realized_pnl": 204620.325
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.8384092592592594,
+     "risk_capital": 267300.0,
+     "realized_pnl": 224106.795
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.896845945945946,
+     "risk_capital": 307100.0,
+     "realized_pnl": 275421.39
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.8768472727272727,
+     "risk_capital": 341000.0,
+     "realized_pnl": 299004.92
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.9205560606060605,
+     "risk_capital": 264000.0,
+     "realized_pnl": 243026.8
+    },
+    {
+     "session": "20260612",
+     "realized_r": -0.074796,
+     "risk_capital": 275000.0,
+     "realized_pnl": -20568.9
+    },
+    {
+     "session": "20260612",
+     "realized_r": 0.014596428571428573,
+     "risk_capital": 224000.0,
+     "realized_pnl": 3269.6000000000004
+    },
+    {
+     "session": "20260615",
+     "realized_r": -1.077154,
+     "risk_capital": 290000.0,
+     "realized_pnl": -312374.66
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.07436666666666668,
+     "risk_capital": 294000.0,
+     "realized_pnl": -21863.800000000003
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6034645833333333,
+     "risk_capital": 264000.0,
+     "realized_pnl": -159314.65
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.3466,
+     "risk_capital": 333500.0,
+     "realized_pnl": 115591.1
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.005643103448275865,
+     "risk_capital": 232000.0,
+     "realized_pnl": -1309.2000000000007
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.19853559322033898,
+     "risk_capital": 206500.0,
+     "realized_pnl": 40997.6
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.8444206896551724,
+     "risk_capital": 261000.0,
+     "realized_pnl": 220393.8
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.83931875,
+     "risk_capital": 204000.0,
+     "realized_pnl": -171221.025
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6146908163265306,
+     "risk_capital": 196000.0,
+     "realized_pnl": -120479.4
+    },
+    {
+     "session": "20260615",
+     "realized_r": -0.6310551282051282,
+     "risk_capital": 234000.0,
+     "realized_pnl": -147666.9
+    },
+    {
+     "session": "20260615",
+     "realized_r": 0.03842368421052632,
+     "risk_capital": 171000.0,
+     "realized_pnl": 6570.450000000001
+    },
+    {
+     "session": "20260616",
+     "realized_r": -1.0074888888888889,
+     "risk_capital": 270000.0,
+     "realized_pnl": -272022.0
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.40743555555555555,
+     "risk_capital": 180000.0,
+     "realized_pnl": -73338.4
+    },
+    {
+     "session": "20260616",
+     "realized_r": 0.15304615384615383,
+     "risk_capital": 286000.0,
+     "realized_pnl": 43771.2
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.05113974358974358,
+     "risk_capital": 273000.0,
+     "realized_pnl": -13961.149999999998
+    },
+    {
+     "session": "20260616",
+     "realized_r": 0.8772589999999999,
+     "risk_capital": 200000.0,
+     "realized_pnl": 175451.8
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.39826666666666666,
+     "risk_capital": 172500.0,
+     "realized_pnl": -68701.0
+    },
+    {
+     "session": "20260616",
+     "realized_r": -1.0439833333333333,
+     "risk_capital": 209760.0,
+     "realized_pnl": -218985.944
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.841442857142857,
+     "risk_capital": 215600.0,
+     "realized_pnl": -181415.08
+    },
+    {
+     "session": "20260616",
+     "realized_r": -0.3673447368421053,
+     "risk_capital": 209000.0,
+     "realized_pnl": -76775.05
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.38887083333333333,
+     "risk_capital": 362400.0,
+     "realized_pnl": -140926.79
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.516557,
+     "risk_capital": 300000.0,
+     "realized_pnl": -154967.1
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.87924,
+     "risk_capital": 282000.0,
+     "realized_pnl": -247945.68
+    },
+    {
+     "session": "20260617",
+     "realized_r": 0.8970640243902439,
+     "risk_capital": 222220.0,
+     "realized_pnl": 199345.5675
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.5341444444444444,
+     "risk_capital": 256500.0,
+     "realized_pnl": -137008.05
+    },
+    {
+     "session": "20260617",
+     "realized_r": 0.829835294117647,
+     "risk_capital": 209950.0,
+     "realized_pnl": 174223.91999999998
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.23400238095238093,
+     "risk_capital": 241500.0,
+     "realized_pnl": -56511.575
+    },
+    {
+     "session": "20260617",
+     "realized_r": -0.07219069908079341,
+     "risk_capital": 248040.0,
+     "realized_pnl": -17906.180999999997
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.9271918604651163,
+     "risk_capital": 258000.0,
+     "realized_pnl": 239215.5
+    },
+    {
+     "session": "20260618",
+     "realized_r": -1.0297596153846154,
+     "risk_capital": 225420.0,
+     "realized_pnl": -232128.4125
+    },
+    {
+     "session": "20260618",
+     "realized_r": 0.271975,
+     "risk_capital": 280000.0,
+     "realized_pnl": 76153.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.07232012987012987,
+     "risk_capital": 231000.0,
+     "realized_pnl": -16705.95
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.6582100000000001,
+     "risk_capital": 160000.0,
+     "realized_pnl": 105313.6
+    },
+    {
+     "session": "20260619",
+     "realized_r": 0.124626267281106,
+     "risk_capital": 217000.0,
+     "realized_pnl": 27043.9
+    },
+    {
+     "session": "20260619",
+     "realized_r": -1.028287037037037,
+     "risk_capital": 216000.0,
+     "realized_pnl": -222110.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.05497741935483871,
+     "risk_capital": 310000.0,
+     "realized_pnl": -17043.0
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.10306111111111112,
+     "risk_capital": 270000.0,
+     "realized_pnl": -27826.5
+    },
+    {
+     "session": "20260619",
+     "realized_r": -0.060221126760563376,
+     "risk_capital": 284000.0,
+     "realized_pnl": -17102.8
+    },
+    {
+     "session": "20260622",
+     "realized_r": 0.9770588709677419,
+     "risk_capital": 248000.0,
+     "realized_pnl": 242310.6
+    },
+    {
+     "session": "20260623",
+     "realized_r": -0.261981875,
+     "risk_capital": 160000.0,
+     "realized_pnl": -41917.1
+    },
+    {
+     "session": "20260623",
+     "realized_r": 0.007309374999999999,
+     "risk_capital": 272000.0,
+     "realized_pnl": 1988.1499999999996
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.1405875,
+     "risk_capital": 163520.0,
+     "realized_pnl": -22988.868
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.06413370786516853,
+     "risk_capital": 178000.0,
+     "realized_pnl": -11415.8
+    },
+    {
+     "session": "20260624",
+     "realized_r": -1.1096233944954128,
+     "risk_capital": 218000.0,
+     "realized_pnl": -241897.9
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.10342682926829268,
+     "risk_capital": 225500.0,
+     "realized_pnl": -23322.75
+    },
+    {
+     "session": "20260624",
+     "realized_r": 0.27734000000000003,
+     "risk_capital": 240000.0,
+     "realized_pnl": 66561.6
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.4445545454545454,
+     "risk_capital": 236500.0,
+     "realized_pnl": -105137.15
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.1540833333333333,
+     "risk_capital": 214200.0,
+     "realized_pnl": -33004.649999999994
+    },
+    {
+     "session": "20260624",
+     "realized_r": 0.9726347826086956,
+     "risk_capital": 253000.0,
+     "realized_pnl": 246076.6
+    },
+    {
+     "session": "20260624",
+     "realized_r": 0.8094743243243243,
+     "risk_capital": 259000.0,
+     "realized_pnl": 209653.85
+    },
+    {
+     "session": "20260624",
+     "realized_r": -0.5615477272727273,
+     "risk_capital": 286000.0,
+     "realized_pnl": -160602.65
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.8874217391304348,
+     "risk_capital": 207000.0,
+     "realized_pnl": 183696.3
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.43227272727272725,
+     "risk_capital": 308000.0,
+     "realized_pnl": -133140.0
+    },
+    {
+     "session": "20260625",
+     "realized_r": 0.9273166666666667,
+     "risk_capital": 307500.0,
+     "realized_pnl": 285149.875
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.061131081081081,
+     "risk_capital": 240500.0,
+     "realized_pnl": -255202.025
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.023314444444444443,
+     "risk_capital": 249750.0,
+     "realized_pnl": -5822.782499999999
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.07684705882352942,
+     "risk_capital": 272000.0,
+     "realized_pnl": -20902.4
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.11130599999999999,
+     "risk_capital": 321250.0,
+     "realized_pnl": -35757.0525
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.5850645833333333,
+     "risk_capital": 264000.0,
+     "realized_pnl": -154457.05
+    },
+    {
+     "session": "20260625",
+     "realized_r": -1.0537523076923077,
+     "risk_capital": 247000.0,
+     "realized_pnl": -260276.82
+    },
+    {
+     "session": "20260625",
+     "realized_r": -0.270134,
+     "risk_capital": 262500.0,
+     "realized_pnl": -70910.175
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.10450689655172414,
+     "risk_capital": 203000.0,
+     "realized_pnl": -21214.9
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8498081081081081,
+     "risk_capital": 296000.0,
+     "realized_pnl": 251543.2
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.007140909090909082,
+     "risk_capital": 234300.0,
+     "realized_pnl": -1673.114999999998
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.93165,
+     "risk_capital": 220800.0,
+     "realized_pnl": 205708.32
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8921553191489362,
+     "risk_capital": 267900.0,
+     "realized_pnl": 239008.41
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.7985590909090909,
+     "risk_capital": 290400.0,
+     "realized_pnl": 231901.56
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.3309361111111111,
+     "risk_capital": 248400.0,
+     "realized_pnl": 82204.53
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8056062500000001,
+     "risk_capital": 176000.0,
+     "realized_pnl": 141786.7
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.2966465517241379,
+     "risk_capital": 278400.0,
+     "realized_pnl": 82586.4
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.9162454545454546,
+     "risk_capital": 247500.0,
+     "realized_pnl": 226770.75
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8874592105263158,
+     "risk_capital": 266000.0,
+     "realized_pnl": 236064.15
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.04518666666666667,
+     "risk_capital": 261750.0,
+     "realized_pnl": 11827.61
+    },
+    {
+     "session": "20260629",
+     "realized_r": 0.8393448275862069,
+     "risk_capital": 304500.0,
+     "realized_pnl": 255580.5
+    },
+    {
+     "session": "20260629",
+     "realized_r": -0.13952625,
+     "risk_capital": 280000.0,
+     "realized_pnl": -39067.35
+    },
+    {
+     "session": "20260630",
+     "realized_r": -1.2126791666666665,
+     "risk_capital": 172800.0,
+     "realized_pnl": -209550.96
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.025659829059829057,
+     "risk_capital": 234000.0,
+     "realized_pnl": -6004.4
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.6462777777777777,
+     "risk_capital": 208800.0,
+     "realized_pnl": -134942.8
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.708325,
+     "risk_capital": 268800.0,
+     "realized_pnl": -190397.76
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.24423035714285715,
+     "risk_capital": 347200.0,
+     "realized_pnl": -84796.78
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.051792592592592585,
+     "risk_capital": 237600.0,
+     "realized_pnl": -12305.919999999998
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.1419343137254902,
+     "risk_capital": 204000.0,
+     "realized_pnl": -28954.6
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.323251724137931,
+     "risk_capital": 290000.0,
+     "realized_pnl": -93743.0
+    },
+    {
+     "session": "20260630",
+     "realized_r": -0.002447222222222221,
+     "risk_capital": 279000.0,
+     "realized_pnl": -682.7749999999996
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.15681309523809525,
+     "risk_capital": 210000.0,
+     "realized_pnl": -32930.75
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.03221060606060606,
+     "risk_capital": 268950.0,
+     "realized_pnl": -8663.0425
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.8613404761904762,
+     "risk_capital": 310800.0,
+     "realized_pnl": -267704.62
+    },
+    {
+     "session": "20260701",
+     "realized_r": -1.0944592105263158,
+     "risk_capital": 186200.0,
+     "realized_pnl": -203788.305
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.37695555555555554,
+     "risk_capital": 216000.0,
+     "realized_pnl": -81422.4
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.9570921052631579,
+     "risk_capital": 209000.0,
+     "realized_pnl": -200032.25
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.07295921985815602,
+     "risk_capital": 210090.0,
+     "realized_pnl": 15328.002499999999
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.2679794117647059,
+     "risk_capital": 204000.0,
+     "realized_pnl": -54667.8
+    },
+    {
+     "session": "20260701",
+     "realized_r": 0.33649444444444443,
+     "risk_capital": 306000.0,
+     "realized_pnl": 102967.3
+    },
+    {
+     "session": "20260701",
+     "realized_r": -0.06828034188034188,
+     "risk_capital": 117000.0,
+     "realized_pnl": -7988.799999999999
+    },
+    {
+     "session": "20260702",
+     "realized_r": 0.8745725490196079,
+     "risk_capital": 351900.0,
+     "realized_pnl": 307762.08
+    },
+    {
+     "session": "20260702",
+     "realized_r": -1.3263088235294118,
+     "risk_capital": 352070.0,
+     "realized_pnl": -466953.5475
+    },
+    {
+     "session": "20260702",
+     "realized_r": 0.8588455882352942,
+     "risk_capital": 207400.0,
+     "realized_pnl": 178124.575
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.6721802631578947,
+     "risk_capital": 254600.0,
+     "realized_pnl": 171137.095
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.058328,
+     "risk_capital": 375000.0,
+     "realized_pnl": -21873.0
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.784905,
+     "risk_capital": 203000.0,
+     "realized_pnl": 159335.715
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.09682972972972972,
+     "risk_capital": 185000.0,
+     "realized_pnl": -17913.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.1917675,
+     "risk_capital": 272000.0,
+     "realized_pnl": -52160.76
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.04391969696969696,
+     "risk_capital": 306900.0,
+     "realized_pnl": -13478.954999999998
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.1603578947368421,
+     "risk_capital": 346750.0,
+     "realized_pnl": -55604.1
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.028575609756097558,
+     "risk_capital": 332100.0,
+     "realized_pnl": 9489.96
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.18054107142857143,
+     "risk_capital": 280000.0,
+     "realized_pnl": -50551.5
+    },
+    {
+     "session": "20260703",
+     "realized_r": 0.8364642857142858,
+     "risk_capital": 254800.0,
+     "realized_pnl": 213131.1
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.24540277777777775,
+     "risk_capital": 290700.0,
+     "realized_pnl": -71338.5875
+    },
+    {
+     "session": "20260703",
+     "realized_r": -0.05527666666666667,
+     "risk_capital": 270000.0,
+     "realized_pnl": -14924.7
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.1897632183908045,
+     "risk_capital": 174000.0,
+     "realized_pnl": -207018.8
+    },
+    {
+     "session": "20260706",
+     "realized_r": -0.06363333333333333,
+     "risk_capital": 360000.0,
+     "realized_pnl": -22908.0
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.113203846153846,
+     "risk_capital": 195000.0,
+     "realized_pnl": -217074.75
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.0500928571428572,
+     "risk_capital": 227500.0,
+     "realized_pnl": -238896.125
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.2012162162162163,
+     "risk_capital": 185000.0,
+     "realized_pnl": -222225.0
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.0513692307692308,
+     "risk_capital": 312000.0,
+     "realized_pnl": -328027.2
+    },
+    {
+     "session": "20260706",
+     "realized_r": -1.0557084033613446,
+     "risk_capital": 119000.0,
+     "realized_pnl": -125629.3
+    },
+    {
+     "session": "20260707",
+     "realized_r": 0.8860220930232559,
+     "risk_capital": 348300.0,
+     "realized_pnl": 308601.495
+    },
+    {
+     "session": "20260708",
+     "realized_r": -1.11415,
+     "risk_capital": 195500.0,
+     "realized_pnl": -217816.325
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0681975,
+     "risk_capital": 180000.0,
+     "realized_pnl": -192275.55
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.06244360465116279,
+     "risk_capital": 206400.0,
+     "realized_pnl": -12888.36
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0913967741935484,
+     "risk_capital": 201500.0,
+     "realized_pnl": -219916.45
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0070652173913044,
+     "risk_capital": 210220.0,
+     "realized_pnl": -211705.25
+    },
+    {
+     "session": "20260709",
+     "realized_r": 0.010691350710900485,
+     "risk_capital": 253200.0,
+     "realized_pnl": 2707.050000000003
+    },
+    {
+     "session": "20260709",
+     "realized_r": -0.12876612903225806,
+     "risk_capital": 201500.0,
+     "realized_pnl": -25946.375
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.0276129032258066,
+     "risk_capital": 186000.0,
+     "realized_pnl": -191136.0
+    },
+    {
+     "session": "20260709",
+     "realized_r": -1.2208516949152541,
+     "risk_capital": 177000.0,
+     "realized_pnl": -216090.75
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.864255,
+     "risk_capital": 180000.0,
+     "realized_pnl": 155565.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.30069270833333334,
+     "risk_capital": 316800.0,
+     "realized_pnl": -95259.45
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.058235999999999996,
+     "risk_capital": 350000.0,
+     "realized_pnl": -20382.6
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.8757729166666667,
+     "risk_capital": 254400.0,
+     "realized_pnl": 222796.63
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.22865666666666667,
+     "risk_capital": 210000.0,
+     "realized_pnl": 48017.9
+    },
+    {
+     "session": "20260710",
+     "realized_r": 0.00545135135135135,
+     "risk_capital": 259000.0,
+     "realized_pnl": 1411.8999999999996
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.03433653846153846,
+     "risk_capital": 208000.0,
+     "realized_pnl": -7142.0
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.3520842105263158,
+     "risk_capital": 319200.0,
+     "realized_pnl": -112385.28
+    },
+    {
+     "session": "20260710",
+     "realized_r": -0.06980495495495496,
+     "risk_capital": 111000.0,
+     "realized_pnl": -7748.35
+    },
+    {
+     "session": "20260713",
+     "realized_r": -0.017851250000000003,
+     "risk_capital": 248000.0,
+     "realized_pnl": -4427.110000000001
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.89240375,
+     "risk_capital": 284000.0,
+     "realized_pnl": 253442.665
+    },
+    {
+     "session": "20260713",
+     "realized_r": 0.9289583333333333,
+     "risk_capital": 183600.0,
+     "realized_pnl": 170556.75
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.1148204545454545,
+     "risk_capital": 211200.0,
+     "realized_pnl": -235450.08
+    },
+    {
+     "session": "20260713",
+     "realized_r": -1.0426158536585366,
+     "risk_capital": 266500.0,
+     "realized_pnl": -277857.125
+    },
+    {
+     "session": "20260714",
+     "realized_r": -0.7484894736842106,
+     "risk_capital": 193800.0,
+     "realized_pnl": -145057.26
+    },
+    {
+     "session": "20260714",
+     "realized_r": -0.6329916666666667,
+     "risk_capital": 330900.0,
+     "realized_pnl": -209456.9425
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.30974117647058824,
+     "risk_capital": 306000.0,
+     "realized_pnl": -94780.8
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.10968285714285715,
+     "risk_capital": 210000.0,
+     "realized_pnl": 23033.4
+    },
+    {
+     "session": "20260715",
+     "realized_r": 0.029762195121951218,
+     "risk_capital": 205000.0,
+     "realized_pnl": 6101.25
+    },
+    {
+     "session": "20260715",
+     "realized_r": -0.6762181818181818,
+     "risk_capital": 173800.0,
+     "realized_pnl": -117526.72
+    },
+    {
+     "session": "20260716",
+     "realized_r": -0.7045905073195355,
+     "risk_capital": 257530.0,
+     "realized_pnl": -181453.19335
+    },
+    {
+     "session": "20260720",
+     "realized_r": -0.8174692307692308,
+     "risk_capital": 221000.0,
+     "realized_pnl": -180660.7
+    },
+    {
+     "session": "20260721",
+     "realized_r": 0.8124029411764706,
+     "risk_capital": 204000.0,
+     "realized_pnl": 165730.2
+    },
+    {
+     "session": "20260722",
+     "realized_r": -0.5465965517241379,
+     "risk_capital": 232000.0,
+     "realized_pnl": -126810.4
+    }
+   ],
+   "param_diff": {
+    "gap_retention_min": {
+     "head": 0.5,
+     "arm": 1.0
+    }
+   },
+   "frozen_record": {
+    "cross_trial_arms_index": 6,
+    "arm": "gap_retention_min 0.5->1.0 (OFF)",
+    "net_ror": -0.0591
+   }
+  }
+ }
+}

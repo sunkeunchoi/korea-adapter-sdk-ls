@@ -6,6 +6,12 @@ Derived by plan `docs/plans/2026-08-05-001-feat-orb-power-and-data-turn-plan.md`
 This is **not** the ladder pre-registration. `preregistration.json` is untouched and stays
 byte-identical (KTD3) — see [§ Why not the ladder pre-registration](#why-not-the-ladder-pre-registration).
 
+The three arithmetic traps behind this record's own figures — the calendar-versus-productive
+period denominator, the paired standard error an absolute-detectability verdict does not
+answer, and why cutting cluster size *raises* the session requirement — are written up as a
+transferable rule in
+[`docs/solutions/conventions/power-questions-three-traps-calendar-denominator-paired-se-and-cluster-size.md`](../../../../docs/solutions/conventions/power-questions-three-traps-calendar-denominator-paired-se-and-cluster-size.md).
+
 ---
 
 ## The rule

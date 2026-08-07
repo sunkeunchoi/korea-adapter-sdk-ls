@@ -60,6 +60,131 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — paired power (measurement axis): the PAIRED question is ALSO unanswerable at this sample — 0 of 6 off-flip arms attributable; the ORB stand-down now closes on MEASUREMENT, head stays v35 (2026-08-07) — plan 2026-08-07-001
+
+- **What did NOT change.** No strategy code, no governed param, no ingest, no gateway call,
+  no backtest re-run, no acquisition. `strategy_code_hash` unchanged at `7571abef…`; head
+  stays **v35**; `config/preregistration.json` byte-identical at `abdb90a1…`. The turn's
+  output is a new verb (`lab-research report paired`), a committed fixture, and this record.
+
+- **Why this turn existed.** The 2026-08-06 verdict measures **absolute** detectability — is
+  the head's edge distinguishable from zero (no, by ~9×). Every lever turn asks a *different*
+  question: does armed beat off-flip **over the same sessions**. That is a paired comparison
+  with its own standard error, and nothing in the tree had measured it. So "at this effective
+  sample size nothing is attributable to anything" was established for absolute attribution
+  and **untested** for paired attribution. This turn tests it. It was a hypothesis that the
+  paired SE might be small enough to rescue lever work; it is not.
+
+- **The measurement.** Head `20260731T023138Z-backtest-orb-v35` (111 closed trades over 24
+  KST sessions, range `20260518..20260722`) against the six 2026-07-31 cost-aware off-flip
+  arms, all seven sharing catalog `ac026541…`, universe `2dfc00d7…` and code `7571abef…`.
+  Paired session-block bootstrap of the **net-RoR difference**, blocks over the **union** of
+  the sessions either arm traded, 10,000 replicates, seed 20260805, 95% confidence:
+
+  | arm | lever flipped | union / ∩ | delta | paired SE | z·SE | min. detectable paired diff | verdict |
+  |---|---|---|---|---|---|---|---|
+  | v92 | `entry_confirm` 1.0→0.0 | 25 / 24 | +0.031857 | 0.037306 | 0.073118 | +0.104515 | NOT attributable |
+  | v93 | `or_width_max_atr` 0.666→0.0 | 26 / 24 | +0.023715 | 0.018408 | 0.036078 | +0.051570 | NOT attributable |
+  | v94 | `breakeven_trigger_r` 0.41→0.0 | 24 / 24 | +0.081045 | 0.070970 | 0.139100 | +0.198830 | NOT attributable |
+  | v95 | `risk_per_trade_krw` **and** `ratio_atr_alpha` — **CONFOUNDED** | 24 / 24 | +0.047258 | 0.026605 | 0.052144 | +0.074535 | NOT attributable |
+  | v96 | `ratio_atr_alpha` 1.0→0.0 | 24 / 24 | +0.026933 | 0.018911 | 0.037065 | +0.052981 | NOT attributable |
+  | v97 | `gap_retention_min` 0.5→1.0 | 41 / 24 | +0.058478 | 0.067473 | 0.132244 | +0.189030 | NOT attributable |
+
+  **0 of 6 per-arm; 0 of 6 family-wide** (Bonferroni over six arms, z 2.6383). Every arm's
+  own difference lands between **0.4357× and 0.9063×** its bar — near-misses, not a degenerate
+  standard error, which is asserted as a band in `tests/paired_power.rs` so a future estimator
+  returning an enormous SE could not pass this as "not attributable" for the wrong reason.
+  **This headline is robust:** the closest arm (v95, 0.9063) sits far outside the bootstrap's
+  own Monte-Carlo error, so no arm's verdict here moves with the seed.
+
+- **VERDICT ROUTING: the "no, for every arm" exit. The ORB arc IS sample-blocked for lever
+  work, and the stand-down now rests on a measurement of the right question rather than on a
+  calculation about a different one.** The stand-down recommendation is **not** withdrawn.
+
+- **The KTD11 scope gate is what makes that conclusion narrow enough to be true.** These six
+  arms are whole-lever-**OFF** flips — by construction the largest effects the design space
+  contains, deltas of 0.024 to 0.081 against a head gross edge of +0.028422. The smallest
+  minimum detectable paired difference across them is **+0.0516**, which is **1.8× the head's
+  entire gross edge**. A marginal lever turn moves a fraction of that edge, so this sample
+  cannot resolve one even in principle. Detecting a whole-lever flip would not have
+  established that a marginal turn is measurable; failing to detect one settles it.
+
+- **At the reachable supply, 5-or-6 of 6 would flip — and it still does not buy lever work.**
+  Scaling the paired SE by `sqrt(45 / 237)` = 0.435745 (the head's in-range **calendar**
+  sessions over the vendor's reachable ceiling — 45, *not* the 24 trade-producing ones):
+
+  | | at the 45 sessions held | projected to 237 |
+  |---|---|---|
+  | arms attributable, per-arm | **0 of 6** (robust) | **5 or 6 of 6** (not reproducible) |
+  | smallest minimum detectable paired difference | +0.051570 | **+0.022472** |
+
+  So a max-depth pull *would* buy paired attributability for lever-**OFF**-sized effects,
+  which is more than it buys for absolute detectability (where it changes no decision at all).
+  But at 237 sessions the paired detection floor is still **+0.0225 — roughly the size of the
+  entire head gross edge (+0.0284)**. The arc would remain unable to adjudicate a marginal
+  lever turn. This is a **projection** under an unchanged clustering structure and an unchanged
+  effect, not a measurement.
+
+  > **The projected count is NOT a fact, and the verb now says so.** v92 lands at **0.9999 of
+  > its projected bar** (+0.031857 against +0.031861) — four parts in a hundred thousand, far
+  > inside the Monte-Carlo error of a 10,000-replicate bootstrap SD (`SE/√(2(B−1))`, ~0.7%).
+  > An independent cross-model review re-implemented the resampler and swept the seed: seeds
+  > `20260805`/`1`/`20260804` give 5 of 6, seeds `20260806`/`20260807`/`42`/`999` give 6 of 6.
+  > Same data, same code, different governance sentence. `report paired` therefore computes
+  > that Monte-Carlo band, marks such an arm **MARGINAL**, prints each arm's distance to its
+  > bar as a ratio, and refuses to print the projected count without the caveat. **The
+  > headline verdict above is unaffected** — no arm is marginal at the sample held.
+
+- **Attributability here means out-of-sample replication over the session-generating
+  process** — the delta would survive a different draw of sessions from the same regime. The
+  arms are deterministic re-simulations on identical bars, so **no part of this entry is a
+  causal claim** about a lever on the sessions actually held (R9).
+
+- **v95 is reported as CONFOUNDED, not dropped (KTD6).** Its manifest flips two params —
+  `risk_per_trade_krw` 299,340→0.0 **and** `ratio_atr_alpha` 1.0→0.0 — while
+  `sample-margin.json` labels it by the first alone. The verb derives every arm's label from
+  the manifest param diff against the head (excluding `strategy_version`, which differs on
+  every arm by construction), so the confound is printed rather than assumed away. Dropping
+  the arm would have silently moved the frozen record's arm count from six to five.
+
+- **Three corrections to what the queue item recorded**, verified against the artifacts on
+  disk: there are **six** off-flip arms and not seven (`cross_trial_arms[0]` is the head
+  itself); the head run lives under `data/turn4-fresh/`, not `turn4-cost-scratch`; and the
+  arms are **not** uniform at 113 trade records — they carry 104 to 254 closed trades over 24
+  to 41 sessions against the head's 111 over 24. `20260731T022007Z-…-v90` and `-v91` are
+  excluded: their `performance.json` files carry no cost-model fields, so pairing them would
+  confound the lever flip with the cost model.
+
+- **What review changed, recorded because the numbers moved.** An independent cross-model
+  adversarial pass (Codex, `independence_verified`) plus five in-context reviewers found four
+  wrong-number paths that all *printed cleanly*, and each is now closed: the reachable-supply
+  projection was applied to **any** operator-supplied head though its 45-session root is v35's
+  alone (now withheld unless the head is the pinned run); the frozen cross-check quoted v35's
+  `cross_trial_arms` for **any** head (now gated on the frozen provenance); the arm→frozen-row
+  match took the **first** hit though a frozen label carries a param name but not its value
+  (ambiguity is now UNAVAILABLE); and `arm_only_component` was a **residual** mislabelled as a
+  per-side contribution, NaN on an empty intersection (now `unshared_residual`, `Option`, and
+  never NaN in the output). One reviewer read `PAIRED_REACHABLE_CALENDAR_SESSIONS = 237` as
+  stale because the doc comment described the *fixed*-floor span (`20250715..20260709`, which
+  counts 241); the constant is correct for the **rolling** floor (`20250813..20260807` = 237,
+  matching the plan's supply table), and the comment now states which reading it is.
+
+- **What guards this.** `tests/paired_power.rs` recomputes every figure above from
+  `tests/fixtures/paired-arms-closed-trades.json` through `stats.rs` — hermetic, so it runs in
+  CI where `data/` does not exist — and the fixture path reproduces this live run to six
+  decimals. Verified by mutation, since a fixture-derived test passes before and after a
+  behavior change: replacing the paired draw with two independent draws reds two assertions,
+  and rooting the projection in 24 sessions instead of 45 reds a third.
+
+- **Queue.** `orb-paired-power-measurement` closes with this entry.
+  **`orb-sample-acquisition-decision` stays OPEN** — this measurement is evidence for it, and
+  the arm selection is the operator's. What it now knows that it did not: arm B (the
+  ~237-session max-depth pull) buys paired attributability for whole-lever flips and still
+  does not buy lever work, so the case for it is weaker than "it changes no decision" implied
+  and still not a case for spending a multi-day gateway budget.
+  `report-sample-catalog-read-metadata-only`'s priority falls: its stated justification is the
+  65× catalog growth this arc now says will not happen.
+
 ## Turn — sample sufficiency (measurement axis): the head's edge is BELOW ITS OWN DETECTION FLOOR; required sample UNREACHABLE, acquisition STANDS DOWN, head stays v35 (2026-08-06) — plan 2026-08-05-001
 
 - **Verdict: the sample question gates every lever question, and the answer is that this

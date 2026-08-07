@@ -17,7 +17,7 @@
 //! strategy code hash is unchanged and no re-baseline occurs (R6).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
 use nautilus_core::UnixNanos;
@@ -31,12 +31,13 @@ use crate::artifacts::manifest::Manifest;
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{DECISIONS_FILE, PERFORMANCE_FILE};
 use crate::margin::{self, LoadedMargin};
-use crate::params::StopMode;
-use crate::runner::research::{latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
+use crate::params::{OrbParams, StopMode};
+use crate::runner::research::{self, latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
 use crate::stats::{
     self, block_bootstrap_ratio, clustering, interval_normal, interval_t_few_clusters,
-    minimum_detectable_edge, required_trades, wild_cluster_interval, Block, BootstrapOutcome,
-    Clustering, Interval, MarginArm, MarginVerdict,
+    minimum_detectable_edge, paired_block_bootstrap_difference, required_trades,
+    wild_cluster_interval, Block, BootstrapOutcome, Clustering, Interval, MarginArm, MarginVerdict,
+    PairedBlock,
 };
 
 /// The candidate rounding step (KTD6): the empirical p70 is rounded to the
@@ -922,6 +923,23 @@ struct SampleTrade {
     risk_capital: f64,
 }
 
+/// Read a run's `performance.json` and reduce it to its closed, risk-joined
+/// trades, returning the parsed report alongside them (callers need its record
+/// count). Shared by `report sample` and `report paired`, which resolve their
+/// runs differently but load them identically.
+fn load_performance(
+    data_home: &Path,
+    run_id: &str,
+) -> anyhow::Result<(PerformanceReport, Vec<SampleTrade>)> {
+    let perf_path = data_home.join("runs").join(run_id).join(PERFORMANCE_FILE);
+    let perf_text = std::fs::read_to_string(&perf_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
+    let report: PerformanceReport = serde_json::from_str(&perf_text)
+        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
+    let trades = sample_trades(&report, run_id)?;
+    Ok((report, trades))
+}
+
 /// Reduce a run's performance artifact to its closed, risk-joined trades, or
 /// refuse with the reason. A refusal here is a **missing input**, not a
 /// verdict — the verdict itself never fails the command (KTD1).
@@ -1002,13 +1020,8 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         })?,
     };
 
-    let perf_path = cfg.data_home.join("runs").join(&run_id).join(PERFORMANCE_FILE);
-    let perf_text = std::fs::read_to_string(&perf_path)
-        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
-    let report: PerformanceReport = serde_json::from_str(&perf_text)
-        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
+    let (report, trades) = load_performance(&cfg.data_home, &run_id)?;
     let trade_records = report.trades.len();
-    let trades = sample_trades(&report, &run_id)?;
 
     // Session index: the clustering unit, and the resampling block (Q1).
     let mut session_ids: BTreeMap<NaiveDate, usize> = BTreeMap::new();
@@ -1499,6 +1512,724 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         band,
         supply,
         margin: margin_outcome,
+        lines,
+    })
+}
+
+// ===========================================================================
+// `report paired` — the paired-power measurement (plan 2026-08-07-001, U3)
+// ===========================================================================
+
+/// The head run's in-range **calendar** sessions — the denominator KTD10 scales
+/// from. The v35 head's data range `20260518..20260722` covers 45 KRX sessions;
+/// it produced trades on 24 of them. 24 is the *clustering* unit and must never
+/// denominate a calendar-session target — that is exactly the unit slip
+/// [`RateBasis`] exists to guard and the 2026-08-06 turn corrected.
+pub const PAIRED_HEAD_CALENDAR_SESSIONS: f64 = 45.0;
+
+/// The run [`PAIRED_HEAD_CALENDAR_SESSIONS`] was measured against.
+///
+/// The constant is a fact about **one** run's date range, but `head_run` is a
+/// required free-form parameter — the verb will happily pair any head. Without
+/// this pin, re-pointing it at a different head would still project against
+/// v35's 45 sessions and print a reachable-supply figure that looks exactly as
+/// authoritative as a correct one. A wrong number that prints cleanly is the
+/// failure mode this whole measurement exists to avoid, so the projection is
+/// withheld rather than guessed when the head does not match.
+pub const PAIRED_HEAD_CALENDAR_SESSIONS_RUN: &str = "20260731T023138Z-backtest-orb-v35";
+
+/// The calendar-session ceiling the vendor can actually serve.
+///
+/// LS paper serves minute bars from a **rolling** ~358-day window (probe of
+/// 2026-07-09: earliest served minute date `20250715`, depth 358 days). Under
+/// the rolling reading the floor re-probed today sits at ~`2025-08-13`, and
+/// `2025-08-13..2026-08-07` counts **237** trading sessions in the frozen KRX
+/// calendar (`adapters/nautilus/state/krx.calendar.json`).
+///
+/// Read the span carefully — the two readings differ and only one gives 237:
+///
+/// | reading | span | sessions |
+/// |---|---|---|
+/// | rolling floor (**this constant**) | `2025-08-13..2026-08-07` | **237** |
+/// | fixed floor | `2025-07-15..2026-08-07` | 258 |
+/// | earliest-served .. probe date | `2025-07-15..2026-07-09` | 241 |
+///
+/// An earlier version of this comment described the span as "earliest
+/// `20250715`, probed 2026-07-09", which is the *fixed*-floor phrasing attached
+/// to the *rolling*-floor count — it reads as though 237 should reproduce from
+/// a span that actually yields 241, and a reviewer reasonably read the constant
+/// as stale. The number was right; the derivation was mis-stated.
+///
+/// A **measured figure with an expiry**, not a fact — every acquisition arm is
+/// gated on re-probing it (R10). Not derivable in a test: the frozen calendar
+/// is machine-local state and is not committed.
+pub const PAIRED_REACHABLE_CALENDAR_SESSIONS: f64 = 237.0;
+
+/// `report paired` config. Two data homes, because the head lives under
+/// `turn4-fresh` and the cost-aware off-flip arms under `turn4-cost-scratch`:
+/// [`SampleConfig`]'s single `data_home` cannot express the pair.
+#[derive(Debug, Clone)]
+pub struct PairedConfig {
+    /// The head run's data home (`LS_DATA_HOME`).
+    pub head_home: PathBuf,
+    /// The head run id (`LS_REPORT_RUN`). **Required** — unlike `report sample`
+    /// this never defaults to the latest finalized run, which under
+    /// `turn4-fresh` is not v35.
+    pub head_run: String,
+    /// The arm runs' data home (`LS_PAIRED_ARM_HOME`; defaults to `head_home`).
+    pub arm_home: PathBuf,
+    /// The arm run ids (`LS_PAIRED_ARMS`, comma-separated).
+    pub arm_runs: Vec<String>,
+    /// The frozen margin record (`LS_SAMPLE_MARGIN`); `None` = the committed one.
+    pub margin_path: Option<PathBuf>,
+    /// Bootstrap replicates.
+    pub replicates: usize,
+    /// Resampler seed.
+    pub seed: u64,
+}
+
+/// One arm's paired adjudication.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairedArmOutcome {
+    /// The arm's run id.
+    pub run_id: String,
+    /// The arm's strategy version.
+    pub strategy_version: u32,
+    /// The lever label, derived from the manifest param diff against the head
+    /// (KTD6) — never read from the frozen record's own label.
+    pub label: String,
+    /// The param diff itself: `(param, head value, arm value)`.
+    pub param_diff: Vec<(String, String, String)>,
+    /// Sessions either arm traded — the resampling blocks (KTD4).
+    pub union_blocks: usize,
+    /// Sessions **both** traded. The paired variance cancellation applies only
+    /// here; the remaining blocks contribute an unpaired component.
+    pub intersection_blocks: usize,
+    /// Sessions only the head traded.
+    pub head_only_blocks: usize,
+    /// Sessions only the arm traded.
+    pub arm_only_blocks: usize,
+    /// The head's net RoR over the union.
+    pub head_net_ror: f64,
+    /// The arm's net RoR over the union.
+    pub arm_net_ror: f64,
+    /// The difference restricted to the sessions both arms traded — the part
+    /// where the paired cancellation actually applies. `None` when the two
+    /// share no session, which is a missing quantity and not a zero.
+    pub shared_component: Option<f64>,
+    /// `point − shared`. A **residual**, not either side's own contribution: a
+    /// difference of ratios of sums is not additive across a session partition,
+    /// so when both arms have sessions the other lacks this number mixes both.
+    /// `None` whenever [`Self::shared_component`] is.
+    pub unshared_residual: Option<f64>,
+    /// The frozen record's four-decimal net RoR for this arm, when one matches
+    /// on the diffed param name. A cross-check, never an input.
+    pub recorded_net_ror: Option<f64>,
+    /// The paired session-block bootstrap.
+    pub bootstrap: BootstrapOutcome,
+    /// The smallest paired difference this sample could distinguish from zero
+    /// at the frozen confidence and power (KTD11).
+    pub minimum_detectable_difference: f64,
+    /// Whether `|point|` exceeds the per-arm critical value times the paired SE.
+    pub attributable: bool,
+    /// `|point| / (z x SE)` — how far the arm sits from its own bar. Printed so
+    /// the distance is readable rather than inferred from two other figures.
+    pub bar_ratio: f64,
+    /// Whether `|point|` sits within one Monte-Carlo standard error of the bar,
+    /// i.e. whether [`Self::attributable`] is reproducible at all.
+    ///
+    /// A bootstrap SD carries its own sampling error, `SE / sqrt(2(B−1))` — at
+    /// 10,000 replicates about 0.7% of the SE. An arm inside that band flips
+    /// its verdict on a different `LS_SAMPLE_SEED` with the same data and the
+    /// same code, so reporting its bare boolean as a governance fact would be
+    /// reporting a coin flip.
+    pub marginal: bool,
+    /// Whether it also exceeds the family-wide multiplicity-adjusted value.
+    pub attributable_family_wide: bool,
+    /// The paired SE projected to the reachable supply (KTD10). `None` when the
+    /// head is not the run [`PAIRED_HEAD_CALENDAR_SESSIONS`] was measured
+    /// against — the scaling root would be wrong, and a wrong projection that
+    /// prints cleanly is worse than none.
+    pub projected_standard_error: Option<f64>,
+    /// The minimum detectable paired difference at that projected SE.
+    pub projected_minimum_detectable_difference: Option<f64>,
+    /// Whether this arm's **observed** difference would clear the per-arm
+    /// critical value at the projected SE. R9 asks the attributability question
+    /// at the reachable supply as well as the current one, and leaving the
+    /// reader to multiply the projected SE by z themselves is not answering it.
+    /// A projection under an unchanged clustering structure and an unchanged
+    /// effect, never a measurement.
+    pub attributable_at_reachable_supply: Option<bool>,
+    /// The same Monte-Carlo marginality test against the **projected** bar.
+    pub marginal_at_reachable_supply: Option<bool>,
+}
+
+/// Is `point` within one Monte-Carlo standard error of the bar `z x se`?
+///
+/// The bootstrap SD is itself estimated from `replicates` draws, with sampling
+/// error `se / sqrt(2(B − 1))`. An arm inside that band of its own threshold has
+/// no reproducible verdict — it flips on the seed.
+fn within_monte_carlo_error(point: f64, se: f64, z: f64, replicates: usize) -> bool {
+    if replicates < 2 || !se.is_finite() || se <= 0.0 {
+        return false;
+    }
+    let bar = z * se;
+    let band = bar / (2.0 * (replicates - 1) as f64).sqrt();
+    (point.abs() - bar).abs() <= band
+}
+
+/// A `report paired` outcome: structured figures for tests + the printed lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairedOutcome {
+    /// The head run id.
+    pub head_run_id: String,
+    /// The head's closed trades.
+    pub head_closed_trades: usize,
+    /// The catalog fingerprint every pair was gated on.
+    pub catalog_fingerprint: String,
+    /// Per-arm adjudications, in the order the arms were supplied.
+    pub arms: Vec<PairedArmOutcome>,
+    /// The frozen record's four-decimal net RoR for the head — `cross_trial_arms`
+    /// entry 0, which the record documents as the v35 baseline. Paired with each
+    /// arm's own frozen figure so the recorded delta printed as a cross-check is
+    /// entirely the frozen record's, never a recomputed figure wearing its label.
+    pub recorded_head_net_ror: Option<f64>,
+    /// The per-arm two-sided critical value (KTD9's primary).
+    pub critical_value: f64,
+    /// The Bonferroni-adjusted value across the supplied arms (KTD9's secondary).
+    pub family_critical_value: f64,
+    /// `sqrt(head calendar sessions / reachable calendar sessions)` (KTD10).
+    /// `None` when the head is not [`PAIRED_HEAD_CALENDAR_SESSIONS_RUN`].
+    pub projection_factor: Option<f64>,
+    /// The printed report lines.
+    pub lines: Vec<String>,
+}
+
+/// A run reduced to what the pairing needs: its manifest and its closed trades.
+struct PairedRun {
+    manifest: Manifest,
+    trades: Vec<SampleTrade>,
+}
+
+fn load_paired_run(data_home: &Path, run_id: &str) -> anyhow::Result<PairedRun> {
+    let manifest = read_manifest(data_home, run_id)?;
+    let (_, trades) = load_performance(data_home, run_id)?;
+    Ok(PairedRun { manifest, trades })
+}
+
+/// Fold a run's trades into `session -> (Σ realized_pnl, Σ risk_capital)`.
+fn by_session(trades: &[SampleTrade]) -> BTreeMap<NaiveDate, (f64, f64)> {
+    let mut out: BTreeMap<NaiveDate, (f64, f64)> = BTreeMap::new();
+    for t in trades {
+        let e = out.entry(t.session).or_insert((0.0, 0.0));
+        e.0 += t.realized_pnl;
+        e.1 += t.risk_capital;
+    }
+    out
+}
+
+/// `Σnum / Σden` over a session fold, through the crate's single definition of
+/// the ratio statistic. `None` when the denominator is not positive — an arm
+/// that traded nothing over the selected sessions.
+///
+/// Delegating rather than re-folding matters here specifically: KTD3 pins net
+/// RoR as *the* statistic these arms are adjudicated on, so a second
+/// implementation of it in the production path is exactly the drift this turn
+/// would be unable to detect. (The derivation guard in `tests/paired_power.rs`
+/// re-states the formula by hand on purpose — that independence is a property
+/// of the test, not of the report.)
+fn fold_ratio<'a>(entries: impl Iterator<Item = &'a (f64, f64)>) -> Option<f64> {
+    let block: Block = entries.copied().collect();
+    stats::ratio_statistic(&[block]).ok()
+}
+
+/// The manifest param diff between head and arm, `strategy_version` excluded,
+/// as `(param, head value, arm value)`.
+///
+/// The diverged-key set comes from [`research::param_diff`], the same seam
+/// `runs compare` reports against, so the two can never disagree about what
+/// counts as a changed param. Only the value rendering is this report's own.
+///
+/// The exclusion is load-bearing: `strategy_version` differs on every arm by
+/// construction — it is the run's identity, not a lever — so without it every
+/// arm prints as multi-param and KTD6's confound signal on the risk-sizing arm
+/// is destroyed.
+fn param_diff(head: &OrbParams, arm: &OrbParams) -> Vec<(String, String, String)> {
+    let to_map = |p: &OrbParams| match serde_json::to_value(p) {
+        Ok(serde_json::Value::Object(m)) => m.into_iter().collect::<BTreeMap<_, _>>(),
+        _ => BTreeMap::new(),
+    };
+    let (h, a) = (to_map(head), to_map(arm));
+    let show = |v: Option<&serde_json::Value>| {
+        v.map_or_else(|| "absent".to_string(), ToString::to_string)
+    };
+    research::param_diff(head, arm)
+        .into_iter()
+        .filter(|k| k != "strategy_version")
+        .map(|k| {
+            let (hv, av) = (show(h.get(&k)), show(a.get(&k)));
+            (k, hv, av)
+        })
+        .collect()
+}
+
+/// Refuse a pair whose comparability is not established, naming which of the
+/// three hashes diverged (KTD7).
+///
+/// A catalog fingerprint is range-scoped over hashed bars only, so an identical
+/// fingerprint does not prove an identical derived universe
+/// (`docs/solutions/conventions/range-scoped-comparability-scope-every-derived-input.md`).
+/// All seven runs match today; the guard is what keeps a future re-run from
+/// being paired against a stale head.
+fn require_comparable(head: &Manifest, arm: &Manifest) -> anyhow::Result<()> {
+    for (field, h, a) in [
+        ("catalog_fingerprint", &head.catalog_fingerprint, &arm.catalog_fingerprint),
+        ("universe_hash", &head.universe_hash, &arm.universe_hash),
+        ("strategy_code_hash", &head.strategy_code_hash, &arm.strategy_code_hash),
+    ] {
+        if h != a {
+            anyhow::bail!(
+                "arm {} is NOT comparable to head {}: `{field}` diverges ({h} vs {a}). A paired \
+                 difference across a moved {field} measures the move, not the lever — this is a \
+                 MISSING INPUT, not a verdict",
+                arm.run_id,
+                head.run_id
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The frozen record's delta for an arm, matched on the **param name** its label
+/// leads with rather than on the arm's own value.
+///
+/// Matching on the recorded number would be circular — it is the number being
+/// cross-checked. Matching on the frozen label's leading token is an independent
+/// key, and it survives KTD6's confound: the risk-sizing arm's frozen label
+/// names `risk_per_trade_krw`, which is one of the two params actually diffed.
+fn recorded_arm_net_ror(margin: &margin::SampleMargin, diff: &[(String, String, String)]) -> Option<f64> {
+    let diffed: Vec<&str> = diff.iter().map(|(k, _, _)| k.as_str()).collect();
+    let mut hits = margin.cross_trial_arms.iter().filter(|entry| {
+        entry.arm.split_whitespace().next().is_some_and(|lead| diffed.contains(&lead))
+    });
+    let first = hits.next()?;
+    // AMBIGUITY IS UNAVAILABILITY, never first-wins. The frozen labels carry a
+    // param name but not its value, so two arms moving the same lever to
+    // different values match the same entries. Taking the first would attach a
+    // real, wrong number to an arm and print it as a passing cross-check.
+    if hits.next().is_some() {
+        return None;
+    }
+    Some(first.net_ror)
+}
+
+/// Build the paired-power report for one head and one or more off-flip arms
+/// (U3; R8, R9, R13).
+///
+/// Read-only in the same strong sense as [`report_sample`]: it opens each run's
+/// `performance.json` and `manifest.json`, writes no artifact, reaches no
+/// catalog and no ingest entry point, and therefore moves neither
+/// `strategy_code_hash` nor head identity.
+///
+/// The staging guard is [`report_sample`]'s, unchanged: the runs' KRW P&L builds
+/// every distribution here, but **no KRW-denominated P&L or expectancy figure
+/// reaches the output**. Net RoR and its paired difference are the adjudicated
+/// statistics and are printed; the sums they are ratios of are not.
+///
+/// Every verdict — attributable, unattributable, a mixture — is a **successful**
+/// completion (R9: a stand-down is a verdict). Only a missing or unusable input
+/// fails, which includes a pair whose comparability is not established.
+///
+/// # Errors
+///
+/// On an unknown/absent run, an unreadable performance artifact, a run with no
+/// closed trades, a pre-field vintage carrying null risk fields, an empty arm
+/// list, a pair that fails the three-hash comparability gate, or a single-block
+/// union.
+pub fn report_paired(cfg: &PairedConfig) -> anyhow::Result<PairedOutcome> {
+    if cfg.arm_runs.is_empty() {
+        anyhow::bail!(
+            "no arm runs supplied — set LS_PAIRED_ARMS to a comma-separated list of run ids. A \
+             paired difference needs something to pair against"
+        );
+    }
+    let head = load_paired_run(&cfg.head_home, &cfg.head_run)?;
+    let head_sessions = by_session(&head.trades);
+
+    let margin_path = cfg.margin_path.clone().unwrap_or_else(margin::frozen_margin_path);
+    let LoadedMargin { values: frozen, content_hash } = margin::load(&margin_path)?;
+    // `cross_trial_arms[0]` is the v35 baseline — the head itself, as the record
+    // documents. Held here so the printed "recorded delta" is frozen-minus-frozen
+    // rather than a recomputed head wearing the frozen record's label.
+    //
+    // Gated on the loaded head actually BEING that baseline. `head_run` is a
+    // free-form required parameter, so without this a different head would be
+    // cross-checked against v35's frozen figure and print a coherent-looking
+    // delta between two runs that were never compared.
+    let head_is_frozen_baseline = head.manifest.run_id == frozen.provenance.run_id
+        && head.manifest.strategy_version == frozen.provenance.strategy_version
+        && head.manifest.catalog_fingerprint == frozen.provenance.catalog_fingerprint;
+    let recorded_head =
+        head_is_frozen_baseline.then(|| frozen.cross_trial_arms.first().map(|e| e.net_ror)).flatten();
+
+    let z = stats::two_sided_z(SAMPLE_CONFIDENCE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let z_power = stats::power_z(SAMPLE_POWER).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Bonferroni across the supplied arms: valid under arbitrary dependence,
+    // which matters because every arm shares the same head and the arms are
+    // therefore anything but independent.
+    let family_confidence = 1.0 - (1.0 - SAMPLE_CONFIDENCE) / cfg.arm_runs.len() as f64;
+    let z_family = stats::two_sided_z(family_confidence).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // KTD10's projection is rooted in ONE run's calendar-session count, so it
+    // is only meaningful for that run. Withheld rather than guessed otherwise.
+    let projection_factor = (head.manifest.run_id == PAIRED_HEAD_CALENDAR_SESSIONS_RUN)
+        .then(|| (PAIRED_HEAD_CALENDAR_SESSIONS / PAIRED_REACHABLE_CALENDAR_SESSIONS).sqrt());
+
+    let mut arms = Vec::with_capacity(cfg.arm_runs.len());
+    for run_id in &cfg.arm_runs {
+        let arm = load_paired_run(&cfg.arm_home, run_id)?;
+        require_comparable(&head.manifest, &arm.manifest)?;
+        let arm_sessions = by_session(&arm.trades);
+
+        // Blocks over the UNION of the sessions either arm traded (KTD4). A
+        // session an arm did not trade contributes nothing to that arm's sums,
+        // which is precisely what makes the point estimate equal the recorded
+        // whole-run delta rather than a differently-scoped quantity (AE5).
+        let mut union: Vec<NaiveDate> =
+            head_sessions.keys().chain(arm_sessions.keys()).copied().collect();
+        union.sort_unstable();
+        union.dedup();
+        let blocks: Vec<PairedBlock> = union
+            .iter()
+            .map(|s| PairedBlock {
+                head: head_sessions.get(s).map(|p| vec![*p]).unwrap_or_default(),
+                arm: arm_sessions.get(s).map(|p| vec![*p]).unwrap_or_default(),
+            })
+            .collect();
+
+        let bootstrap =
+            paired_block_bootstrap_difference(&blocks, cfg.replicates, cfg.seed, SAMPLE_CONFIDENCE)
+                .map_err(|e| {
+                    anyhow::anyhow!("pairing head {} against arm {run_id}: {e}", cfg.head_run)
+                })?;
+
+        let head_net_ror = fold_ratio(head_sessions.values())
+            .ok_or_else(|| anyhow::anyhow!("head {} has no positive risk capital", cfg.head_run))?;
+        let arm_net_ror = fold_ratio(arm_sessions.values())
+            .ok_or_else(|| anyhow::anyhow!("arm {run_id} has no positive risk capital"))?;
+
+        // Decompose the observed difference: the shared sessions are where the
+        // pairing actually cancels a common shock, and the remainder is what the
+        // arm's own sessions contribute. Reported apart rather than left implicit
+        // (KTD2), because for an arm that adds sessions the SE is a hybrid.
+        let shared: Vec<NaiveDate> =
+            union.iter().copied().filter(|s| head_sessions.contains_key(s) && arm_sessions.contains_key(s)).collect();
+        let shared_component = match (
+            fold_ratio(shared.iter().filter_map(|s| head_sessions.get(s))),
+            fold_ratio(shared.iter().filter_map(|s| arm_sessions.get(s))),
+        ) {
+            (Some(h), Some(a)) => Some(h - a),
+            _ => None,
+        };
+        let point = head_net_ror - arm_net_ror;
+        let unshared_residual = shared_component.map(|s| point - s);
+
+        let diff = param_diff(&head.manifest.params, &arm.manifest.params);
+        let label = if diff.is_empty() {
+            "no param diff against the head".to_string()
+        } else {
+            diff.iter().map(|(k, h, a)| format!("{k} {h}->{a}")).collect::<Vec<_>>().join(" + ")
+        };
+
+        let mdd = (z + z_power) * bootstrap.standard_error;
+        let projected_se = projection_factor.map(|f| bootstrap.standard_error * f);
+        arms.push(PairedArmOutcome {
+            run_id: run_id.clone(),
+            strategy_version: arm.manifest.strategy_version,
+            recorded_net_ror: recorded_arm_net_ror(&frozen, &diff),
+            label,
+            param_diff: diff,
+            union_blocks: union.len(),
+            intersection_blocks: shared.len(),
+            head_only_blocks: union.len() - arm_sessions.len(),
+            arm_only_blocks: union.len() - head_sessions.len(),
+            head_net_ror,
+            arm_net_ror,
+            shared_component,
+            unshared_residual,
+            attributable: bootstrap.point.abs() > z * bootstrap.standard_error,
+            attributable_family_wide: bootstrap.point.abs() > z_family * bootstrap.standard_error,
+            bar_ratio: bootstrap.point.abs() / (z * bootstrap.standard_error),
+            marginal: within_monte_carlo_error(
+                bootstrap.point,
+                bootstrap.standard_error,
+                z,
+                bootstrap.replicates,
+            ),
+            attributable_at_reachable_supply: projected_se
+                .map(|se| bootstrap.point.abs() > z * se),
+            marginal_at_reachable_supply: projected_se.map(|se| {
+                within_monte_carlo_error(bootstrap.point, se, z, bootstrap.replicates)
+            }),
+            minimum_detectable_difference: mdd,
+            projected_standard_error: projected_se,
+            projected_minimum_detectable_difference: projected_se.map(|se| (z + z_power) * se),
+            bootstrap,
+        });
+    }
+
+    // ---- Output ------------------------------------------------------------
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "report paired: head {} (strategy v{}, catalog {})",
+        cfg.head_run, head.manifest.strategy_version, head.manifest.catalog_fingerprint
+    ));
+    lines.push(format!(
+        "  head home {} | arm home {}",
+        cfg.head_home.display(),
+        cfg.arm_home.display()
+    ));
+    lines.push(format!(
+        "  head: {} closed trades over {} KST sessions, range {}..{}",
+        head.trades.len(),
+        head_sessions.len(),
+        head.manifest.data_range.start,
+        head.manifest.data_range.end
+    ));
+    lines.push(format!(
+        "  comparability gate: catalog_fingerprint + universe_hash + strategy_code_hash, all three \
+         matched on {} arm(s) (KTD7)",
+        arms.len()
+    ));
+    lines.push(format!(
+        "  statistic: net RoR (Σ realized / Σ risk_capital) — the unit the 2026-07-31 cost-aware \
+         off-flips were measured on and the one sample-margin.json names (KTD3). Blocks span the \
+         UNION of sessions either arm traded (KTD4). Paired session-block bootstrap, {} \
+         replicates, seed {}.",
+        cfg.replicates, cfg.seed
+    ));
+    lines.push(format!(
+        "  critical values at the frozen {:.0}% confidence: per-arm z {z:.4} (KTD9 primary); \
+         family-wide Bonferroni over {} arms z {z_family:.4} (secondary)",
+        SAMPLE_CONFIDENCE * 100.0,
+        arms.len()
+    ));
+
+    for a in &arms {
+        lines.push(format!("arm {} — v{} — {}", a.run_id, a.strategy_version, a.label));
+        if a.param_diff.len() > 1 {
+            lines.push(format!(
+                "  CONFOUNDED: this arm flips {} params at once, so its difference is not \
+                 attributable to any one lever (KTD6 — printed, not dropped)",
+                a.param_diff.len()
+            ));
+        }
+        lines.push(format!(
+            "  blocks: union {} | both traded {} | head-only {} | arm-only {}",
+            a.union_blocks, a.intersection_blocks, a.head_only_blocks, a.arm_only_blocks
+        ));
+        lines.push(format!(
+            "  net RoR head {:+.6} − arm {:+.6} = {:+.6}",
+            a.head_net_ror, a.arm_net_ror, a.bootstrap.point
+        ));
+        lines.push(match (a.shared_component, a.unshared_residual) {
+            // A difference of ratios of SUMS is not additive across a session
+            // partition, so the remainder is a residual and is named one. It
+            // equals the arm's own contribution only when the head has no
+            // session the arm lacks — which is the case for all six arms here.
+            (Some(s), Some(r)) => format!(
+                "    shared-session component {s:+.6} | unshared residual {r:+.6}{}",
+                if a.head_only_blocks == 0 {
+                    " (head ⊆ arm, so the residual is the arm's own sessions)"
+                } else {
+                    " (both arms have unshared sessions — the residual mixes them)"
+                }
+            ),
+            _ => "    shared-session component UNAVAILABLE — the two arms share no session, so \
+                  there is no paired component to report (the whole-run difference above is \
+                  still valid)"
+                .to_string(),
+        });
+        lines.push(match (recorded_head, a.recorded_net_ror) {
+            (Some(h), Some(v)) => format!(
+                "  cross-check vs sample-margin.json, all four frozen decimals: head {h:+.4} − \
+                 arm {v:+.4} = recorded delta {:+.4}; measured {:+.4}. Both sides of the recorded \
+                 delta come from the frozen record — the frozen record carries four decimals, so \
+                 it cannot check more.",
+                h - v,
+                a.bootstrap.point
+            ),
+            _ if !head_is_frozen_baseline => format!(
+                "  cross-check: UNAVAILABLE — the frozen record's baseline is {}, but this head \
+                 is {}. Its cross_trial_arms figures describe a different comparison, so quoting \
+                 them here would print a delta between two runs that were never compared",
+                frozen.provenance.run_id, cfg.head_run
+            ),
+            _ => "  cross-check: no cross_trial_arms entry UNAMBIGUOUSLY matched this arm's \
+                  diffed param name — the recorded delta is UNAVAILABLE, not zero (a frozen \
+                  label carries a param name but not its value, so two arms moving the same \
+                  lever match the same entries)"
+                .to_string(),
+        });
+        lines.push(format!(
+            "  paired SE {:.6} | {:.0}% [{:+.6}, {:+.6}] | share of replicates with the head ahead \
+             {:.4} | usable replicates {} of {}",
+            a.bootstrap.standard_error,
+            SAMPLE_CONFIDENCE * 100.0,
+            a.bootstrap.lo,
+            a.bootstrap.hi,
+            a.bootstrap.p_positive,
+            a.bootstrap.replicates,
+            cfg.replicates
+        ));
+        // A dropped replicate is one where the draw gave a whole side no
+        // trades. Dropping them is correct per-replicate (there is no ratio to
+        // take), but at a material rate the surviving draws are the dispersion
+        // CONDITIONAL on both arms appearing, which is not the union-session
+        // sampling distribution this report claims. Silent at 0; loud otherwise.
+        let dropped = cfg.replicates.saturating_sub(a.bootstrap.replicates);
+        if dropped > 0 {
+            let share = dropped as f64 / cfg.replicates as f64;
+            lines.push(format!(
+                "  CAUTION: {dropped} of {} replicates ({:.2}%) were dropped for an empty side. \
+                 The SE above is conditional on both arms drawing at least one session, not the \
+                 unconditional union-session distribution — read it as a lower bound on the true \
+                 dispersion, and treat a share above ~1% as a reason to widen the sample rather \
+                 than to trust the interval.",
+                cfg.replicates,
+                share * 100.0
+            ));
+        }
+        lines.push(format!(
+            "  minimum detectable paired difference: {:+.6} (KTD11)",
+            a.minimum_detectable_difference
+        ));
+        lines.push(format!(
+            "  VERDICT: {}{} at the per-arm critical value ({:+.6} vs {z:.4} x SE = {:+.6}; \
+             |point| is {:.4} of the bar); family-wide {}",
+            if a.attributable { "ATTRIBUTABLE" } else { "NOT attributable" },
+            if a.marginal { " — but MARGINAL" } else { "" },
+            a.bootstrap.point,
+            z * a.bootstrap.standard_error,
+            a.bar_ratio,
+            if a.attributable_family_wide { "ATTRIBUTABLE" } else { "NOT attributable" }
+        ));
+        if a.marginal {
+            lines.push(
+                "  MARGINAL: this arm sits within one Monte-Carlo standard error of its own bar, \
+                 so the verdict above is NOT reproducible — the same data and the same code flip \
+                 it on a different LS_SAMPLE_SEED. Read it as unresolved, not as a result."
+                    .to_string(),
+            );
+        }
+        lines.push(match (
+            a.projected_standard_error,
+            a.projected_minimum_detectable_difference,
+            a.attributable_at_reachable_supply,
+        ) {
+            (Some(se), Some(mdd), Some(reachable)) => format!(
+                "  projected to the reachable supply \
+                 ({PAIRED_REACHABLE_CALENDAR_SESSIONS:.0} calendar sessions): SE {se:.6}, \
+                 minimum detectable paired difference {mdd:+.6}, this arm's own difference would \
+                 be {}{} ({:+.6} vs {z:.4} x SE = {:+.6}; |point| is {:.4} of the projected bar)",
+                if reachable { "ATTRIBUTABLE" } else { "NOT attributable" },
+                if a.marginal_at_reachable_supply == Some(true) {
+                    " — but MARGINAL, within Monte-Carlo error of the projected bar and therefore \
+                     seed-dependent"
+                } else {
+                    ""
+                },
+                a.bootstrap.point,
+                z * se,
+                a.bootstrap.point.abs() / (z * se)
+            ),
+            _ => format!(
+                "  projected to the reachable supply: WITHHELD — the projection root \
+                 ({PAIRED_HEAD_CALENDAR_SESSIONS:.0} calendar sessions) was measured for head \
+                 {PAIRED_HEAD_CALENDAR_SESSIONS_RUN}, and this head is {}. Scaling by a root \
+                 measured on a different run would print an authoritative-looking figure that is \
+                 simply wrong (KTD10)",
+                cfg.head_run
+            ),
+        });
+    }
+
+    let attributable = arms.iter().filter(|a| a.attributable).count();
+    let family_attributable = arms.iter().filter(|a| a.attributable_family_wide).count();
+    let marginal_now = arms.iter().filter(|a| a.marginal).count();
+    lines.push(format!(
+        "SUMMARY at the sample held: {attributable} of {} arm(s) attributable per-arm{}; \
+         {family_attributable} family-wide (Bonferroni)",
+        arms.len(),
+        if marginal_now > 0 {
+            format!(" ({marginal_now} MARGINAL — seed-dependent, see above)")
+        } else {
+            String::new()
+        }
+    ));
+    lines.push(match projection_factor {
+        Some(_) => {
+            let marginal_reachable =
+                arms.iter().filter(|a| a.marginal_at_reachable_supply == Some(true)).count();
+            format!(
+                "SUMMARY projected to the reachable supply: {} of {} arm(s) would be attributable \
+                 per-arm, holding each arm's observed difference and clustering structure fixed \
+                 (R9's second question).{}",
+                arms.iter().filter(|a| a.attributable_at_reachable_supply == Some(true)).count(),
+                arms.len(),
+                if marginal_reachable > 0 {
+                    format!(
+                        " CAUTION: {marginal_reachable} of them is MARGINAL, so this COUNT IS NOT \
+                         REPRODUCIBLE — it moves with LS_SAMPLE_SEED on identical data. Quote it \
+                         as a range, never as a fact."
+                    )
+                } else {
+                    String::new()
+                }
+            )
+        }
+        None => "SUMMARY projected to the reachable supply: WITHHELD — see the per-arm lines. \
+                 R9's second question is unanswered for this head, not answered negatively."
+            .to_string(),
+    });
+    if let Some(factor) = projection_factor {
+        lines.push(format!(
+            "  projection (KTD10): the paired SE scales by \
+             sqrt({PAIRED_HEAD_CALENDAR_SESSIONS:.0} / \
+             {PAIRED_REACHABLE_CALENDAR_SESSIONS:.0}) = {factor:.6}. \
+             {PAIRED_HEAD_CALENDAR_SESSIONS:.0} is the head run's in-range CALENDAR sessions, NOT \
+             its {} trade-producing ones. This is a PROJECTION under an unchanged clustering \
+             structure, not a measurement.",
+            head_sessions.len()
+        ));
+    }
+    lines.push(
+        "  SCOPE (KTD11): these arms are whole-lever-OFF flips — by construction the largest \
+         effects the design space contains. Detecting them does NOT establish that a marginal \
+         lever turn is measurable; read the minimum detectable paired difference against the \
+         effect class a candidate turn would produce."
+            .to_string(),
+    );
+    lines.push(
+        "  Attributability here means out-of-sample replication over the session-generating \
+         process — the delta would survive a different draw of sessions from the same regime. The \
+         arms are deterministic re-simulations on identical bars, so no part of this is a causal \
+         claim about a lever on the sessions actually held (R9)."
+            .to_string(),
+    );
+    lines.push(format!(
+        "  margin record cited for the cross-check: {} (sha256 {content_hash})",
+        margin_path.display()
+    ));
+
+    Ok(PairedOutcome {
+        head_run_id: cfg.head_run.clone(),
+        head_closed_trades: head.trades.len(),
+        catalog_fingerprint: head.manifest.catalog_fingerprint.clone(),
+        arms,
+        recorded_head_net_ror: recorded_head,
+        critical_value: z,
+        family_critical_value: z_family,
+        projection_factor,
         lines,
     })
 }
