@@ -1418,7 +1418,9 @@ mod basis_shift_heal {
 // ---------------------------------------------------------------------------
 
 use chrono::{Datelike, Duration as ChronoDuration};
-use nautilus_ls::ingest::{probes_dir_for, read_minute_lookback, write_minute_lookback, MinuteLookback};
+use nautilus_ls::ingest::{
+    probes_dir_for, read_minute_lookback, write_minute_lookback, MinuteLookback, ProbeOutcome,
+};
 
 /// Mount a t8412 responder that serves one weekday row per date in
 /// `[max(sdate, earliest), edate]` — an all-empty window means the request range is
@@ -1475,11 +1477,14 @@ async fn probe_converges_on_earliest_served_date_and_writes_file() {
 
     let ingestor = Ingestor::new(sdk, probe_config(&catalog));
     let anchor = ymd(2024, 1, 31);
-    let out = ingestor
+    let outcome = ingestor
         .run_probe_lookback_gated("005930", 1, anchor, "2024-01-31T16:30:00+09:00".into(), all_sessions_gate())
         .await
-        .unwrap()
-        .expect("the pilot serves history");
+        .unwrap();
+    let out = match outcome {
+        ProbeOutcome::Recorded(lb) => lb,
+        other => panic!("the pilot serves history, so the outcome must be Recorded: {other:?}"),
+    };
     assert_eq!(out.earliest_date, "20240110", "converges on the earliest served date");
     assert_eq!(out.depth_days, 21, "depth = anchor − earliest");
 
@@ -1501,7 +1506,13 @@ async fn probe_reports_nothing_when_pilot_serves_no_history() {
         .run_probe_lookback_gated("005930", 1, ymd(2024, 1, 31), "2024-01-31T16:30:00+09:00".into(), all_sessions_gate())
         .await
         .unwrap();
-    assert!(out.is_none(), "an empty pilot records nothing");
+    // NoHistory, *not* CalendarStop: the anchor resolved and the walk really did run against
+    // the gateway. This is a statement about served history. Its twin —
+    // `enforced_probe_unknown_anchor_makes_no_request` — asserts the other variant on the
+    // same `records nothing` surface; the two together are what keep the outcomes
+    // distinguishable. Both asserted `is_none()` before, which is exactly why a calendar
+    // refusal could be read as a supply fact.
+    assert_eq!(out, ProbeOutcome::NoHistory, "an empty pilot is NoHistory, not a calendar refusal");
     // No file was written.
     assert!(read_minute_lookback(&probes_dir_for(&catalog)).is_err());
 }
@@ -3270,8 +3281,57 @@ mod calendar_gate_migration {
             .await
             .unwrap();
 
-        assert!(out.is_none(), "Unknown anchor → nothing recorded");
+        // CalendarStop, *not* NoHistory. See the twin assertion in
+        // `probe_reports_nothing_when_pilot_serves_no_history`: both used to be `is_none()`,
+        // so a refusal that never reached the gateway was indistinguishable from a vendor
+        // that served nothing — the opposite conclusion on the question the probe answers.
+        assert_eq!(
+            out,
+            ProbeOutcome::CalendarStop,
+            "Unknown anchor → CalendarStop, which says nothing about served history"
+        );
         assert_eq!(count_t8412(&server).await, 0, "Unknown anchor → zero gateway requests");
+        // A refusal leaves the recorded artifact alone; it must never overwrite a prior reading.
+        assert!(read_minute_lookback(&probes_dir_for(&catalog)).is_err(), "Stop writes nothing");
+    }
+
+    /// A calendar Stop must leave an EXISTING reading byte-identical. The absent-file case
+    /// above cannot catch a Stop that clobbers a prior artifact — and the recorded depth is
+    /// what downstream session counts are derived from, so a silent overwrite would corrupt
+    /// figures that no longer have a live source to be re-derived from.
+    #[tokio::test]
+    async fn enforced_probe_stop_leaves_a_prior_reading_untouched() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("data").join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_with_probe(&server, ymd(2010, 6, 1)).await;
+
+        // A prior reading on disk, exactly as an earlier probe would have left it.
+        let prior = MinuteLookback {
+            earliest_date: "20250715".into(),
+            depth_days: 358,
+            probed_at: "2026-07-09T04:41:40.743744+00:00".into(),
+        };
+        let probes = probes_dir_for(&catalog);
+        write_minute_lookback(&probes, &prior).unwrap();
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(Some(view));
+
+        let ing = Ingestor::new(sdk, probe_config(&catalog));
+        let out = ing
+            .run_probe_lookback_gated("005930", 1, ymd(2010, 1, 5), "2013-06-01T00:00:00Z".into(), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(out, ProbeOutcome::CalendarStop, "Unknown anchor → CalendarStop");
+        assert_eq!(count_t8412(&server).await, 0, "Stop → zero gateway requests");
+        assert_eq!(
+            read_minute_lookback(&probes).unwrap(),
+            prior,
+            "a Stop must not overwrite the reading a real probe recorded"
+        );
     }
 
     /// Enforced probe: a proven-session anchor probes (request observable), anchored at the
@@ -3288,11 +3348,14 @@ mod calendar_gate_migration {
         let gate = CalendarGate::new(Some(view));
 
         let ing = Ingestor::new(sdk, probe_config(&catalog));
-        let out = ing
+        let outcome = ing
             .run_probe_lookback_gated("005930", 1, ymd(2010, 6, 15), "2013-06-01T00:00:00Z".into(), gate)
             .await
-            .unwrap()
-            .expect("the pilot serves history from the selected session anchor");
+            .unwrap();
+        let out = match outcome {
+            ProbeOutcome::Recorded(lb) => lb,
+            other => panic!("a proven-session anchor that serves history must Record: {other:?}"),
+        };
 
         assert!(count_t8412(&server).await >= 1, "session anchor → the probe dispatches");
         // depth = selected anchor (2010-06-15) − earliest served (2010-06-01) = 14 days.

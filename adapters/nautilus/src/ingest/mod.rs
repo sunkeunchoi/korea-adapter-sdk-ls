@@ -3280,6 +3280,37 @@ pub struct MinuteLookback {
     pub probed_at: String,
 }
 
+/// The outcome of a gated max-lookback probe — the three cases a caller must be able to
+/// tell apart.
+///
+/// This exists because `Option<MinuteLookback>` could not: a calendar refusal and a
+/// pilot that served nothing both collapsed to `None`, so `ls-ingest` printed one
+/// "served no minute history" line for both. On a probe whose whole purpose is to
+/// measure supply, that let a refusal be read as a supply fact. The distinction is a
+/// property of the probe, so it belongs here rather than in the binary's formatting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// The calendar refused the anchor ([`ProbeAnchor::Stop`]): zero gateway requests
+    /// issued, nothing recorded. Says nothing about what the vendor serves.
+    CalendarStop,
+    /// The anchor resolved and the walk ran, but the pilot served no minute history.
+    /// This one *is* a statement about supply.
+    NoHistory,
+    /// The pilot served history; the reading was written to
+    /// `<data>/probes/minute-lookback.json`.
+    Recorded(MinuteLookback),
+}
+
+impl ProbeOutcome {
+    /// The recorded reading, when there is one.
+    pub fn recorded(&self) -> Option<&MinuteLookback> {
+        match self {
+            ProbeOutcome::Recorded(lb) => Some(lb),
+            _ => None,
+        }
+    }
+}
+
 fn fmt_ymd(d: NaiveDate) -> String {
     d.format("%Y%m%d").to_string()
 }
@@ -3380,11 +3411,11 @@ impl Ingestor {
         anchor: NaiveDate,
         probed_at: String,
         calendar: CalendarGate<'_>,
-    ) -> AdapterResult<Option<MinuteLookback>> {
+    ) -> AdapterResult<ProbeOutcome> {
         let anchor = match calendar.probe_anchor(anchor) {
             ProbeAnchor::Use(a) => a,
             // Enforced + Unknown/unavailable: do not touch the gateway, record nothing.
-            ProbeAnchor::Stop => return Ok(None),
+            ProbeAnchor::Stop => return Ok(ProbeOutcome::CalendarStop),
         };
         let earliest = probe_minute_lookback(&self.fetcher, pilot, ncnt, anchor, 7, 400).await?;
         match earliest {
@@ -3395,9 +3426,9 @@ impl Ingestor {
                     probed_at,
                 };
                 write_minute_lookback(&probes_dir_for(&self.config.catalog_path), &lb)?;
-                Ok(Some(lb))
+                Ok(ProbeOutcome::Recorded(lb))
             }
-            None => Ok(None),
+            None => Ok(ProbeOutcome::NoHistory),
         }
     }
 }
