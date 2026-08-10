@@ -60,6 +60,74 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — ORB sample acquisition (governance axis): arm C TAKEN — the arc STANDS DOWN; supply re-probed at 359 days (ceiling 240); arm D's exact floor UNPRICEABLE as specified, head stays v35 (2026-08-10) — plan 2026-08-07-002
+
+- **What did NOT change.** No governed param, no strategy code, no ingest, no acquisition, no
+  backtest. `strategy_code_hash` unchanged at `7571abef…` (`lab/src/strategy/orb.rs` untouched);
+  head stays **v35**; `config/preregistration.json` byte-identical at `abdb90a1…`, verified from
+  the tree. This turn is **not** code-free, though: it changed adapter code — see the print fix
+  below.
+
+- **THE DECISION: arm C.** The ORB arc stands down. The paired-power turn (2026-08-07) measured
+  the actual lever question and found 0 of 6 whole-lever-OFF arms attributable, with the smallest
+  minimum detectable paired difference at +0.0516 — 1.8× the entire head gross edge. Arm B, the
+  ~237-session max-depth pull, was refused on that measurement rather than on cost: it buys
+  paired attributability for whole-lever flips and still cannot adjudicate a marginal lever turn,
+  so a multi-day gateway budget buys no decision. Arm A was never available (the vendor serves
+  6.8% of the requirement).
+
+- **Supply re-probed, and the rolling-window model is CONFIRMED.** The recorded reading was dated
+  2026-07-09 and expired under R10; every figure downstream of 237 sessions rested on it.
+  Re-taken 2026-08-10 on the domestic lane, pilot `005930`, anchored **2026-08-07**:
+
+  | | 2026-07-09 | 2026-08-10 |
+  |---|---|---|
+  | earliest served minute date | `20250715` | **`20250813`** |
+  | depth (calendar days) | 358 | **359** |
+  | reachable trading sessions to the anchor | 237 | **240** |
+
+  The floor advanced 29 days over the 32 between probes at a near-constant depth — the vendor
+  serves a **rolling** ~359-day window, not a fixed floor. The plan's supply table predicted a
+  rolling floor of ≈`20250813`; the probe returned exactly that. The ceiling moved *up* by three
+  sessions, which is a supersession of `PAIRED_REACHABLE_CALENDAR_SESSIONS = 237` and **not** a
+  correction of its direction — see the dated annotation on the 2026-08-07 entry. Re-derivation
+  is staged, not run here.
+
+- **Arm D: the EXACT floor is unpriceable as specified; a COARSE signal is not.** The instructing
+  handoff called for `probe-lookback` against a non-domestic lane. That probe does not exist:
+  `LS_INGEST_MODE=probe-lookback` is bound to the t8412 fetcher (domestic KRX equity N-minute),
+  and `LS_INGEST_LANE_FILE` selects **credentials, not an instrument** — pointing it elsewhere
+  sends the same domestic request under a different token and answers nothing. What is missing is
+  the backward window walk pointed at another TR. The candidates are already `implemented: true`
+  with live-smoke targets and lane files on disk (`t8465` KOSPI200 futures/options, `o3103`
+  overseas futures, `t8418` sector indices), so the gap is a **harness, not an SDK expansion** —
+  and a coarse deeper-or-not signal is reachable today via `make raw-probe` against `t8465`. Only
+  an exact floor needs the walk. Recorded as unpriceable-as-specified, **not** as unreachable.
+
+- **Two findings a later reader needs, neither of which the arc's framing contained.**
+  *(a)* The probe is gated on the calendar's **proven-session frontier**, not the KRX session
+  window — `select_recent_session` is proof-preserving and returns `None` at the first `Unknown`
+  it walks into, so it will not step past one to reach an earlier proven session. *(b)* The anchor
+  is **wall-clock-derived** inside `run_probe` (`last_closed_session(now_kst, 16:30 KST)`) and not
+  the operator's to pass, so the turn is **day-of-week dependent**: only weekdays go `Unknown`,
+  and a weekday evening run anchors on a day whose KRX witness is retrospective and cannot yet
+  exist. This run went out on a Monday morning, anchoring on the proven-closed Sunday.
+
+- **The diagnostic that made a refusal readable as a supply fact is FIXED.**
+  `run_probe_lookback_gated` collapsed a calendar Stop and an empty walk into `Ok(None)`, so
+  `ls-ingest` printed one "served no minute history" line for both — on a probe whose only purpose
+  is to measure how deep the vendor serves, a refusal could be read as "the vendor serves
+  nothing". It now returns a three-state `ProbeOutcome` and prints a distinct line per arm.
+  Guarded in `tests/ingest.rs`, **verified by mutation**: returning `NoHistory` from the Stop arm
+  reds exactly the two discrimination tests and no others. The two tests that pinned this
+  previously both asserted `is_none()`, which is why the conflation survived.
+
+- **Queue.** `orb-sample-acquisition-decision` **CLOSES** with this entry — arm C, on measurement.
+  A successor is staged for the TR-parameterized depth probe, carrying the condition that would
+  make spending it worthwhile. `report-sample-catalog-read-metadata-only` is re-noted in the
+  queue itself (not only here): its stated justification was the 65× catalog growth this arc now
+  says will not happen.
+
 ## Turn — paired power (measurement axis): the PAIRED question is ALSO unanswerable at this sample — 0 of 6 off-flip arms attributable; the ORB stand-down now closes on MEASUREMENT, head stays v35 (2026-08-07) — plan 2026-08-07-001
 
 - **What did NOT change.** No strategy code, no governed param, no ingest, no gateway call,
@@ -117,6 +185,19 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   |---|---|---|
   | arms attributable, per-arm | **0 of 6** (robust) | **5 or 6 of 6** (not reproducible) |
   | smallest minimum detectable paired difference | +0.051570 | **+0.022472** |
+
+  > **Supply re-probed 2026-08-10 (plan 2026-08-07-002): the reachable ceiling reads 240, not
+  > 237.** The 2026-07-09 probe this figure derives from was expired under R10 and has been
+  > re-taken: earliest served minute date `20250813`, depth **359** days, anchored 2026-08-07.
+  > Counted against the calendar that is **240** reachable trading sessions, so the projection
+  > root is `sqrt(45/240)` = 0.433013 rather than 0.435745 — a 0.6% change that moves **no
+  > verdict here**: the smallest projected minimum detectable paired difference reads +0.022472
+  > at 237 and +0.022342 at 240, both still roughly the entire head gross edge. `PAIRED_
+  > REACHABLE_CALENDAR_SESSIONS = 237` in `tests/paired_power.rs` is therefore **superseded but
+  > not wrong-in-kind**; re-derivation is staged rather than run here, because re-running it
+  > inside a governance turn would re-open a closed measurement. The floor moved 2025-07-15 →
+  > 2025-08-13, 29 days over the 32 calendar days between probes — which **confirms the rolling-
+  > window reading** the supply table assumed rather than the fixed-floor alternative.
 
   So a max-depth pull *would* buy paired attributability for lever-**OFF**-sized effects,
   which is more than it buys for absolute detectability (where it changes no decision at all).
