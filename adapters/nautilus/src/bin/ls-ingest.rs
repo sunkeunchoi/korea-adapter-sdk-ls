@@ -50,8 +50,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::{
-    last_closed_session, BarKind, CoverageReport, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
-    DEFAULT_OVERLAP_DAYS,
+    last_closed_session, BarKind, CoverageReport, IngestConfig, Ingestor, ProbeOutcome,
+    ACCUMULATE_CLOSE_BUFFER, DEFAULT_OVERLAP_DAYS,
 };
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
@@ -460,15 +460,30 @@ async fn run_probe(
         .run_probe_lookback_gated(&pilot, ncnt, anchor, probed_at, gate)
         .await?
     {
-        Some(lb) => {
+        ProbeOutcome::Recorded(lb) => {
             println!(
                 "probe: pilot {pilot} earliest minute date {} (depth {} days) — recorded to <data>/probes/minute-lookback.json",
                 lb.earliest_date, lb.depth_days
             );
             println!("derive the backfill floor: LS_INGEST_LOOKBACK={} (or anchor − {} days)", lb.earliest_date, lb.depth_days);
         }
-        None => {
-            println!("probe: pilot {pilot} served no minute history — nothing recorded");
+        // The two no-reading arms MUST read differently. They were one line for both, so a
+        // calendar refusal — which never reaches the gateway — could be read as "the vendor
+        // serves nothing", the opposite conclusion on the one question the probe exists to
+        // answer.
+        ProbeOutcome::CalendarStop => {
+            println!(
+                "probe: REFUSED BY THE CALENDAR at anchor {anchor} — zero gateway requests issued, \
+                 nothing recorded. This is NOT a statement about served history: the anchor could \
+                 not be resolved to a proven trading session (an Unknown day sits at or before it). \
+                 Advance the calendar's proven-session frontier, then re-run."
+            );
+        }
+        ProbeOutcome::NoHistory => {
+            println!(
+                "probe: pilot {pilot} served NO minute history at anchor {anchor} — the walk ran \
+                 against the gateway and came back empty. Nothing recorded."
+            );
         }
     }
     Ok(())
