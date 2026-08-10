@@ -9,8 +9,9 @@ trackers, and the generated docs. It explains *shape and why*.
 - **Per-TR contracts** (what a specific TR claims, what evidence backs it) — the
   generated pages under [`docs/reference/`](docs/reference/) and
   [`docs/tr-dependencies/`](docs/tr-dependencies/), projected by `make docs`.
-- **The authoritative vocabulary** — [`CONCEPTS.md`](CONCEPTS.md) (glossary) and
-  [`CONTEXT.md`](CONTEXT.md) (language + relationships).
+- **The authoritative vocabulary** — [`CONCEPTS.md`](CONCEPTS.md), the single
+  glossary for both contexts. [`CONTEXT-MAP.md`](CONTEXT-MAP.md) maps the two
+  contexts; each context's `CONTEXT.md` carries its language and relationships.
 - **The maintenance flow's operational steps** —
   [`docs/MAINTENANCE_RUNBOOK.md`](docs/MAINTENANCE_RUNBOOK.md) and the frozen
   recipes under [`.agents/skills/`](.agents/skills/).
@@ -22,7 +23,25 @@ code plus the per-TR metadata under [`metadata/`](metadata/) — not this docume
 
 ---
 
-## The workspace
+## Two workspaces
+
+There are **two** Cargo workspaces here, one per bounded context
+([`CONTEXT-MAP.md`](CONTEXT-MAP.md), [ADR 0015](docs/adr/0015-two-projects-one-repository.md)):
+
+| Workspace | Context | Gate |
+|-----------|---------|------|
+| root (`crates/`) | SDK Project | `cargo test` + `make docs-check` |
+| `adapters/nautilus/` | Consuming Project | `make adapter-check` |
+
+`adapters/nautilus/` **opts out** of the root workspace — its own manifest, its
+own pinned toolchain — so the root `cargo test` never builds it. The dependency
+runs one way (it depends on `ls-sdk`/`ls-core`; nothing here depends on it), and
+because the two build separately, a change on this side can redden it
+invisibly. That is what `make adapter-check` is for. Its internal structure is
+documented in [`adapters/nautilus/README.md`](adapters/nautilus/README.md); the
+rest of this document describes the root workspace.
+
+## The root workspace
 
 A Cargo workspace (`resolver = "2"`) of six crates. They stack from transport at
 the bottom to projected documentation at the top:

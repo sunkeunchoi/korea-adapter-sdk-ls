@@ -1,6 +1,22 @@
-# korea-adapter-sdk-ls Context
+# SDK Project Context
 
-`korea-adapter-sdk-ls` maintains a Rust SDK for the LS Securities Open API by tracking upstream change and applying reviewed SDK changes.
+The **SDK Project** maintains a strict Rust SDK for the LS Securities Open API by
+tracking upstream change and applying reviewed SDK changes. It is one of the two
+bounded contexts in this repository — see [`CONTEXT-MAP.md`](CONTEXT-MAP.md) for
+the other one (the Consuming Project) and for the words that mean different
+things on either side of the boundary.
+
+This file is the SDK Project's **language and relationships**. Definitions live
+in [`CONCEPTS.md`](CONCEPTS.md), the single authoritative glossary for the whole
+repository; where the summary below and `CONCEPTS.md` disagree, `CONCEPTS.md`
+wins.
+
+**This context's completion criterion is different from the other one's.** The
+SDK tracks the upstream API *completely* — every TR gets metadata and a baseline
+so drift is observed — but implements and recommends *selectively*, driven by
+what the Consuming Project needs (ADR 0004, read together with
+[ADR 0015](docs/adr/0015-two-projects-one-repository.md)). A TR that is tracked
+and never implemented is the system working as designed, not a gap.
 
 ## Language
 
@@ -220,25 +236,11 @@ _Avoid_: read TR, ordinary implemented TR, harmless control
 A realtime feed that observes broker-side lifecycle state such as order receipt, execution, correction, cancellation, or rejection without itself submitting, modifying, or canceling an order. It requires stricter evidence wording than market quote feeds, but it is not the same as REST order runtime.
 _Avoid_: order runtime, harmless realtime feed, order TR
 
-**Point-in-Time Research Universe**:
-The historical population of KOSPI and KOSDAQ common stocks eligible for strategy research at each past session, including securities that later exited, suspended, or delisted.
-_Avoid_: current constituents, fixed symbol list, backtest watchlist
-
-**Session Tradable Universe**:
-The common-stock subset of the **Point-in-Time Research Universe** eligible to receive orders in one session using only information available before that session.
-_Avoid_: research universe, static universe, current top stocks
-
-**Intraday Tradability**:
-The event-grained record of whether the market was open for one symbol at one instant during a session — halt onset, VI trigger and release, resumption, and last tradable date.
-_Avoid_: session eligibility, tradable universe membership, halted symbol as an ineligible symbol, missing bars as a halt
-
-**Reference Instrument**:
-An ETF or ETN whose market data and constituent relationships may inform common-stock decisions but which is never eligible to receive an order from the ORB portfolio.
-_Avoid_: tradable instrument, portfolio holding, stock substitute
-
-**Two-Tier Portfolio Simulation**:
-The portfolio evidence model that combines broad point-in-time minute-bar testing with high-fidelity replay of representative ticks, quotes, order books, and market regimes before paper/live calibration.
-_Avoid_: minute-only backtest, full-universe tick replay, paper trading
+> The universe, portfolio, and simulation vocabulary that used to sit here
+> (Point-in-Time Research Universe, Session Tradable Universe, Intraday
+> Tradability, Reference Instrument, Two-Tier Portfolio Simulation) belongs to
+> the Consuming Project and now lives in
+> [`adapters/nautilus/CONTEXT.md`](adapters/nautilus/CONTEXT.md).
 
 ## Relationships
 
@@ -263,10 +265,6 @@ _Avoid_: minute-only backtest, full-universe tick replay, paper trading
 - Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
 - A **Completed Maintenance Work Item** is not complete from code changes alone.
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
-- The **Session Tradable Universe** is derived from the **Point-in-Time Research Universe** for one session.
-- A **Reference Instrument** may influence selection or risk decisions but never belongs to the **Session Tradable Universe**.
-- **Intraday Tradability** is not membership of the **Session Tradable Universe**: the universe is settled before the session and does not move, while intraday tradability changes within it.
-- **Two-Tier Portfolio Simulation** supplies historical evidence before the portfolio enters paper/live calibration.
 - **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item, and is claimed only after a real SDK-facing work item has proven the flow, not from queue plumbing alone.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
 - A **Dependency Class** owns SDK code organization.

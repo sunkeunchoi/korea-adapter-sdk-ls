@@ -47,6 +47,11 @@ The middle rung: the TR has hand-authored callable Rust and has passed a Paper L
 ### Recommended
 The top rung: an Implemented TR additionally cleared for production use, backed by recorded Focused Evidence and a recommendation block. Promotion to Recommended is a separate, deliberate act beyond Implemented. As of the [[Error-resilience gate]] it additionally means "this call fails gracefully" — promotion requires passing the gate (error coverage), not just a green happy-path smoke.
 
+### Verification Bar
+The minimum support rung the **Consuming Project** requires of a TR before calling it. It is **Recommended** — not merely Implemented — so the trading system consumes only behavior carrying [[Focused Evidence]] that has passed the [[Error-resilience gate]]. The bar exists because the two contexts in this repository have different completion criteria (see `CONTEXT-MAP.md`): the SDK tracks upstream completely and implements selectively, so "the SDK can call it" is a statement about the SDK's surface, never a licence for the trading system to depend on it.
+
+Enforcement is a **monotonically shrinking deferral list**, not a flag day. TRs the consuming project already depends on below the bar are affirmatively deferred and burned down — the same aviation-MEL posture a [[Dispatch release]] applies to a red check, where a degraded item is explicitly deferred rather than silently tolerated. Nothing is ever added to the list: a TR newly consumed must already be at the bar. Burn-down order follows **contamination reach**, not reference count — a TR whose wrong answer silently corrupts the catalog outranks one that is merely called often.
+
 ### Error-resilience gate
 The blocking condition, layered on top of the happy-path [[Paper Live Smoke]] + [[Focused Evidence]] + recommendation block, that a TR must pass to reach [[Recommended]]. It redefines the badge to mean "this call fails gracefully": invalid input is caught before the network call ([[Preflight validation]]) and every reachable gateway error is explained. Its per-TR evidence is [[Error coverage]], produced by the [[Differential negative probe]].
 
@@ -173,6 +178,36 @@ The catalog-level attestation binding ingested bars to the reference-data artifa
 ### Mount universe
 The per-session candidate file an attended session consumes: for one session date, each catalog symbol's prior-session facts (close, ATR, opening-volume mean, illiquidity) plus that day's open — sourced from the catalog for a past date and from a live opening quote for the current date. It is the candidate *set*, not the selection: the head's gap floor, turnover ranking, and top-N run at selection time against these rows, so the file legitimately carries rows the head will not trade, and an empty *selection* on a market-wide flat open is normal head behavior. The producer refuses to write an empty file, and the file is never hand-authored — a row missing its prior ATR silently disables a protective per-symbol gate rather than failing loudly.
 
+## External data
+
+### External Data Source
+A market- or reference-data provider outside the LS gateway: the KRX daily-market host and the KASI holiday API behind the calendar chain, and the KRX Open API services that answer instrument eligibility. Each was admitted **reluctantly and individually**, only after establishing that the LS SDK cannot answer the question — the standing posture is to solve everything inside the SDK and to keep the external surface minimal, because each additional provider is a second data platform in embryo (ADR 0015 records the shape that failure takes).
+
+There is deliberately **no shared discipline** across external sources — no ladder, no common evidence artifact — because a framework for admitting them would make admitting them easy. Each carries whatever discipline its own data demands, and that discipline does not generalize: the calendar's is unusually strict ([[Witness]], [[Forward readiness]], [[Genesis snapshot]], plus a publication-rights finding) because a trading calendar is *asymmetrically provable*, which is a property of calendars and of nothing else here. The one thing every source must state in prose is what it does **not** claim — an eligibility feed whose completeness is unestablished must never be silently consumed as complete.
+*Avoid:* data provider (implies a managed, symmetric set), fallback source (they are not substitutes for LS data — they answer questions LS does not answer), integration (understates that each one is a scope decision).
+
+## Universe & portfolio
+
+### Point-in-Time Research Universe
+The historical population of KOSPI and KOSDAQ common stocks eligible for strategy research at each past session, including securities that later exited, suspended, or delisted. Its point-in-time property is load-bearing and gets *harder* to honor as a lineage reaches for depth: a symbol set selected by present-day market cap carries a year of survivorship at the ~237-session obtainable ceiling, where it was a disclosed and accepted approximation at 54.
+*Avoid:* current constituents, fixed symbol list, backtest watchlist.
+
+### Session Tradable Universe
+The common-stock subset of the [[Point-in-Time Research Universe]] eligible to receive orders in one session, using only information available before that session. Eligibility is the question the LS SDK cannot fully answer — designation status, SPAC and 관리종목 labelling — which is why an [[External Data Source]] was admitted for it.
+*Avoid:* research universe, static universe, current top stocks.
+
+### Intraday Tradability
+The event-grained record of whether the market was open for one symbol at one instant during a session — halt onset, VI trigger and release, resumption, last tradable date.
+*Avoid:* session eligibility, tradable universe membership, halted symbol as an ineligible symbol, missing bars as a halt.
+
+### Reference Instrument
+An ETF or ETN whose market data and constituent relationships may inform common-stock decisions but which is never eligible to receive an order.
+*Avoid:* tradable instrument, portfolio holding, stock substitute.
+
+### Two-Tier Portfolio Simulation
+The portfolio evidence model combining broad point-in-time minute-bar testing with high-fidelity replay of representative ticks, quotes, order books, and market regimes before paper/live calibration.
+*Avoid:* minute-only backtest, full-universe tick replay, paper trading.
+
 ## Order safety
 
 The order class is the one place where a bug is a real, irreversible market action rather than a stale read, so it carries its own machinery and vocabulary.
@@ -199,6 +234,17 @@ The post-run safety net of an autonomous [[Guarded paper order]] run: after the 
 
 ### Strategy-improvement loop
 The development model for trading strategies on the Nautilus adapter: collect data ([[Accumulate-forward]] plus bounded backfill) → backtest → an agent analyzes the run's artifacts and produces an improvement analysis → a strategy change lands → re-backtest, compared to the prior run via manifests. The loop, not any single strategy's quality, is the product; starter strategies exist so the loop has something real to improve. Live paper sessions join the loop as just another run — same artifact set, same [[Run registry]], with fidelity caveats flagged rather than fixed.
+
+### Strategy lineage
+The unit the [[Strategy-improvement loop]] actually produces: one strategy hypothesis carried forward through versioned upgrades — ORB is a lineage, v35 a version of it. The product is neither a frozen strategy nor the loop as a bare capability; it is a lineage under continuous upgrade, with [[Head identity]] as its identity and the [[Run registry]] as its history. Exactly **one** lineage is open at a time: parallel lineages are refused as the same failure shape ADR 0015 records — two unfinished things advanced together.
+
+### Lineage closure
+The pre-registered condition under which a [[Strategy lineage]] is declared CLOSED rather than upgraded further: when the frozen sample margin's threshold (`adapters/nautilus/lab/config/SAMPLE-MARGIN.md`), evaluated at the lineage's **obtainable-sample ceiling**, exceeds the best net RoR the lineage has ever produced.
+
+Neither side is a judgment call. The threshold's selection-tax term is a function of trials already spent, its sampling term of the ceiling; the ceiling is a *probed* property of the data supply, not a budget — LS serves minute bars from a rolling window a little under a year deep, so an intraday lineage's ceiling is roughly 237 KRX sessions no matter what is spent, while a daily-resolution lineage's is far larger. Closure is therefore a statement about **detectability, never profitability**, and — unlike a thin-sample verdict — it cannot be reopened by acquiring data: only a larger hypothesized effect, or a resolution with a deeper supply, changes the answer. Its forward-facing half is the [[Search budget]].
+
+### Search budget
+The cap on trials a [[Strategy lineage]] may spend, pre-registered before its first turn together with the effect size it hypothesizes. It exists because the sample margin's selection-tax term grows with trials spent and **never shrinks**: every upgrade turn raises the bar that lineage must eventually clear, so an unbudgeted loop can tune a lineage into permanent uncertifiability — the mathematical form of diminishing returns on search. A lineage may be opened only if its hypothesized effect clears the threshold evaluated at its search budget and its obtainable-sample ceiling; a hypothesis undetectable even if true is not opened. This is the lineage-level twin of the pre-code gate that refuses to build a lever already predicted INERT (see [[Return-on-risk (RoR)]]).
 
 ### Run registry
 The append-only store of strategy-run records. Every run — backtest or live paper — deposits the same four agent-readable artifacts: a performance report (fills, per-trade P&L, equity curve, summary stats), a per-decision envelope stream (`decisions.jsonl` — every candidate evaluated, the decision, and the rejecting filter/signal values), a data-quality report (coverage gaps, adjustment-basis splice flags, and for live runs any reconcile-advised conditions), and a run manifest (strategy version, full parameter set, data range, catalog state) that makes any two runs comparable and any run reproducible. Runs are never overwritten; improvement analyses are stored alongside the runs they analyzed.
