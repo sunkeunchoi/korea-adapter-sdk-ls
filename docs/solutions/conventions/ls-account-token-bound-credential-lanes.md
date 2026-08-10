@@ -1,6 +1,7 @@
 ---
 title: "An LS account read is token-bound, not number-bound — an empty 00707 / IGW40013 / all-default 00136 may be the WRONG account, not no-data; route a per-account credential lane by instrument_domain and re-probe before disposition"
 date: 2026-06-28
+last_updated: 2026-08-10
 category: conventions
 module: ls-core config (from_env), ls-sdk account owner_class, Paper Live Smoke harness, implement-tr recipe
 problem_type: convention
@@ -67,6 +68,34 @@ resolves an empty `LS_SMOKE_LANE` to the `domestic` lane, then sources
 — every lane (including the default) runs the guard; there is no bare-`.env`
 fallback (the legacy `.env` was deleted in the env-lane cutover, plan
 2026-07-01-002; a silent fall-back would re-introduce the wrong-account bug).
+
+### The corollary for market-data TRs: a lane selects the ACCOUNT, never the INSTRUMENT
+
+The rule above cuts the other way outside `account_state`. For an **account** read the lane is
+load-bearing, because the account *is* the subject of the read. For a **market-data** read it is
+nearly inert: the instrument is determined by the **TR**, and the lane only decides which token
+signs the request.
+
+So swapping `LS_INGEST_LANE_FILE` (or `LS_SMOKE_LANE`) on a chart or master TR does **not**
+change what you are reading. `LS_INGEST_MODE=probe-lookback` is bound to the `t8412` fetcher —
+domestic KRX equity N-minute bars — so pointing it at `.env.overseas_option` issues the *same
+domestic request* under the overseas-option account's token. The answer describes KRX equities
+either way.
+
+This matters because "probe another lane" is an intuitive and completely wrong way to ask "does
+another instrument serve deeper history?" (2026-08-10, plan `2026-08-07-002`). Reaching a
+different instrument domain means reaching a **different TR** — `t8465` for KOSPI200
+futures/options N-minute, `o3103` for overseas futures, `t8418` for sector indices — each of
+which needs its own carrier on the read path, not a different credential file. The lane then
+follows from the TR's `instrument_domain` per the table above; it is the consequence of the
+choice, not the choice itself.
+
+The two axes are orthogonal, and confusing them is directional:
+
+| | selects | changing it gets you |
+|---|---|---|
+| credential lane (`.env.<lane>`) | which **account** the token resolves to | a different account's view — decisive for `account_state`, inert for market data |
+| TR code (`t8412`, `t8465`, `o3103`, …) | which **instrument domain** is read | a genuinely different instrument |
 
 ### The `rsp_cd` flip-signature for account reads
 
