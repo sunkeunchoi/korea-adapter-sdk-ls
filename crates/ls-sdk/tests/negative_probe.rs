@@ -329,6 +329,31 @@ fn token_reported_label(control_ok: bool, rsp_cd: &str, ok: bool) -> &'static st
 /// budget ever needs it — KTD-2 / risk R-2).
 const T8412_PROBE_PACE: Duration = Duration::from_millis(1000);
 
+/// Inter-dispatch pace for the t8410 live differential probe. Same `/stock/chart`
+/// endpoint and market-data bucket as the t8412 exemplar, with a comparable call
+/// count (control + ~9 variants), so it inherits the empirically-settled 1000 ms
+/// figure (see `T8412_PROBE_PACE` above: 250/500 ms merely MOVED the cumulative
+/// `IGW00201` throttle; only 1000 ms produced a zero-throttle authoritative
+/// read). Offline only the non-zero property is asserted (`t8410_probe_is_paced`);
+/// the true anti-throttle proof is the live probe run itself.
+const T8410_PROBE_PACE: Duration = Duration::from_millis(1000);
+
+#[test]
+fn t8410_probe_is_paced() {
+    // Same structural obligation as `t8412_probe_is_paced` (§27 reason A): the
+    // t8410 differential probe fires ~10 calls into the same warm-sensitive
+    // cumulative market-data budget and must carry a non-zero, meaningfully sized
+    // inter-dispatch pace so a self-inflicted IGW00201 cannot mask variants.
+    assert!(
+        !T8410_PROBE_PACE.is_zero(),
+        "t8410 probe must be paced (non-zero) so it does not self-throttle"
+    );
+    assert!(
+        T8410_PROBE_PACE >= Duration::from_millis(100),
+        "t8410 pace should be at least the 10/s market-data bucket period (100 ms)"
+    );
+}
+
 /// Inter-fire pace for the ORDER differential negative probe (`run_order_negative_probe`,
 /// CSPAT006/007/008). The order fire loop dispatches the control submit + every
 /// type/required variant against the Orders rate bucket; with no pace they collided
@@ -564,6 +589,30 @@ async fn live_smoke_t1102_negative() {
         // persistent HELD control that certifies nothing.
         serde_json::json!({ "shcode": "005930", "exchgubun": "K" }),
         Duration::ZERO,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8410-negative`"]
+async fn live_smoke_t8410_negative() {
+    // Seed mirrors the certified smoke shape (`T8410Request::new("078020", "2",
+    // "20", "", "99999999")` + the struct-pinned comp_yn="N" / sujung="Y"):
+    // daily candles for a public KOSDAQ ticker over the open-ended range the
+    // smoke proved live, so the control succeeds in- or off-session (historical
+    // candles). `qrycnt` is a JSON number — the struct serializes it via
+    // `string_as_number` (IGW40011 guard) and a quoted numeric control would
+    // trip the ingress and mask the differential.
+    run_inblock_negative_probe(
+        "t8410",
+        "/stock/chart",
+        "t8410InBlock",
+        serde_json::json!({
+            "shcode": "078020", "gubun": "2", "qrycnt": 20,
+            "sdate": "", "edate": "99999999", "cts_date": "",
+            "comp_yn": "N", "sujung": "Y"
+        }),
+        T8410_PROBE_PACE,
     )
     .await;
 }

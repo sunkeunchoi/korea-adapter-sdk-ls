@@ -98,7 +98,12 @@ fn authored_slice_metadata_validates_clean() {
 /// omitting BnsTpCode places a real direction-defaulted order — is closed by the Route C
 /// code-enforced booking-determining skip (the attended re-probe came back CLEAN with the
 /// four booking-determining variants recorded-not-fired; plan 2026-07-22-001, ledger §32).
-/// These ten are the ONLY ones currently allowed to carry the Recommended badge.
+/// Then on 2026-08-11 `t8410` (paginated D/W/M/Y stock chart) promoted on a CLEAN
+/// in-window differential (every variant Clean or expected-tolerant; the tolerance
+/// profile matches its `/stock/chart` sibling `t8412` but was observed for `t8410`
+/// itself) — the first promotion off the Verification Bar deferral list (queue item
+/// `promote-t8410-recommended`, P2 of the next-lineage ladder, plan 2026-08-10-001).
+/// These eleven are the ONLY ones currently allowed to carry the Recommended badge.
 /// This test guards against an accidental re-promotion of any TR that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
@@ -112,7 +117,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8412", "token"],
+        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8410", "t8412", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );

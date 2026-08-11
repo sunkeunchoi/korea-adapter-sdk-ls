@@ -1,0 +1,74 @@
+# Error-coverage evidence for t8410 (API전용주식차트 일주월년) — R10/R11.
+#
+# Records the per-(field, class) coverage derived from constraints/t8410.yaml and
+# the reachable gateway codes the Reference page explains from the shared catalog.
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t8410-negative`, R10) run in-window on the real paper gateway
+# (2026-08-11, a KRX trading day, same session as the Focused Evidence smoke).
+# The valid control succeeded (rsp_cd=00000); every injected invalid variant read
+# either `Clean` (a genuine IGW40011 reject: shcode/format, gubun/enum,
+# qrycnt/type, qrycnt/required) or `expected-tolerant` (the gateway accepts the
+# violation but the SDK enforces it at preflight as a caller contract —
+# gateway_tolerant, observed for THIS TR on its first probe pass and marked from
+# that evidence: shcode/required, gubun/required, sdate/format, edate/format,
+# and the sdate/edate cross_field date_order). Zero Held, zero Divergent, no
+# residual IGW00201 throttle (probe paced at 1000 ms — the figure the t8412
+# sibling settled empirically for the same /stock/chart endpoint's cumulative
+# market-data budget). The tolerance profile matches t8412's exactly, which is
+# corroborating (same ingress), but every pair above was observed for t8410
+# itself, not inherited. The recommendation therefore does NOT assert
+# gateway-side rejection of the tolerant pairs (see the TR's `excludes`).
+#
+# `status` legend: confirmed = the differential probe confirmed the bound
+# (rejected distinctly, IGW40011); tolerant = the gateway accepted the injected
+# violation but preflight enforces it as a caller contract (gateway_tolerant,
+# expected-tolerant — non-blocking); held = inconclusive; divergent = observed
+# behavior disagreed with the declaration; n_a = the class does not apply / no
+# variant is generated (string fields get no type-mutation variant;
+# required-omission variants fire only for required:true fields).
+tr_code: t8410
+probe_status: clean
+seed: "shcode=078020 gubun=2 qrycnt=20 sdate= edate=99999999 (the certified smoke shape; daily candles, any session)"
+input_classes:
+  - { field: shcode, class: type, status: n_a }             # string field — no type-mutation variant is generated
+  - { field: shcode, class: required, status: tolerant }     # omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: shcode, class: enum, status: n_a }
+  - { field: shcode, class: range, status: n_a }
+  - { field: shcode, class: format, status: confirmed }      # malformed short code rejected distinctly (IGW40011)
+  - { field: gubun, class: type, status: n_a }               # string field — no type-mutation variant is generated
+  - { field: gubun, class: required, status: tolerant }      # omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: gubun, class: enum, status: confirmed }         # off-enum period rejected distinctly (IGW40011)
+  - { field: gubun, class: range, status: n_a }
+  - { field: gubun, class: format, status: n_a }
+  - { field: qrycnt, class: type, status: confirmed }        # non-numeric qrycnt rejected (IGW40011)
+  - { field: qrycnt, class: required, status: confirmed }    # omit rejected (IGW40011)
+  - { field: qrycnt, class: enum, status: n_a }
+  - { field: qrycnt, class: range, status: n_a }
+  - { field: qrycnt, class: format, status: n_a }
+  - { field: sdate, class: type, status: n_a }               # string field — no type-mutation variant is generated
+  - { field: sdate, class: required, status: n_a }           # caller-optional (required:false) — no required-omission variant is generated
+  - { field: sdate, class: enum, status: n_a }
+  - { field: sdate, class: range, status: n_a }
+  - { field: sdate, class: format, status: tolerant }        # malformed date accepted → 00000 (gateway_tolerant, expected-tolerant)
+  - { field: edate, class: type, status: n_a }               # string field — no type-mutation variant is generated
+  - { field: edate, class: required, status: n_a }           # caller-optional (required:false) — no required-omission variant is generated
+  - { field: edate, class: enum, status: n_a }
+  - { field: edate, class: range, status: n_a }
+  - { field: edate, class: format, status: tolerant }        # malformed date accepted → 00000 (gateway_tolerant, expected-tolerant)
+  - { field: cts_date, class: type, status: n_a }            # string field — no type-mutation variant is generated
+  - { field: cts_date, class: required, status: n_a }        # caller-optional (empty first page; body continuation cursor)
+  - { field: cts_date, class: enum, status: n_a }
+  - { field: cts_date, class: range, status: n_a }
+  - { field: cts_date, class: format, status: n_a }
+  - { field: "sdate/edate", class: cross_field, status: tolerant }  # start>end date_order accepted → 00000; cross_field gateway_tolerant (expected-tolerant)
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011

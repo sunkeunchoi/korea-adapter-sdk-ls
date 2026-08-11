@@ -1,0 +1,85 @@
+# Request field-constraint schema for t8410 (API전용주식차트 일주월년) — the
+# D/W/M/Y stock-chart sibling of the t8412 exemplar, same `/stock/chart`
+# endpoint. The single source from which the preflight validator (ls-core), the
+# differential negative probe, and the Reference "Errors & validation" section
+# are derived.
+#
+# Grounding (KTD5, R4):
+#   - `type` + `required` are cross-checked offline against the normalized
+#     baseline (crates/ls-trackers/baselines/api-drift/normalized/trs/t8410.json).
+#     A field may be declared LESS required than the wire (the permissive
+#     direction, e.g. the date-range filters and the continuation cursor), never
+#     MORE.
+#   - `enum` / `range` / `format` bounds are graded offline from the source spec;
+#     each carries `confirmed: false` until the differential live probe (R10)
+#     confirms it, so preflight stays permissive on them (R6) until then.
+#   - every declared field marks each inapplicable class N/A explicitly
+#     (`applicable: false`) so exhaustiveness is auditable, not inferred from
+#     silence (R5). `comp_yn`/`sujung` are fixed by the certified struct
+#     (`T8410Request::new` pins "N"/"Y") and are not declared, mirroring the
+#     t8412 exemplar's undeclared `comp_yn`.
+#
+# gateway_tolerant (this TR's OWN differential probe, first pass 2026-08-11,
+# in-window, control rsp_cd=00000, zero Held/throttle): the gateway returns
+# rsp_cd=00000 when `shcode` or `gubun` is omitted (`required` class), when
+# `sdate`/`edate` are malformed (`format` class), and when sdate>edate
+# (`cross_field` date_order). Those pairs are gateway-tolerant — the probe
+# treats their accepted violation as expected, not a divergence. The profile is
+# identical to the t8412 sibling on the same `/stock/chart` endpoint, but was
+# NOT inherited — it was observed for this TR. Preflight still enforces
+# `required` on shcode/gubun (a caller contract, the certified struct always
+# sends them); the Recommended claim does not assert gateway-side enforcement
+# of the tolerant pairs. Merits-rejected distinctly (IGW40011): shcode/format,
+# gubun/enum, qrycnt/type, qrycnt/required.
+tr_code: t8410
+fields:
+  - name: shcode
+    type: string          # baseline: String, required
+    required: true
+    gateway_tolerant: [required]   # gateway accepts removal (probe 2026-08-11); format still rejected (IGW40011).
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: gubun
+    type: string          # baseline: String, required (period: 2:일 3:주 4:월 5:년)
+    required: true
+    gateway_tolerant: [required]   # gateway accepts removal (probe 2026-08-11); preflight still enforces (certified struct sends it). Off-enum rejected (IGW40011).
+    enum: { applicable: true, values: ["2", "3", "4", "5"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: qrycnt
+    type: integer         # baseline: Number, required (row count; 500 uncompressed page cap)
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: sdate
+    type: string          # baseline: String, required on the wire, but the date
+    required: false        # range is a filter the gateway defaults — declared
+    gateway_tolerant: [format]   # gateway accepts malformed date (probe 2026-08-11).
+    enum: { applicable: false }   # caller-optional (permissive direction, R6; the
+    range: { applicable: false }  # certified smoke sends sdate="").
+    format: { applicable: true, kind: date, confirmed: false }
+  - name: edate
+    type: string          # baseline: String, required on the wire, caller-optional
+    required: false        # (permissive direction — the certified smoke sends the
+    gateway_tolerant: [format]   # gateway accepts malformed date (probe 2026-08-11).
+    enum: { applicable: false }   # open-ended edate="99999999").
+    range: { applicable: false }
+    format: { applicable: true, kind: date, confirmed: false }
+  - name: cts_date
+    type: string          # baseline: String, required on the wire, but caller-
+    required: false        # optional (empty on the first page; body continuation
+    enum: { applicable: false }   # cursor set by the pagination loop)
+    range: { applicable: false }
+    format: { applicable: false }
+cross_field:
+  # Probe 2026-08-11: the gateway ACCEPTS start>end (rsp_cd 00000) — it defaults
+  # the empty range rather than rejecting, exactly like the t8412 sibling (§30).
+  # Marked gateway-tolerant so the accepted violation reads `expected-tolerant`,
+  # not `Divergent`. Preflight unaffected: the rule stays `confirmed: false`.
+  - kind: date_order
+    start: sdate
+    end: edate
+    confirmed: false
+    gateway_tolerant: true

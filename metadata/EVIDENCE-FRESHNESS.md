@@ -124,11 +124,16 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   A/B and the full differential re-probed CLEAN via the Route B scoped tolerance
   (plan 2026-07-14-001, ledger §31), and finally `CSPAT00601` (submit) on 2026-07-22 once
   the Route C code-enforced booking-determining skip made its §30-held direction-defaulting
-  variant structurally never-fired (plan 2026-07-22-001), bringing the total to
-  **10 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
-  (realtime), `CSPAQ12200` (account), `t0425` + `t8412` (paginated), and `CSPAT00601` +
-  `CSPAT00701` + `CSPAT00801` (orders) — spanning 6 owner classes, each on a clean live
-  differential chain (except
+  variant structurally never-fired (plan 2026-07-22-001), and `t8410` (paginated
+  D/W/M/Y stock chart) on 2026-08-11 on a CLEAN in-window differential — the first
+  promotion off the Verification Bar deferral list (queue item
+  `promote-t8410-recommended`, P2 of the next-lineage ladder, plan 2026-08-10-001;
+  its tolerance profile matches the `/stock/chart` sibling `t8412` but was observed
+  for `t8410` itself) — bringing the total to
+  **11 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
+  (realtime), `CSPAQ12200` (account), `t0425` + `t8410` + `t8412` (paginated), and
+  `CSPAT00601` + `CSPAT00701` + `CSPAT00801` (orders) — spanning 6 owner classes,
+  each on a clean live differential chain (except
   `S3_`, whose realtime subscribe has no differential and rests on the lifecycle-scoped
   substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read `expected-tolerant`
   under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) — previously HELD when
