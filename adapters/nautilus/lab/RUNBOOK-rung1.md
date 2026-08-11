@@ -25,6 +25,16 @@ watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessio
 > floor — resolving it needs ~8,600 closed trades (~3,499 calendar sessions, ~14 years)
 > against 54 covered — so do not expect a lever search on the current catalog to get there.
 > See queue `orb-sample-acquisition-decision`.
+>
+> **LINEAGE CLOSED — RE-ENTRY RE-PREMISED ON THE SUCCESSOR — 2026-08-11** (lineage-closure
+> binding, plan `2026-08-11-001`; TURN-LOG 2026-08-11 closure declaration). The ORB lineage
+> is **CLOSED** under the pre-registered CONCEPTS.md Lineage-closure rule — the margin
+> unblock above is a bar no head can ever clear — and
+> `rung1-ladder-reentry-margin-clearing-head` is superseded by
+> `rung1-ladder-reentry-successor-margin-head`: re-entry now waits for the **successor
+> lineage's** certified head to clear **its own** frozen margin (the P6 pre-registration
+> artifact, queue `next-lineage-preregistration-artifact`). The fresh re-registration (v3+)
+> and the attended-session choreography below are unchanged.
 
 > **Head v35 — cost-aware re-measurement of the v34 identity.** The documented head is **v35**
 > (`strategy_code_hash 7571abef…`, run `20260731T023138Z-backtest-orb-v35` — the

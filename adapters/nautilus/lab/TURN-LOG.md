@@ -4,6 +4,27 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Open lineage (STANDING) — currently open: NONE; ORB CLOSED 2026-08-10, declared 2026-08-11
+
+Canonical answer to "which strategy lineage is open right now?" — the committed state
+behind the one-lineage-at-a-time gate (CONCEPTS.md "Strategy lineage": exactly one
+lineage is open at a time). Same shape as the head-lineage block below: dated entries
+record decisions; this block pins the current state. Edited only when a lineage opens
+or closes.
+
+- **Currently open: NONE.** The ORB lineage is **CLOSED** under the pre-registered
+  Lineage-closure rule (CONCEPTS.md), as of the arm-C stand-down (2026-08-10). The
+  rule evaluation and the admissibility basis live in the closure-declaration entry —
+  the newest dated entry below: "Turn — ORB lineage closure (governance axis) …
+  (2026-08-11)".
+- **The successor daily-resolution lineage is NOT open yet.** It opens only when its
+  pre-registration freezes (P6 of the 2026-08-10 scoping ladder, queue
+  `next-lineage-preregistration-artifact`). Until that freeze, no governed strategy
+  turn may run.
+- The successor's pre-registration freeze cites THIS block as its "exactly one
+  lineage is open" proof; the freeze commit updates this block to name the newly
+  open lineage.
+
 ## Head lineage (STANDING) — post-#118 real-data head = v34; pin `LS_TURN_EXPECT_VERSION=34` (2026-07-24)
 
 > **AMENDED 2026-07-31 (orb-transaction-cost-model): the documented head is now `v35`
@@ -59,6 +80,62 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparisons are unaffected by v34's #118 "RED" *power*-label — a KEEP is a relative
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
+
+## Turn — ORB lineage closure (governance axis): the 2026-08-10 arm-C stand-down BINDS to the pre-registered Lineage-closure rule — the ORB lineage is CLOSED, threshold +0.128605 vs best admissible −0.0006, head stays v35 (2026-08-11) — plan 2026-08-11-001
+
+- **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
+  backtest — and, deliberately, no edit to the rule itself (CONCEPTS.md "Lineage closure" /
+  "Search budget", landed PR #265) and no re-adjudication of the arm-C decision (the
+  2026-08-10 governance entry below, plan 2026-08-07-002). `strategy_code_hash` unchanged;
+  head stays **v35**. Every frozen ORB artifact is byte-identical — `config/preregistration.json`,
+  `config/sample-margin.json` — while `config/PREREGISTRATION.md` gains one additive status
+  marker pointing at this entry (annotate-don't-amend, per
+  `docs/solutions/conventions/suspend-vs-amend-frozen-governance-artifacts.md`).
+
+- **THE DECLARATION: the ORB lineage is CLOSED under the Lineage-closure rule.** The
+  2026-08-10 entry took arm C and the arc STOOD DOWN — but no entry ever said CLOSED:
+  every prior verdict "stands down" and only queue items "close", so the lineage's
+  terminal state existed nowhere as a committed fact and "which lineage is open?" was
+  left to inference. This entry binds that stand-down to the pre-registered rule
+  (CONCEPTS.md): a lineage is CLOSED when the frozen sample margin's threshold, evaluated
+  at the lineage's obtainable-sample ceiling, exceeds the best net RoR the lineage has
+  ever produced. Closure is a statement about detectability, never profitability, and it
+  cannot be reopened by acquiring data — only a larger hypothesized effect, or a
+  resolution with a deeper supply, changes the answer.
+
+- **The rule's two sides — no judgment calls.**
+  - *Threshold side:* **+0.128605** net RoR — the frozen margin
+    (`config/sample-margin.json`, frozen 2026-08-06: 29 trials spent, E[max of 29 null
+    trials] +0.054302) evaluated at the obtainable-sample ceiling of **237** reachable
+    sessions. The declaration binds on the frozen 237-session figure; the 2026-08-10
+    re-probe that moved the ceiling to 240 is direction-preserving and immaterial here —
+    at either ceiling the threshold exceeds the best admissible RoR by more than two
+    orders of magnitude.
+  - *Lineage side:* best **admissible** net RoR ever produced = **−0.0006** (head v35,
+    run `20260731T023138Z-backtest-orb-v35`, the 2026-07-31 transaction-cost turn).
+  - `+0.128605 > −0.0006`: the condition holds. **CLOSED.**
+
+- **The admissibility basis — stated because the naive reading defeats the rule.** Read
+  naively, "best net RoR the lineage has ever produced" is v32's **0.1876** — which
+  exceeds the threshold and would defeat this closure. That reading is wrong:
+  measurements count only on the honest basis — **real catalog** and **armed
+  transaction-cost model**, on the size-invariant net RoR statistic
+  (Σ realized / Σ risk_capital). That basis rules out v32 (`0.1876` — pre-#118
+  old-catalog era, pre-cost) and v34 (`0.0398` — real data, pre-cost). v35 is the SAME
+  head identity as both (see the head-lineage block above), re-measured honestly, and
+  its `−0.0006` is the only admissible "best ever". Without this paragraph the
+  declaration fails its own rule.
+
+- **Queue consequences (executed through `lab-next` after this entry lands).**
+  `rung1-ladder-reentry-margin-clearing-head` is superseded: its unblock names ORB's
+  frozen margin — a bar no head can ever clear under a closed lineage. The successor
+  item premises rung-1 re-entry on the successor lineage's own frozen margin (the P6
+  artifact; no figure exists until that freeze) and preserves the attended-session
+  choreography unchanged. `report-sample-catalog-read-cost-deferred` stands untouched —
+  already stand-down-aware and catalog-size-independent. Of the P0 item's seven-item
+  retire-list, five were already superseded before this turn; exactly one supersede
+  happens now. P0 (`orb-stand-down-bind-to-closure-rule`) closes via `lab-next done`
+  once this entry is in the tree.
 
 ## Turn — daily-depth probe: `t8410` serves ≥ 40 years on NO rolling window; the wall moves to the calendar witness (2026-08-10) — plan 2026-08-10-001
 

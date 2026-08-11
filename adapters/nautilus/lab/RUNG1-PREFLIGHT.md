@@ -29,6 +29,17 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 > need on the order of **8,600 closed trades (~3,499 calendar sessions, ~14 years)** against 54
 > sessions covered. Re-entry is not expected to arrive by a lever search on the current
 > catalog; the staged successor is queue `orb-sample-acquisition-decision`.
+>
+> **LINEAGE CLOSED — RE-ENTRY RE-PREMISED ON THE SUCCESSOR — 2026-08-11** (lineage-closure
+> binding, plan `2026-08-11-001`; TURN-LOG 2026-08-11 closure declaration). The ORB lineage
+> is **CLOSED** under the pre-registered CONCEPTS.md Lineage-closure rule, so the 2026-08-06
+> unblock above — clearing ORB's frozen sample margin — is a bar no head can ever clear, and
+> `rung1-ladder-reentry-margin-clearing-head` is superseded by
+> `rung1-ladder-reentry-successor-margin-head`: re-entry now waits for the **successor
+> lineage's** certified head to clear **its own** frozen margin (the artifact its
+> pre-registration freezes at P6, queue `next-lineage-preregistration-artifact`). The fresh
+> re-registration (v3+) and the step-3 literal moves described above still apply once that
+> head exists.
 
 > **The agent NEVER drives `--genesis`, `--dispatch`, `--mount`, `--escalate`, `--reregister`, or
 > `--clear-killswitch`.** Those are nonce-gated, attended, and refuse loudly in a no-TTY shell
