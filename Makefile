@@ -1058,8 +1058,9 @@ $(eval $(call NEG_PROBE_TARGET,token,live_smoke_token_negative))
 $(eval $(call NEG_PROBE_TARGET,cspat00601,live_smoke_cspat00601_negative))
 $(eval $(call NEG_PROBE_TARGET,cspat00701,live_smoke_cspat00701_negative))
 $(eval $(call NEG_PROBE_TARGET,cspat00801,live_smoke_cspat00801_negative))
+$(eval $(call NEG_PROBE_TARGET,t8410,live_smoke_t8410_negative))
 
-.PHONY: live-smoke-t1101-negative live-smoke-t1102-negative live-smoke-cspaq12200-negative live-smoke-t0425-negative live-smoke-token-negative live-smoke-cspat00601-negative live-smoke-cspat00701-negative live-smoke-cspat00801-negative
+.PHONY: live-smoke-t1101-negative live-smoke-t1102-negative live-smoke-cspaq12200-negative live-smoke-t0425-negative live-smoke-token-negative live-smoke-cspat00601-negative live-smoke-cspat00701-negative live-smoke-cspat00801-negative live-smoke-t8410-negative
 
 ## Attended IGW00000 A/B characterization (plan 2026-07-14-001 U5): a one-shot
 ## seed -> snapshot -> fire (OrdprcPtnCode omitted) -> re-snapshot -> cancel cycle

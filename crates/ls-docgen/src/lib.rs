@@ -1326,7 +1326,10 @@ mod tests {
             "t8467", "t9943", "t9944", "t8430", "t8431", "t8436", "t9905", "t9907", "t9942",
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
-            "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
+            // t8410 promoted to Recommended (2026-08-11, queue item
+            // promote-t8410-recommended, P2 of the next-lineage ladder) on a CLEAN
+            // in-window differential — moved to the recommended-no-banner loop below.
+            "t9945", "t3202", "t3401", "t8451", "t8419", "t4203",
             // All-lane closed-window flip wave (plan -003) — domestic REST lane
             // (overseas-index reads via /stock/investinfo, populated under closure).
             "t3518", "t3521",
@@ -1460,11 +1463,17 @@ mod tests {
         // promoted 2026-07-22 on a CLEAN attended differential once the Route C
         // booking-determining skip made its §30-held direction-defaulting variant
         // structurally never-fired (plan 2026-07-22-001).
+        // t8410 (paginated D/W/M/Y stock chart) promoted 2026-08-11 on a CLEAN
+        // in-window differential (every variant Clean or expected-tolerant; the
+        // tolerance profile matches its /stock/chart sibling t8412, observed for
+        // t8410 itself) — the first promotion off the Verification Bar deferral
+        // list (queue item promote-t8410-recommended, P2 of the next-lineage
+        // ladder, plan 2026-08-10-001).
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 10] = [
+        let recommended_no_banner: [&str; 11] = [
             "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
-            "CSPAT00701", "CSPAT00601",
+            "CSPAT00701", "CSPAT00601", "t8410",
         ];
         for rec in recommended_no_banner {
             let page = reference

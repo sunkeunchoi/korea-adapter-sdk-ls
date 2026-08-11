@@ -18,7 +18,28 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: 238beb842b1a
-  last_reviewed: 2026-06-25
+  last_reviewed: 2026-08-11
+recommendation:
+  behavior: Paper single-page daily stock chart (일주월년, gubun=2) read for one symbol (single shcode=078020, open-ended edate=99999999, one page of historical candles, any session) — a genuine paginated round-trip (rsp_cd=00000, candles=20)
+  evidence_ref: evidence/t8410.yaml
+  excludes:
+    - Production-credential charts (evidence is paper only)
+    - Multi-page chart_all correctness beyond a single page (the BODY cts_date cursor drives continuation and the header tr_cont is known to terminate early live — single-page scope only)
+    - Weekly/monthly/yearly period correctness (gubun=3/4/5 — the smoke exercised daily gubun=2 only)
+    - Correctness of a degenerate date window (sdate==edate) — a known trap this TR has been bitten by before (the ingest guard refuses the append); the smoke used the open-ended range
+    - Chart correctness on halts/VI days or outside KRX regular session
+    - Gateway-side rejection of an omitted shcode/gubun, a malformed sdate/edate, or a start>end (sdate>edate) date_order — preflight enforces these locally, the gateway tolerates them (gateway_tolerant; the differential probe reads the accepted violations as expected-tolerant)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+# Error-resilience gate (plan 2026-07-01-004, via the t8412 exemplar): request
+# field-constraint schema (drives preflight + the negative probe + the Reference
+# "Errors & validation" section) and the error-coverage evidence artifact. The
+# differential live probe (R10, `make live-smoke-t8410-negative`) ran CLEAN
+# in-window on the real paper gateway (2026-08-11) — every variant Clean or
+# expected-tolerant, zero Held/Divergent, no residual throttle — clearing this
+# TR for Recommended (queue item promote-t8410-recommended, P2 of the
+# next-lineage ladder, plan 2026-08-10-001).
+constraints_ref: constraints/t8410.yaml
+error_coverage_ref: error-coverage/t8410.yaml
