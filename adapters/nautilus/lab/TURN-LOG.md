@@ -60,6 +60,65 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — daily-depth probe: `t8410` serves ≥ 40 years on NO rolling window; the wall moves to the calendar witness (2026-08-10) — plan 2026-08-10-001
+
+- **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
+  backtest. Head stays **v35**. This entry is the durable record of a measurement taken by the
+  next-lineage scoping plan (`docs/plans/2026-08-10-001-docs-next-strategy-lineage-scope-plan.md`)
+  — `make raw-probe` prints to the terminal only, so without this record the readings exist
+  nowhere but the plan body.
+
+- **THE MEASUREMENT: thirteen `make raw-probe` reads against `t8410`** (`/stock/chart`,
+  `gubun: "2"` daily, `sujung: "Y"`, paper domestic lane, credential-safe by construction —
+  `http` / `rsp_cd` / `body_len` only). Eleven depth reads:
+
+  | symbol | window | http | rsp_cd | body_len | reading |
+  |---|---|---|---|---|---|
+  | `005930` | 2025-08-01 .. 2026-08-07 | 200 | 00000 | 44,092 | control — served |
+  | `005930` | 2016 full year | 200 | 00000 | 42,662 | served |
+  | `005930` | 2012 full year | 200 | 00000 | 43,075 | served |
+  | `005930` | 2005 full year | 200 | 00000 | 42,923 | served |
+  | `005930` | 2000 full year | 200 | 00000 | 40,949 | served |
+  | `005930` | 1990 full year | 200 | 00000 | 41,836 | served |
+  | `005930` | **1985 full year** | 200 | 00000 | **41,695** | **served** |
+  | `005930` | 2027 full year | 200 | 00000 | **618** | forward negative control — header block only |
+  | `005930` | 1960 full year | 200 | 00000 | **618** | pre-listing negative control — header block only |
+  | `323410` | 2012 full year | 200 | 00000 | **596** | pre-IPO negative control — header block only |
+  | `323410` | 2022 full year | 200 | 00000 | 42,268 | post-IPO — served |
+
+  Plus two page-cap reads: `qrycnt` 500 and 2000 over a 2010..2026 window both return ~87.6 KB,
+  so the **server-side page cap is 500 rows** regardless of the requested count, and the walk is
+  by body-cursor continuation on `cts_date`.
+
+- **Why the positives are admissible.** `t8410` is a chart TR and a degenerate chart window is
+  known live-gateway behaviour (the gateway ignores the start date on a collapsed window and
+  serves its default lookback). These windows are wide, and the three negative controls prove
+  window filtering is live in **both directions and per symbol** — an unlisted-in-window symbol
+  returns the 596–618-byte summary out-block with zero candle rows while the same window on a
+  listed symbol returns a full year (~43 KB ≈ 250 rows ≈ one KRX calendar year). The deep years
+  are genuinely in-window. Caveat carried with the reading: these are `body_len` discriminations,
+  not row-level reads — sufficient for the deeper-or-not verdict, upgraded to *measured* only by
+  P4's row-level `cts_date` walk.
+
+- **CONSEQUENCE: unlike `t8412` (rolling ~359 days, 240 reachable sessions, re-probed the same
+  day), `t8410` is not on a rolling window at all** — it serves full listed history, probed to
+  1985. The binding constraint for a daily lineage therefore moves **off the vendor onto the KRX
+  calendar's own witness source** (`krx-daily`, `available_from 2010-01-04`): 4,086 proven
+  sessions at the calendar wall, **2,457** at the plan's pre-registered 2016-08-01 floor — 10.2×
+  the intraday ceiling. That wall is extendable by evidence, not by budget. The full
+  admissibility arithmetic (margin bars, spec/holdout split, hypothesis class) lives in the plan,
+  not here. Also proven by the `323410` control: **listing dates are measurable from `t8410`
+  itself**, which is what re-scoped `orb-pivot-depth-probe-harness` into P4
+  (`pit-universe-depth-walk-t8410`).
+
+- **Queue staging (this commit).** The plan's prerequisite ladder is now staged through
+  `lab-next`: P1 `calendar-resolve-4-historical-unknown-days`, P2b `promote-universe-skeleton-trs`,
+  P3 `daily-catalog-2016-floor-pull`, P4 `pit-universe-depth-walk-t8410` (supersedes
+  `orb-pivot-depth-probe-harness` — re-scoped, not demoted), P5 `preferred-share-issue-seq-filter`,
+  P6 `next-lineage-preregistration-artifact`, P7 `lab-daily-multi-session-backtest-path`. P0
+  (`orb-stand-down-bind-to-closure-rule`) and P2 (`promote-t8410-recommended`) were already open.
+  All eight block turn one.
+
 ## Turn — ORB sample acquisition (governance axis): arm C TAKEN — the arc STANDS DOWN; supply re-probed at 359 days (ceiling 240); arm D's exact floor UNPRICEABLE as specified, head stays v35 (2026-08-10) — plan 2026-08-07-002
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no acquisition, no
