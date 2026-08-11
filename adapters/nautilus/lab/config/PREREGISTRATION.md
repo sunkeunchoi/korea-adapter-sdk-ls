@@ -1,6 +1,6 @@
 # Production Ladder — Pre-Registration
 
-**Status:** RE-REGISTERED to **v2** (head v34) · **LADDER STOOD DOWN 2026-07-31** (recorded suspension — see § Stand-down below; v2 values unchanged) · **RE-ENTRY CONDITION TIGHTENED 2026-08-06** — the unblock is no longer `net RoR > 0` but the pre-registered [sample margin](SAMPLE-MARGIN.md) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
+**Status:** RE-REGISTERED to **v2** (head v34) · **LADDER STOOD DOWN 2026-07-31** (recorded suspension — see § Stand-down below; v2 values unchanged) · **RE-ENTRY CONDITION TIGHTENED 2026-08-06** — the unblock is no longer `net RoR > 0` but the pre-registered [sample margin](SAMPLE-MARGIN.md) · **LINEAGE CLOSED 2026-08-10 (declared 2026-08-11)** — the ORB lineage this ladder served is CLOSED under the pre-registered Lineage-closure rule; rule evaluation and admissibility basis in the TURN-LOG 2026-08-11 closure-declaration entry (all frozen values below unchanged) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
 **Machine mirror:** [`preregistration.json`](preregistration.json)
 **Governs:** the capital ladder shipped in PR #154 (`docs/plans/2026-07-16-001-feat-production-ladder-plan.md`).
 
