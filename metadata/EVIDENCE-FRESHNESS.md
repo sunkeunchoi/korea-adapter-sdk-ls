@@ -129,9 +129,15 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   promotion off the Verification Bar deferral list (queue item
   `promote-t8410-recommended`, P2 of the next-lineage ladder, plan 2026-08-10-001;
   its tolerance profile matches the `/stock/chart` sibling `t8412` but was observed
-  for `t8410` itself) — bringing the total to
-  **11 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
-  (realtime), `CSPAQ12200` (account), `t0425` + `t8410` + `t8412` (paginated), and
+  for `t8410` itself), and `t8430` (full stock-issue master list, the universe
+  skeleton) on 2026-08-12 on a CLEAN in-window differential — the second promotion
+  off the Verification Bar deferral list (queue item `promote-universe-skeleton-trs`,
+  P2b of the next-lineage ladder; `gubun/enum` rejected distinctly IGW40011,
+  `gubun/required` expected-tolerant, observed for `t8430` itself on `/stock/etc`)
+  — bringing the total to
+  **12 Recommended TRs** — `token` (auth), `t1101` + `t1102` + `t8430`
+  (market_session), `S3_` (realtime), `CSPAQ12200` (account), `t0425` + `t8410` +
+  `t8412` (paginated), and
   `CSPAT00601` + `CSPAT00701` + `CSPAT00801` (orders) — spanning 6 owner classes,
   each on a clean live differential chain (except
   `S3_`, whose realtime subscribe has no differential and rests on the lifecycle-scoped

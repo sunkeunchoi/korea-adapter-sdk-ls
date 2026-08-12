@@ -1,0 +1,244 @@
+# Focused Evidence — t8430 (주식종목조회 / full stock-issue list, the
+# universe-skeleton master read)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that fetched
+# the full stock-issue master list. The `line` below is captured VERBATIM from
+# the `LIVE-SMOKE` stdout of `make live-smoke-t8430`
+# (crates/ls-sdk/tests/live/market_session_masters.rs::live_smoke_t8430). The
+# smoke emits no `rsp_msg` (localized, account-identifying text) — only the
+# numeric `rsp_cd` plus a public structural `issues` count — so a verbatim
+# capture stays credential-free, matching the token/t1101/t8410 evidence shape.
+#
+# Secret-safety: structural descriptors only — never the token, appkey, secret,
+# or account number. The read takes no caller identifier (`gubun="0"` is the
+# all-markets filter); `date` is the capture date; `issues` is a master-list
+# row count.
+#
+# Integrity of THIS record: `rsp_cd=00000` (gateway success) plus a non-empty
+# `issues=4297` count confirm a genuine full-list round-trip through the
+# header-less Object Array response shape (`t8430OutBlock` modeled as
+# Vec<T8430OutBlock> via `de_vec_or_single`; an empty list would not record).
+# The master list is characterized session-independent (implement-wave
+# observation), but THIS record's smoke ran in-window (KRX open, 2026-08-12),
+# so it proves in-window reachability only — off-session serving is excluded
+# from the recommendation scope. The differential probe below shares the
+# smoke's session.
+#
+# Differential certification (in-window 2026-08-12, KRX open, same session as
+# the smoke): the error-resilience gate (`make live-smoke-t8430-negative`) ran
+# CLEAN on the real paper gateway. The valid control succeeded (rsp_cd=00000);
+# the injected invalid variants read `Clean` (a genuine IGW40011 reject:
+# gubun/enum) or `expected-tolerant` (the gateway accepts the violation but the
+# SDK enforces it at preflight as a caller contract — gateway_tolerant,
+# observed for THIS TR on /stock/etc on its first probe pass and marked from
+# that evidence: gubun/required). Zero Held, zero Divergent, no IGW00201
+# throttle (probe paced at 1000 ms — the /stock/chart-settled figure for the
+# same warm-sensitive cumulative market-data budget, which page-bursting this
+# very TR once tripped). The recommendation therefore does NOT assert
+# gateway-side rejection of the tolerant pair (see the TR's `excludes`).
+tr_code: t8430
+date: 2026-08-12
+env: paper
+target: live-smoke-t8430
+line: "LIVE-SMOKE target=live-smoke-t8430 inputs=[env=paper date=2026-08-12] result=[rsp_cd=00000 issues=4297]"
+
+attested_normalizer_version: 2
+attested_shape:
+  tr_code: t8430
+  tr_name: 주식종목조회
+  protocol: rest
+  is_websocket: false
+  endpoint_path: /stock/etc
+  api_group_id: 316495d3-6109-45a6-baaf-9e8a0261f30a
+  source_group_name: '[주식] 기타'
+  request_blocks:
+  - direction: request
+    block_name: request_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: request
+    block_name: request_header
+    field_index: 1
+    field_name: authorization
+    korean_name: 접근토큰
+    type: String
+    length: 1000
+    required: true
+    description_hash: 62956eed2a6e506a
+  - direction: request
+    block_name: request_header
+    field_index: 2
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: request
+    block_name: request_header
+    field_index: 3
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: request
+    block_name: request_header
+    field_index: 4
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: request
+    block_name: request_header
+    field_index: 5
+    field_name: mac_address
+    korean_name: MAC 주소
+    type: String
+    length: 12
+    required: true
+    description_hash: 1d2213655779faf2
+  - direction: request
+    block_name: t8430InBlock
+    field_index: 0
+    field_name: gubun
+    korean_name: 구분(0:전체1:코스피2:코스닥)
+    type: String
+    length: 1
+    required: true
+  response_blocks:
+  - direction: response
+    block_name: response_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: response
+    block_name: response_header
+    field_index: 1
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: response
+    block_name: response_header
+    field_index: 2
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: response
+    block_name: response_header
+    field_index: 3
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: response
+    block_name: response_body
+    field_index: 0
+    field_name: t8430OutBlock
+    korean_name: |
+      t8430OutBlock
+    type: Object Array
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 1
+    field_name: hname
+    korean_name: 종목명
+    type: String
+    length: 20
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 2
+    field_name: shcode
+    korean_name: 단축코드
+    type: String
+    length: 6
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 3
+    field_name: expcode
+    korean_name: 확장코드
+    type: String
+    length: 12
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 4
+    field_name: etfgubun
+    korean_name: ETF구분(1:ETF)
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 5
+    field_name: uplmtprice
+    korean_name: 상한가
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 6
+    field_name: dnlmtprice
+    korean_name: 하한가
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 7
+    field_name: jnilclose
+    korean_name: 전일가
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 8
+    field_name: memedan
+    korean_name: 주문수량단위
+    type: String
+    length: 5
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 9
+    field_name: recprice
+    korean_name: 기준가
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: response_body
+    field_index: 10
+    field_name: gubun
+    korean_name: 구분(1:코스피2:코스닥)
+    type: String
+    length: 1
+    required: true
+  rate_limit_per_sec: 2
+  corp_rate_limit_per_sec: 5
+  rate_source_group: 316495d3-6109-45a6-baaf-9e8a0261f30a

@@ -354,6 +354,32 @@ fn t8410_probe_is_paced() {
     );
 }
 
+/// Inter-dispatch pace for the t8430 live differential probe. A small chain
+/// (control + 2 gubun variants), but t8430 sits on the same warm-sensitive
+/// CUMULATIVE market-data budget as the /stock/chart legs — page-bursting this
+/// very TR tripped `IGW00201` in the #116 universe-engine run — and each control
+/// answer is the FULL issue list (thousands of rows), a heavy read. It inherits
+/// the empirically-settled 1000 ms figure (see `T8412_PROBE_PACE` above; 250/500
+/// ms merely MOVED the throttle). Offline only the non-zero property is asserted
+/// (`t8430_probe_is_paced`); the true anti-throttle proof is the live probe run.
+const T8430_PROBE_PACE: Duration = Duration::from_millis(1000);
+
+#[test]
+fn t8430_probe_is_paced() {
+    // Same structural obligation as `t8412_probe_is_paced` (§27 reason A): the
+    // probe fires into the warm-sensitive cumulative market-data budget and must
+    // carry a non-zero, meaningfully sized inter-dispatch pace so a
+    // self-inflicted IGW00201 cannot mask variants.
+    assert!(
+        !T8430_PROBE_PACE.is_zero(),
+        "t8430 probe must be paced (non-zero) so it does not self-throttle"
+    );
+    assert!(
+        T8430_PROBE_PACE >= Duration::from_millis(100),
+        "t8430 pace should be at least the 10/s market-data bucket period (100 ms)"
+    );
+}
+
 /// Inter-fire pace for the ORDER differential negative probe (`run_order_negative_probe`,
 /// CSPAT006/007/008). The order fire loop dispatches the control submit + every
 /// type/required variant against the Orders rate bucket; with no pace they collided
@@ -613,6 +639,23 @@ async fn live_smoke_t8410_negative() {
             "comp_yn": "N", "sujung": "Y"
         }),
         T8410_PROBE_PACE,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8430-negative`"]
+async fn live_smoke_t8430_negative() {
+    // Seed mirrors the certified smoke shape (`T8430Request::all()` — gubun="0",
+    // the full-market issue list), so the control succeeds in- or off-session
+    // (the master list is session-independent). Single declared field, so the
+    // chain is short: control + gubun/required + gubun/enum.
+    run_inblock_negative_probe(
+        "t8430",
+        "/stock/etc",
+        "t8430InBlock",
+        serde_json::json!({ "gubun": "0" }),
+        T8430_PROBE_PACE,
     )
     .await;
 }

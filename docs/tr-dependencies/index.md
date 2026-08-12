@@ -300,7 +300,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented | [t8426](./t8426.md) |
 | `t8427` | 과거데이터시간대별조회 | `market_session` | tracked | [t8427](./t8427.md) |
 | `t8428` | 증시주변자금추이 | `market_session` | implemented | [t8428](./t8428.md) |
-| `t8430` | 주식종목조회 | `market_session` | implemented | [t8430](./t8430.md) |
+| `t8430` | 주식종목조회 | `market_session` | recommended | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `market_session` | implemented | [t8431](./t8431.md) |
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented | [t8433](./t8433.md) |
 | `t8434` | 선물/옵션멀티현재가조회 | `market_session` | implemented | [t8434](./t8434.md) |
