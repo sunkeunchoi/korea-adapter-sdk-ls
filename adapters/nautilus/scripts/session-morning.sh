@@ -308,7 +308,7 @@ BIN_EXTRA_FRESHNESS_INPUTS=(
 #
 # NANOSECOND comparison, not whole seconds. `int(st_mtime)` truncates both sides, so a source
 # written up to 0.99s AFTER the binary inside the same integer second reads as fresh — the
-# sub-second form of "a build racing a git pull", and one the content axis cannot cover for the six
+# sub-second form of "a build racing a git pull", and one the content axis cannot cover for the five
 # unregistered binaries. `st_mtime_ns` is an int, so bash's 64-bit `(( ))` still handles it (and
 # will until the year 2262); the -1 sentinel is unaffected.
 dep_freshness() { # $1 = absolute path to the binary; $2.. = extra inputs cargo's dep-info omits
@@ -373,16 +373,23 @@ print(binary_mtime, newest, vanished)' "$1" "${@:2}" 2>/dev/null || echo "-1 -1 
 # immune to merge behavior.
 #
 # COST, measured with the grep a non-interactive script actually resolves (`/usr/bin/grep`, BSD):
-# 0.05s for the registered 4.8 MB calendar-refresh, but ~4.1s for a full scan of the 262 MB
-# ls-ingest when the literal is ABSENT — a full scan is the miss case, and it is the miss case that
-# refuses. (An earlier note here read 0.18s; that was measured against an interactive shell whose
-# `grep` is aliased to `ugrep`, which the script never uses.) Today's registry costs 0.05s, but the
-# deferred "register the other six" follow-up would put ~12s on the 08:45 path for the three large
-# binaries, so size the registry against 4s-per-large-miss rather than the old figure.
+# 0.05s for the 4.8 MB calendar-refresh, ~1.8s for a HIT on the 251 MB ls-ingest (grep stops at
+# the match), ~4.1s for a full scan when a literal is ABSENT — a full scan is the miss case, and
+# it is the miss case that refuses. (An earlier note here read 0.18s; that was measured against an
+# interactive shell whose `grep` is aliased to `ugrep`, which the script never uses.) Today's
+# registry costs ~1.9s on the healthy path; registering the two remaining large binaries would add
+# ~4s-per-large-miss each, so size any growth against that figure rather than the old one.
 #
 # The registry grows when a GUARD SHIPS, not on a schedule. Registering an arbitrary literal for a
-# binary with no recent load-bearing change asserts nothing, so the other six stay unregistered
-# until they carry something worth asserting. `make script-check` fails on BOTH ends of each entry:
+# binary with no recent load-bearing change asserts nothing. The "register the other six" survey
+# (queue item, closed 2026-08-12) resolved to ONE registration: ls-ingest carries PR #101's
+# append-overlap refusal, the write-side guard for the very ingest this preflight fronts, and a
+# stale binary lacking it silently corrupts the catalog rather than failing visibly. The other
+# five stay unregistered on judgment, not neglect: calendar-fetch-inputs' load-bearing contract is
+# its ARGV, covered by the harness's replay against the real compiled binary (a stronger assertion
+# than any literal); calendar-activate, calendar-status, lab-research, and lab-mount-universe have
+# shipped no refusal literal whose silent absence is dangerous on this path — when one does,
+# register it then. `make script-check` fails on BOTH ends of each entry:
 # when a registered literal no longer occurs in the repo's Rust sources (R10 — a reword), and when
 # it is absent from the real compiled `target/debug` artifact it is registered for (R11 — a stale
 # or inverted build). It is a `make gate-run` step running right after adapter-check builds those
@@ -391,6 +398,7 @@ print(binary_mtime, newest, vanished)' "$1" "${@:2}" 2>/dev/null || echo "-1 -1 
 # from a stale binary in one line.
 BIN_PROBE_LITERALS=(
   "calendar-refresh|REFUSED (asked for|PR #258 forward-horizon guard — the refusal line whose ABSENCE reads as a clean pass"
+  "ls-ingest|APPEND REFUSED (overlap)|PR #101 append-overlap refusal — the write-side guard whose ABSENCE lets a stale binary corrupt the catalog silently"
 )
 
 # The literal registered for a binary, or empty when it is unregistered.
@@ -491,7 +499,7 @@ if (( allow_stale_bins )); then
   say "  ALL SEVEN required binaries are taken as deliberately pinned: the switch has no"
   say "  per-binary form, so pinning one artifact waives the mtime evidence for the other six too."
   # State the residual coverage HONESTLY rather than reassuringly. "The content axis still applies"
-  # is true but nearly vacuous while the registry holds one entry of seven — the six unregistered
+  # is true but nearly vacuous while the registry covers a minority of the seven — the unregistered
   # binaries have NO freshness evidence at all on an overridden run, and an operator deciding
   # whether that is acceptable needs the count, not the principle.
   say "  Residual coverage this run: the content axis, which is NOT bypassable — but it is"

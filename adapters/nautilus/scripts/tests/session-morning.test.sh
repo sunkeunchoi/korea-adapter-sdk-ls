@@ -1026,7 +1026,7 @@ fi
 # docs/solutions/workflow-issues/first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual.md:
 # a guard's verdict certifies neither its own presence nor its inputs. This is the assertion that
 # certifies its presence, and it is the same `grep -qaF` the preflight itself runs
-# (session-morning.sh:438) — PRESENCE, never a count, because all three forward_horizon verdicts
+# (session-morning.sh:446) — PRESENCE, never a count, because all three forward_horizon verdicts
 # share a byte-identical prefix and a count is an artifact of literal merging (KTD4).
 #
 # The real binary is REQUIRED, reported loudly when absent exactly as the argv replay does. This
