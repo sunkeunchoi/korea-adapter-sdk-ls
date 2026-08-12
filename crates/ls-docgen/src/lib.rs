@@ -1323,7 +1323,11 @@ mod tests {
             "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
             "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
-            "t8467", "t9943", "t9944", "t8430", "t8431", "t8436", "t9905", "t9907", "t9942",
+            // t8430 promoted to Recommended (2026-08-12, queue item
+            // promote-universe-skeleton-trs, P2b of the next-lineage ladder) on a
+            // CLEAN in-window differential — moved to the recommended-no-banner
+            // loop below.
+            "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             // t8410 promoted to Recommended (2026-08-11, queue item
@@ -1469,11 +1473,17 @@ mod tests {
         // t8410 itself) — the first promotion off the Verification Bar deferral
         // list (queue item promote-t8410-recommended, P2 of the next-lineage
         // ladder, plan 2026-08-10-001).
+        // t8430 (full stock-issue master list, the universe skeleton) promoted
+        // 2026-08-12 on a CLEAN in-window differential (gubun/enum IGW40011-rejected,
+        // gubun/required expected-tolerant, observed for t8430 itself on /stock/etc)
+        // — the second promotion off the Verification Bar deferral list (queue item
+        // promote-universe-skeleton-trs, P2b of the next-lineage ladder, plan
+        // 2026-08-10-001).
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 11] = [
+        let recommended_no_banner: [&str; 12] = [
             "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
-            "CSPAT00701", "CSPAT00601", "t8410",
+            "CSPAT00701", "CSPAT00601", "t8410", "t8430",
         ];
         for rec in recommended_no_banner {
             let page = reference

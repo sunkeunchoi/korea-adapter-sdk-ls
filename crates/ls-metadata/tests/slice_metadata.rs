@@ -59,7 +59,9 @@ fn authored_slice_metadata_validates_clean() {
     // t8430 is implemented (tracked-and-raw flip wave): the supposed array-shape
     // blocker was just a header-less Object Array response, modeled as
     // Vec<T8430OutBlock> via `de_vec_or_single` and confirmed on a clean paper
-    // smoke (4291 issues). Implemented, not yet recommended.
+    // smoke (4291 issues). Promoted to Recommended 2026-08-12 (queue item
+    // promote-universe-skeleton-trs, P2b of the next-lineage ladder) on a CLEAN
+    // in-window differential.
     let t8430 = report
         .trs
         .get("t8430")
@@ -70,8 +72,8 @@ fn authored_slice_metadata_validates_clean() {
         "t8430 is implemented (array-shape resolved via de_vec_or_single)"
     );
     assert!(
-        !t8430.support.recommended,
-        "t8430 is not recommended (Implemented only)"
+        t8430.support.recommended,
+        "t8430 is recommended (P2b differential-probe gate, 2026-08-12)"
     );
 }
 
@@ -103,7 +105,12 @@ fn authored_slice_metadata_validates_clean() {
 /// profile matches its `/stock/chart` sibling `t8412` but was observed for `t8410`
 /// itself) — the first promotion off the Verification Bar deferral list (queue item
 /// `promote-t8410-recommended`, P2 of the next-lineage ladder, plan 2026-08-10-001).
-/// These eleven are the ONLY ones currently allowed to carry the Recommended badge.
+/// Then on 2026-08-12 `t8430` (full stock-issue master list, the universe skeleton)
+/// promoted on a CLEAN in-window differential (gubun/enum IGW40011-rejected,
+/// gubun/required expected-tolerant, observed for t8430 itself on /stock/etc) —
+/// the second promotion off the Verification Bar deferral list (queue item
+/// `promote-universe-skeleton-trs`, P2b of the next-lineage ladder).
+/// These twelve are the ONLY ones currently allowed to carry the Recommended badge.
 /// This test guards against an accidental re-promotion of any TR that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
@@ -117,7 +124,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8410", "t8412", "token"],
+        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8410", "t8412", "t8430", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );

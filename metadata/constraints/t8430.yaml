@@ -1,0 +1,35 @@
+# Request field-constraint schema for t8430 (주식종목조회 — full stock-issue
+# list, the universe-skeleton master read). Single caller field: the market
+# filter. The single source from which the preflight validator (ls-core), the
+# differential negative probe, and the Reference "Errors & validation" section
+# are derived.
+#
+# Grounding (KTD5, R4):
+#   - `type` + `required` are cross-checked offline against the normalized
+#     baseline (crates/ls-trackers/baselines/api-drift/normalized/trs/t8430.json):
+#     gubun — String, length 1, required.
+#   - the `enum` bound is graded from the source spec's Korean name
+#     구분(0:전체1:코스피2:코스닥); it carries `confirmed: false` until the
+#     differential live probe (R10) confirms it, so preflight stays permissive
+#     on it (R6) until then. The certified struct (`T8430Request::all()`) sends
+#     the in-enum "0".
+#
+# gateway_tolerant (this TR's OWN differential probe, first pass 2026-08-12,
+# in-window, control rsp_cd=00000, zero Held/throttle): the gateway returns
+# rsp_cd=00000 when `gubun` is omitted (`required` class) — it defaults the
+# market filter rather than rejecting, the same tolerance profile the
+# /stock/chart siblings (t8410/t8412) showed for their required fields, but
+# observed for THIS TR on /stock/etc, not inherited. Preflight still enforces
+# `required` (a caller contract — the certified struct cannot be built without
+# it); the Recommended claim does not assert gateway-side enforcement of the
+# tolerant pair. Merits-rejected distinctly (IGW40011): gubun/enum (off-enum
+# market code).
+tr_code: t8430
+fields:
+  - name: gubun
+    type: string          # baseline: String, length 1, required (market filter)
+    required: true
+    gateway_tolerant: [required]   # gateway accepts removal (probe 2026-08-12); off-enum still rejected (IGW40011).
+    enum: { applicable: true, values: ["0", "1", "2"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }

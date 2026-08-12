@@ -2379,18 +2379,20 @@ mod tests {
         // then CSPAT00701 dated 2026-07-15 (§31, IGW00000 placed-nothing Route B), then
         // CSPAT00601 dated 2026-07-22 (Route C booking-determining skip, plan -22-001),
         // then t8410 dated 2026-08-11 (P2 of the next-lineage ladder, CLEAN in-window
-        // differential). Evaluated at 2026-10-01 all eleven are under the 90-day age
-        // backstop (t1101/token/S3_ 87 days, CSPAQ12200/t1102/t0425/CSPAT00801 80 days,
-        // t8412 79 days, CSPAT00701 78 days, CSPAT00601 71 days, t8410 51 days) — so the
-        // run counts the eleven Recommended TRs but finds nothing stale and exits zero;
-        // the cli's validate→evaluate→exit wiring is exercised over a NON-empty set. The
+        // differential), then t8430 dated 2026-08-12 (P2b, universe-skeleton master
+        // list, CLEAN in-window differential). Evaluated at 2026-10-01 all twelve are
+        // under the 90-day age backstop (t1101/token/S3_ 87 days,
+        // CSPAQ12200/t1102/t0425/CSPAT00801 80 days, t8412 79 days, CSPAT00701 78 days,
+        // CSPAT00601 71 days, t8410 51 days, t8430 50 days) — so the run counts the
+        // twelve Recommended TRs but finds nothing stale and exits zero; the cli's
+        // validate→evaluate→exit wiring is exercised over a NON-empty set. The
         // stale→findings machinery is covered by `freshness::tests` over a synthetic
         // recommended fixture.
         let root = scratch("freshness-recommended-set");
         let paths = real_metadata_paths(&root);
         let result = run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         let report = result.as_ref().unwrap();
-        assert_eq!(report.recommended_count, 11);
+        assert_eq!(report.recommended_count, 12);
         assert!(report.findings.is_empty());
         // Advisory — stale evidence never gates (nothing is past the backstop here).
         assert_eq!(freshness_exit_for(&result), Exit::Ok);

@@ -18,7 +18,29 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: abfd3bae860b
-  last_reviewed: 2026-06-21
+  last_reviewed: 2026-08-12
+recommendation:
+  behavior: Paper full stock-issue master-list read (주식종목조회, gubun="0" all markets, single call, session-independent) through the header-less Object Array response shape — a genuine round-trip (rsp_cd=00000, issues=4297)
+  evidence_ref: evidence/t8430.yaml
+  excludes:
+    - Production-credential reads (evidence is paper only)
+    - Per-market filter correctness (gubun="1" KOSPI / gubun="2" KOSDAQ — the smoke exercised the all-markets "0" only)
+    - Completeness of the issue list (the smoke proves a non-empty master list, not that every listed instrument appears — universe completeness is unestablished)
+    - Row-value correctness beyond the round-trip (uplmtprice/dnlmtprice/jnilclose/recprice are point-in-time quotes; the smoke asserts a structural count, never values)
+    - Intra-day freshness of the price-bearing columns during halts/VI or across session transitions (the master list is session-independent by design; its quote columns are not certified fresh)
+    - Gateway-side rejection of an omitted gubun — preflight enforces it locally, the gateway tolerates its absence and defaults the filter (gateway_tolerant; the differential probe reads the accepted violation as expected-tolerant)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+# Error-resilience gate (plan 2026-07-01-004, via the t8412 exemplar): request
+# field-constraint schema (drives preflight + the negative probe + the Reference
+# "Errors & validation" section) and the error-coverage evidence artifact. The
+# differential live probe (R10, `make live-smoke-t8430-negative`) ran CLEAN
+# in-window on the real paper gateway (2026-08-12) — gubun/enum rejected
+# distinctly (IGW40011), gubun/required expected-tolerant, zero Held/Divergent,
+# no residual throttle — clearing this TR for Recommended (queue item
+# promote-universe-skeleton-trs, P2b of the next-lineage ladder, plan
+# 2026-08-10-001).
+constraints_ref: constraints/t8430.yaml
+error_coverage_ref: error-coverage/t8430.yaml

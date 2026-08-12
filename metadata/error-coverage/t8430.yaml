@@ -1,0 +1,51 @@
+# Error-coverage evidence for t8430 (주식종목조회 — full stock-issue list) —
+# R10/R11.
+#
+# Records the per-(field, class) coverage derived from constraints/t8430.yaml
+# and the reachable gateway codes the Reference page explains from the shared
+# catalog.
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t8430-negative`, R10) run in-window on the real paper
+# gateway (2026-08-12, a KRX trading day, same session as the Focused Evidence
+# smoke). The valid control succeeded (rsp_cd=00000); the injected invalid
+# variants read either `Clean` (a genuine IGW40011 reject: gubun/enum) or
+# `expected-tolerant` (the gateway accepts the violation but the SDK enforces
+# it at preflight as a caller contract — gateway_tolerant, observed for THIS TR
+# on /stock/etc on its first probe pass and marked from that evidence:
+# gubun/required). Zero Held, zero Divergent, no residual IGW00201 throttle
+# (probe paced at 1000 ms — the figure the /stock/chart legs settled
+# empirically for the same warm-sensitive cumulative market-data budget, which
+# page-bursting this very TR tripped in the #116 universe-engine run). The
+# required-omission tolerance profile matches the /stock/chart siblings
+# (t8410/t8412), which is corroborating (same ingress), but the pair above was
+# observed for t8430 itself, not inherited. The recommendation therefore does
+# NOT assert gateway-side rejection of the tolerant pair (see the TR's
+# `excludes`).
+#
+# `status` legend: confirmed = the differential probe confirmed the bound
+# (rejected distinctly, IGW40011); tolerant = the gateway accepted the injected
+# violation but preflight enforces it as a caller contract (gateway_tolerant,
+# expected-tolerant — non-blocking); held = inconclusive; divergent = observed
+# behavior disagreed with the declaration; n_a = the class does not apply / no
+# variant is generated (string fields get no type-mutation variant;
+# required-omission variants fire only for required:true fields).
+tr_code: t8430
+probe_status: clean
+seed: "gubun=0 (the certified smoke shape — T8430Request::all(), the all-markets issue list; session-independent master read)"
+input_classes:
+  - { field: gubun, class: type, status: n_a }               # string field — no type-mutation variant is generated
+  - { field: gubun, class: required, status: tolerant }      # omit accepted → 00000 (gateway defaults the market filter); preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: gubun, class: enum, status: confirmed }         # off-enum market code rejected distinctly (IGW40011)
+  - { field: gubun, class: range, status: n_a }
+  - { field: gubun, class: format, status: n_a }
+# Reachable gateway codes for this read TR, explained once from the shared
+# catalog (R8/R9). Environment/entitlement codes are not reproduced per TR —
+# they point at the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011
