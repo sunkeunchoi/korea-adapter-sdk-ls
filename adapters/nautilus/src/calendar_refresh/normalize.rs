@@ -263,18 +263,36 @@ pub fn weekend_rules(window: DateRange) -> Vec<EvidenceRecord> {
     out
 }
 
+/// The KRX year-end closing day for `year`: December 31, or — per the exchange's published
+/// rule (「유가증권시장 업무규정 시행세칙」: 12월 31일이 공휴일 또는 토요일인 경우 직전
+/// 매매거래일) — the preceding weekday when December 31 falls on a weekend. Stepping over
+/// weekends only is a bounded under-approximation of "preceding trading day": if that weekday
+/// were itself a public holiday the true closure would sit one day earlier, but the claimed
+/// day is Closed either way (holiday + rule), so the approximation can never mark a real
+/// trading day Closed — and a positive witness overrides the rule regardless.
+fn year_end_closure_day(year: i32) -> Option<NaiveDate> {
+    let mut date = NaiveDate::from_ymd_opt(year, 12, 31)?;
+    while !is_weekday(date) {
+        date = date.pred_opt()?;
+    }
+    Some(date)
+}
+
 /// One fixed-closure rule per KRX exchange-only holiday in `window` that no external feed
-/// provides (KTD3): the year-end closing day (December 31) and Labor Day (May 1), each ONLY when
-/// it falls on a weekday (a weekend one is already Closed by [`weekend_rules`]). Any residual
-/// exchange-only closure is adjudicated in the discrepancy flow, not guessed here.
+/// provides (KTD3): the year-end closing day (December 31, shifted to the preceding weekday
+/// when it falls on a weekend — see [`year_end_closure_day`]) and Labor Day (May 1, NEVER
+/// shifted: KRX publishes no substitute closure when it falls on a weekend, which the
+/// weekend rule already covers). Any residual exchange-only closure is adjudicated in the
+/// discrepancy flow, not guessed here.
 pub fn fixed_closure_rules(window: DateRange) -> Vec<EvidenceRecord> {
     let mut out = Vec::new();
     for year in window.from.year()..=window.through.year() {
-        let candidates = [
-            NaiveDate::from_ymd_opt(year, 12, 31),
-            NaiveDate::from_ymd_opt(year, 5, 1),
-        ];
-        for date in candidates.into_iter().flatten() {
+        if let Some(date) = year_end_closure_day(year) {
+            if window.contains(date) {
+                out.push(rule_record(date));
+            }
+        }
+        if let Some(date) = NaiveDate::from_ymd_opt(year, 5, 1) {
             if window.contains(date) && is_weekday(date) {
                 out.push(rule_record(date));
             }

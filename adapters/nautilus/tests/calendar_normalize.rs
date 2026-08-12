@@ -155,10 +155,44 @@ fn fixed_closure_generation_covers_weekday_year_end_and_labor_day_only() {
     let weekend_may1 = fixed_closure_rules(DateRange::new(d(2027, 5, 1), d(2027, 5, 1)));
     assert!(weekend_may1.is_empty(), "a weekend Labor Day yields no fixed rule");
 
+    // Labor Day never shifts: the window around a weekend May 1 yields no substitute weekday.
+    let around_may1 = fixed_closure_rules(DateRange::new(d(2027, 4, 28), d(2027, 5, 4)));
+    assert!(around_may1.is_empty(), "a weekend Labor Day has NO substitute closure day");
+
     // Over that weekend window the only closure records come from the weekend generator.
     let combined = generated_rules(DateRange::new(d(2027, 5, 1), d(2027, 5, 2)));
     let dates: Vec<NaiveDate> = combined.iter().map(|r| r.date).collect();
     assert_eq!(dates, vec![d(2027, 5, 1), d(2027, 5, 2)], "weekend Sat+Sun only, no fixed May 1");
+}
+
+#[test]
+fn year_end_closure_shifts_to_the_preceding_weekday_when_dec_31_is_a_weekend() {
+    // The published KRX rule closes the preceding trading day when Dec 31 falls on a
+    // weekend. These four dates are exactly the historical Unknown days the weekday-only
+    // transcription left unresolved (P1, plan 2026-08-10-001).
+    for (year, expected) in [
+        (2016, d(2016, 12, 30)), // Dec 31 Sat → Fri 12-30
+        (2017, d(2017, 12, 29)), // Dec 31 Sun → (Sat 12-30) → Fri 12-29
+        (2022, d(2022, 12, 30)), // Dec 31 Sat → Fri 12-30
+        (2023, d(2023, 12, 29)), // Dec 31 Sun → Fri 12-29
+    ] {
+        let window = DateRange::new(d(year, 12, 1), d(year, 12, 31));
+        let rules = fixed_closure_rules(window);
+        let dates: Vec<NaiveDate> = rules.iter().map(|r| r.date).collect();
+        assert_eq!(dates, vec![expected], "year {year} year-end closure day");
+        // The weekend Dec 31 itself is the weekend generator's, not a fixed rule.
+        assert!(!dates.contains(&d(year, 12, 31)));
+    }
+
+    // A weekday Dec 31 stays put — no shift, single rule on the day itself.
+    let rules = fixed_closure_rules(DateRange::new(d(2026, 12, 1), d(2026, 12, 31)));
+    let dates: Vec<NaiveDate> = rules.iter().map(|r| r.date).collect();
+    assert_eq!(dates, vec![d(2026, 12, 31)], "weekday year-end is unshifted");
+
+    // A 1-day window on the shifted day alone still emits it (the refresh fetch uses
+    // exactly this window shape to resolve a single historical day).
+    let one_day = fixed_closure_rules(DateRange::new(d(2016, 12, 30), d(2016, 12, 30)));
+    assert_eq!(one_day.iter().map(|r| r.date).collect::<Vec<_>>(), vec![d(2016, 12, 30)]);
 }
 
 #[test]
