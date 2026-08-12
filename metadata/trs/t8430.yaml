@@ -23,14 +23,15 @@ maintenance:
   source_spec_hash: abfd3bae860b
   last_reviewed: 2026-08-12
 recommendation:
-  behavior: Paper full stock-issue master-list read (주식종목조회, gubun="0" all markets, single call, session-independent) through the header-less Object Array response shape — a genuine round-trip (rsp_cd=00000, issues=4297)
+  behavior: Paper full stock-issue master-list read (주식종목조회, gubun="0" all markets, single in-window call) through the header-less Object Array response shape — a genuine round-trip (rsp_cd=00000, issues=4297)
   evidence_ref: evidence/t8430.yaml
   excludes:
     - Production-credential reads (evidence is paper only)
     - Per-market filter correctness (gubun="1" KOSPI / gubun="2" KOSDAQ — the smoke exercised the all-markets "0" only)
     - Completeness of the issue list (the smoke proves a non-empty master list, not that every listed instrument appears — universe completeness is unestablished)
     - Row-value correctness beyond the round-trip (uplmtprice/dnlmtprice/jnilclose/recprice are point-in-time quotes; the smoke asserts a structural count, never values)
-    - Intra-day freshness of the price-bearing columns during halts/VI or across session transitions (the master list is session-independent by design; its quote columns are not certified fresh)
+    - Off-session serving of the master list (the smoke and the differential probe both ran in-window 2026-08-12; session independence is an implement-wave characterization, not proven by this evidence)
+    - Intra-day freshness of the price-bearing columns during halts/VI or across session transitions (the quote columns are not certified fresh)
     - Gateway-side rejection of an omitted gubun — preflight enforces it locally, the gateway tolerates its absence and defaults the filter (gateway_tolerant; the differential probe reads the accepted violation as expected-tolerant)
     - Stronger freshness automation than the stated policy (no enforcement in code today)
 # Error-resilience gate (plan 2026-07-01-004, via the t8412 exemplar): request

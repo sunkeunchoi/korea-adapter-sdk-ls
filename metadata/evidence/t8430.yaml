@@ -18,9 +18,11 @@
 # `issues=4297` count confirm a genuine full-list round-trip through the
 # header-less Object Array response shape (`t8430OutBlock` modeled as
 # Vec<T8430OutBlock> via `de_vec_or_single`; an empty list would not record).
-# The master list is session-independent by design, so the read proves
-# reachability in any session; the smoke ran in-window regardless (KRX open,
-# 2026-08-12) so the differential probe below shares its session.
+# The master list is characterized session-independent (implement-wave
+# observation), but THIS record's smoke ran in-window (KRX open, 2026-08-12),
+# so it proves in-window reachability only — off-session serving is excluded
+# from the recommendation scope. The differential probe below shares the
+# smoke's session.
 #
 # Differential certification (in-window 2026-08-12, KRX open, same session as
 # the smoke): the error-resilience gate (`make live-smoke-t8430-negative`) ran
