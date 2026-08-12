@@ -11,6 +11,10 @@
 //!   tier-assignment, tradability-gate, and stratified-sample logic (U1).
 //! - [`capture`] — the live capture that joins the six reference TRs by
 //!   `shcode` into the artifact (U2; attended, paper-only).
+//! - [`pit_walk`] — the P4 pit-universe depth walk over `t8410` daily bars:
+//!   per-symbol listing evidence, the page-cap measurement subset, and the
+//!   effective-`S_max`/participation derivation (plan 2026-08-12-001).
 
 pub mod capture;
+pub mod pit_walk;
 pub mod universe_metadata;
