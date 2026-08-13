@@ -208,6 +208,23 @@ requests (~45 min); a multi-year full-universe **minute** backfill is ~10⁶ req
 range) and grown via scheduled accumulate-forward runs. Paper history may be short
 or empty per symbol — the run records coverage gaps rather than failing.
 
+### Windowed deep backfill (`LS_INGEST_MODE=backfill`)
+
+Neither the range backfill above nor accumulate can seed a catalog to a deep
+floor: both issue **one wide `collect_daily` range**, which `t8410` serves as
+the newest ~501 rows with a *clean* empty `cts_date` cursor (measured, P4
+2026-08-12) — appending about two years over a ten-year hole and attesting it.
+`LS_INGEST_MODE=backfill` walks each manifest symbol's calendar-snapped windows
+(≤450 proven sessions each) oldest-first, appending one verified window at a
+time and checkpointing after each.
+
+While a catalog carries an unfinished backfill, `range`, `accumulate`, and
+`rebase` all refuse to run against it (`BACKFILL INCOMPLETE`).
+
+Full operator procedure — bootstrap, batching, degradation triage, and the
+`backfill-report` GO/NO-GO close — is in
+[`RUNBOOK-daily-backfill.md`](RUNBOOK-daily-backfill.md).
+
 ### Accumulate-forward (idempotent, cron-safe)
 
 `LS_INGEST_MODE=accumulate` grows whole-universe coverage from each instrument's

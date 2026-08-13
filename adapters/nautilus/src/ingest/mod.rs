@@ -13,6 +13,7 @@
 //! wall-clock strings; the adapter converts to UTC `UnixNanos` with `ts_event` =
 //! **bar close** (Nautilus convention). Runs are resumable via [`checkpoint`].
 
+pub mod backfill;
 pub mod budget;
 pub mod checkpoint;
 pub mod pacer;
@@ -32,7 +33,7 @@ use ls_sdk::LsSdk;
 use nautilus_core::UnixNanos;
 use nautilus_model::data::{Bar, BarSpecification, BarType};
 use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
-use nautilus_model::identifiers::InstrumentId;
+use nautilus_model::identifiers::{InstrumentId, Symbol, Venue};
 use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, DimensionStaleness};
@@ -226,6 +227,31 @@ impl<'c> CalendarGate<'c> {
     /// Full-history freshness for conservative checkpoint continuity decisions.
     pub fn full_history_freshness(&self) -> Option<DimensionStaleness> {
         self.view.map(|view| view.freshness().full_history)
+    }
+
+    /// The calendar-snapped windows covering `[floor, through]` (P3/R10) —
+    /// the heal's re-pull partition, the same one the backfill mode walks.
+    ///
+    /// `None` when no calendar view is injected: a heal cannot then be
+    /// partitioned, and R10 forbids falling back to the single wide-range
+    /// re-pull that truncates a deep catalog to its newest ~501 rows.
+    pub fn heal_windows(
+        &self,
+        floor: NaiveDate,
+        through: NaiveDate,
+    ) -> AdapterResult<Option<Vec<crate::reference::pit_walk::WalkWindow>>> {
+        match self.view {
+            None => Ok(None),
+            Some(view) => Ok(Some(
+                crate::reference::pit_walk::partition_windows(
+                    &view,
+                    floor,
+                    through,
+                    crate::reference::pit_walk::MAX_SESSIONS_PER_WINDOW,
+                )?
+                .windows,
+            )),
+        }
     }
 
     pub fn has_stale_evidence(&self) -> bool {
@@ -950,6 +976,68 @@ enum TripleOutcome {
     Gap(GapReason),
 }
 
+/// The outcome of one backfill window attempt (P3/U3).
+enum BackfillStep {
+    /// Verified, window-trimmed bars ready to append.
+    Bars(Vec<Bar>),
+    /// A clean zero-row completion that survived the bounded re-fetch (R8).
+    /// The caller records an uncovered gap; this is never "the window is done".
+    Empty,
+    /// The window walk failed closed (suspect truncation, dead throttle budget,
+    /// a gateway failure). Carries the scrubbed reason.
+    Failed(String),
+}
+
+/// The KRX-venue instrument id for a 6-digit shcode.
+pub(crate) fn instrument_id_for(shcode: &str) -> InstrumentId {
+    InstrumentId::new(Symbol::from(shcode), Venue::from(crate::KRX_VENUE))
+}
+
+/// The refusal every other bar-writing mode raises on a home carrying an
+/// incomplete windowed backfill (P3/R7).
+///
+/// `range` (the default), `accumulate`, and `rebase` each issue ONE wide
+/// `collect_daily` range, and P4 measured that a wide-range `t8410` request
+/// serves only the newest ~501 rows with a *clean* empty `cts_date` cursor. Run
+/// against a mid-backfill home, any of them would append about two years of
+/// bars over a multi-year hole and advance the watermark attesting it — or
+/// strand truncated rows that a later backfill window then dies on at the
+/// overlap refusal. The marker makes that unreachable.
+pub const BACKFILL_INCOMPLETE_REFUSAL: &str = "BACKFILL INCOMPLETE";
+
+/// Refuse a bar-writing mode on a marked home (R7), reading the checkpoint at
+/// its standard path under `catalog_path`.
+///
+/// The library guard runs after each mode's own checkpoint load, which is
+/// already before any bar fetch — but `ls-ingest` issues the 3-call universe
+/// load *before* constructing the ingestor, so the bin calls this first to keep
+/// the refusal at **zero gateway calls** (AE1).
+pub fn refuse_if_backfill_incomplete(catalog_path: &Path, mode: &str) -> AdapterResult<()> {
+    let checkpoint = Checkpoint::load(&catalog_path.join("ingest-checkpoint.json"))?;
+    refuse_on_incomplete_backfill(&checkpoint, mode, catalog_path)
+}
+
+/// Refuse a bar-writing mode on a marked home (R7). Called immediately after
+/// the checkpoint load, before any gateway dispatch.
+fn refuse_on_incomplete_backfill(
+    checkpoint: &Checkpoint,
+    mode: &str,
+    catalog_path: &Path,
+) -> AdapterResult<()> {
+    if checkpoint.backfill_incomplete() {
+        return Err(AdapterError::Ingest(format!(
+            "{BACKFILL_INCOMPLETE_REFUSAL}: refusing {mode} mode — catalog {} carries an \
+             incomplete windowed backfill (ingest-checkpoint.json `backfill_incomplete`). A wide \
+             daily range against a mid-backfill home serves only the newest ~501 rows on a clean \
+             cursor, so it would attest a multi-year hole or strand truncated rows a later \
+             backfill window dies on. Finish the pull (LS_INGEST_MODE=backfill) until every \
+             manifest symbol reaches the anchor, then re-run this mode.",
+            catalog_path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Walk the daily cursor for one symbol, collecting bars. Terminates on an empty
 /// next-cursor, a repeated cursor (defensive), an empty page, the page cap, or an
 /// `01715` (non-trading-day) error → coverage gap.
@@ -1433,8 +1521,16 @@ pub struct HealRefusal {
 /// The outcome of one per-symbol heal attempt.
 enum HealOutcome {
     /// Wipe → re-pull → re-verify completed; the mark is cleared and the event
-    /// recorded. Carries the number of bars re-written.
-    Healed(usize),
+    /// recorded.
+    Healed {
+        /// Bars re-written.
+        bars: usize,
+        /// Windows that came back cleanly empty **after** the series had
+        /// started serving rows (P3/R10). Documented loud rather than silently
+        /// completed over; a *leading* empty window is pre-listing emptiness
+        /// and is never a gap.
+        gaps: Vec<CoverageGap>,
+    },
     /// The wipe precondition refused (floor later than earliest stored bar).
     Refused(HealRefusal),
     /// The re-pull was truncated or the re-verify mismatched — the mark stays
@@ -1725,6 +1821,9 @@ impl Ingestor {
         // `Checkpoint::load`), which keeps legacy ranges conservatively separate (a fresh
         // catalog has nothing to migrate).
         let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        // R7: a mid-backfill home is off-limits to every other bar-writing
+        // mode. Refused here — after the load, before any gateway dispatch.
+        refuse_on_incomplete_backfill(&checkpoint, "range", &self.config.catalog_path)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
 
         let range = format!("{}..{}", self.config.sdate, self.config.edate);
@@ -1925,6 +2024,8 @@ impl Ingestor {
         // U10/KTD8: the legacy `completed`→`watermark` migration runs on load; route it
         // through the calendar seam so Enforced merges only fully-proven-Closed gaps.
         let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
+        // R7: refused after the load, before any gateway dispatch (AE1).
+        refuse_on_incomplete_backfill(&checkpoint, "accumulate", &self.config.catalog_path)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
         let mut checkpoint_committed = false;
 
@@ -2158,13 +2259,45 @@ impl Ingestor {
                     let heal_through = plan
                         .destructive_request_through()
                         .expect("every admitted heal has an established request endpoint");
+                    // P3/R10: the heal re-pull is windowed, so it needs the
+                    // calendar-snapped partition. Without a view there is no
+                    // partition — and falling back to the single wide-range
+                    // re-pull would truncate the deep catalog the wipe is about
+                    // to empty. Refuse: the mark stays and the next run
+                    // re-enters at the wipe.
+                    let heal_windows = match calendar.heal_windows(lookback_floor, heal_through)? {
+                        Some(w) if !w.is_empty() => w,
+                        _ => {
+                            tracing::warn!(
+                                instrument = %instrument,
+                                floor = %fmt_ymd(lookback_floor),
+                                through = %fmt_ymd(heal_through),
+                                "heal refused: the calendar cannot partition [floor, through] into \
+                                 windows, and a wide-range daily re-pull would truncate the wiped \
+                                 series; symbol stays marked"
+                            );
+                            gaps_this_run.push(CoverageGap {
+                                instrument: instrument.clone(),
+                                bar_type: label.clone(),
+                                range: format!(
+                                    "{}..{}",
+                                    fmt_ymd(lookback_floor),
+                                    fmt_ymd(heal_through)
+                                ),
+                                reason: GapReason::PaperThin,
+                            });
+                            checkpoint_committed = true;
+                            continue;
+                        }
+                    };
                     match self
-                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, heal_through, lookback_floor)
+                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, heal_through, lookback_floor, &heal_windows)
                         .await?
                     {
-                        HealOutcome::Healed(n) => {
+                        HealOutcome::Healed { bars: n, gaps } => {
                             bars_written += n;
                             ingested += 1;
+                            gaps_this_run.extend(gaps);
                             // #189 follow-up: a completed heal re-pulled real bars —
                             // clear any persistent-empty retry state defensively (a
                             // shifted triple is exempt from the converge skip and in
@@ -2517,6 +2650,10 @@ impl Ingestor {
         })?;
         let checkpoint_path = self.config.checkpoint_path();
         let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
+        // R7: refused BEFORE the durable mark-all boundary — a rebase against a
+        // mid-backfill home would mark every triple shifted and then heal them
+        // off a truncated wide-range re-pull.
+        refuse_on_incomplete_backfill(&checkpoint, "rebase", &self.config.catalog_path)?;
         let daily_label = BarKind::Daily.label();
         for id in universe {
             // Epoch origin — the one-time rollout, kept out of the organic audit
@@ -2527,6 +2664,341 @@ impl Ingestor {
         checkpoint.save(&checkpoint_path)?;
         tracing::info!(symbols = universe.len(), "epoch re-base: all daily triples marked; healing");
         self.run_accumulate_gated(universe, rebase_end, lookback_floor, calendar).await
+    }
+
+    /// Run one attended **windowed backfill** session (P3/U3).
+    ///
+    /// The other bar-writing modes cannot acquire deep history: they issue one
+    /// wide `collect_daily` range, and P4 measured that a wide-range `t8410`
+    /// request serves only the newest ~501 rows with a *clean* empty cursor.
+    /// This mode walks each symbol's calendar-snapped windows oldest-first,
+    /// appending one verified window at a time through
+    /// [`append_bars_checked`] and saving the checkpoint after each — so a kill
+    /// at any point resumes without refetch and without an overlap refusal.
+    ///
+    /// `batch` is this session's shcodes (a subset of `plan`'s members; any
+    /// prefix is safe). `session_date` is the KST pull date that discriminates
+    /// a same-day mid-symbol resume from a cross-day one (R9).
+    ///
+    /// Nothing here is fatal to the run: a symbol that fails its window walk,
+    /// serves a clean empty window, or hits an unforeseen overlap **degrades**
+    /// — its watermark is held below the window that stopped it and the run
+    /// moves on to the next symbol.
+    pub async fn run_backfill(
+        &mut self,
+        plan: &backfill::BackfillPlan,
+        batch: &[String],
+        session_date: NaiveDate,
+    ) -> AdapterResult<backfill::BackfillRunReport> {
+        if !self.config.bar_kinds.iter().all(|k| matches!(k, BarKind::Daily)) {
+            return Err(AdapterError::Ingest(
+                "backfill is a daily-only mode: the windowed protocol is t8410's, and a minute \
+                 lane in the same run would pull on a different (rolling-window) supply"
+                    .to_string(),
+            ));
+        }
+        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
+            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
+        })?;
+        let checkpoint_path = self.config.checkpoint_path();
+        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        checkpoint.adjusted_prices = self.config.adjusted_prices;
+        let label = BarKind::Daily.label();
+
+        // A backfill SEEDS a fresh home. An absent marker means this is the
+        // first session against this catalog, so any daily coverage already
+        // here came from somewhere else — and R6's watermark reconciliation
+        // would map that foreign coverage onto this plan's windows and skip
+        // every window below it, attesting a hole exactly the way the wide
+        // range does. Refuse instead of reconciling over it. A *completed*
+        // home is exempt (every watermark at the anchor makes the run a
+        // no-op), and this scan runs only on the first session, so a resume
+        // pays nothing for it.
+        if !checkpoint.backfill_incomplete() {
+            for sp in &plan.symbols {
+                let id = instrument_id_for(&sp.shcode);
+                let instrument = id.to_string();
+                if checkpoint.watermark(&instrument, &label) == Some(plan.anchor) {
+                    continue;
+                }
+                let bar_type = BarKind::Daily.bar_type(id)?;
+                if !stored_bar_intervals(&self.config.catalog_path, bar_type)
+                    .await?
+                    .is_empty()
+                {
+                    return Err(AdapterError::Ingest(format!(
+                        "backfill refuses catalog {}: {instrument} already holds daily bars, but \
+                         the home carries no incomplete-backfill marker — so that coverage did \
+                         not come from a backfill session. Seeding here would reconcile the \
+                         watermark onto foreign coverage and silently skip every window below \
+                         it. Point LS_INGEST_CATALOG at a fresh home.",
+                        self.config.catalog_path.display()
+                    )));
+                }
+            }
+        }
+
+        // R7: mark BEFORE the first fetch, not after the first append. A kill
+        // between an append and its checkpoint save would otherwise leave an
+        // unmarked home carrying a multi-year hole — exactly the state the
+        // marker exists to make un-runnable by the other modes.
+        checkpoint.set_backfill_incomplete(true);
+        checkpoint.save(&checkpoint_path)?;
+
+        let mut report = backfill::BackfillRunReport::default();
+        // The empty-window re-fetch bound (R8), sharing the accumulate knob:
+        // a couple of conservative retries absorb a transient empty page, then
+        // the window is recorded as a genuine uncovered gap.
+        let empty_retry_max = self.empty_retry_max.max(1);
+
+        for shcode in batch {
+            let symbol_plan = plan.symbol(shcode).ok_or_else(|| {
+                AdapterError::Ingest(format!(
+                    "backfill batch names {shcode:?}, which is not a planned manifest member"
+                ))
+            })?;
+            let id = instrument_id_for(shcode);
+            let instrument = id.to_string();
+            let bar_type = BarKind::Daily.bar_type(id)?;
+            report.symbols_attempted += 1;
+
+            if checkpoint.watermark(&instrument, &label) == Some(plan.anchor) {
+                report.symbols_skipped_complete += 1;
+                report.symbols_complete += 1;
+                continue;
+            }
+
+            // R6: reconcile the watermark forward from the catalog's stored
+            // coverage BEFORE the first fetch. The parquet append and the
+            // checkpoint save cannot be atomic together; without this, a kill
+            // in that gap re-fetches an already-appended window and stalls the
+            // symbol forever on the overlap refusal. Runs before the R9 check
+            // so that check happens at the true frontier.
+            if let Some(reconciled) = backfill::reconcile_from_catalog(
+                &self.config.catalog_path,
+                bar_type,
+                &symbol_plan.windows,
+                checkpoint.watermark(&instrument, &label),
+            )
+            .await?
+            {
+                tracing::info!(
+                    instrument = %instrument,
+                    watermark = %fmt_ymd(reconciled),
+                    "backfill resume: reconciled the watermark forward from stored coverage"
+                );
+                checkpoint.set_watermark(&instrument, &label, reconciled);
+                checkpoint.save(&checkpoint_path)?;
+            }
+
+            // R9: symbols are pulled atomically within one attended session, so
+            // a mid-symbol watermark stamped on an EARLIER day means the
+            // adjusted series may have been rewritten server-side (a split or
+            // dividend) between the two halves. Check the overlap at the
+            // watermark before splicing; a same-day resume needs no check.
+            if let Some(wm) = checkpoint.watermark(&instrument, &label) {
+                let same_day =
+                    checkpoint.backfill_session(&instrument, &label) == Some(session_date);
+                if !same_day && self.detect_shift(shcode, bar_type, wm).await? {
+                    tracing::warn!(
+                        instrument = %instrument,
+                        watermark = %fmt_ymd(wm),
+                        "backfill cross-day resume: adjustment-basis shift at the watermark; \
+                         wiping the series and restarting the symbol rather than splicing two bases"
+                    );
+                    delete_bar_series(&self.config.catalog_path, bar_type).await?;
+                    checkpoint.clear_watermark(&instrument, &label);
+                    checkpoint.clear_backfill_degraded(&instrument, &label);
+                    checkpoint.save(&checkpoint_path)?;
+                    report.restarted.push(shcode.clone());
+                }
+            }
+
+            let mut watermark = checkpoint.watermark(&instrument, &label);
+            for w in backfill::remaining_windows(&symbol_plan.windows, watermark) {
+                let range = format!("{}..{}", fmt_ymd(w.sdate), fmt_ymd(w.edate));
+                let step = self
+                    .pull_backfill_window(shcode, bar_type, w, &range, empty_retry_max)
+                    .await;
+                let bars = match step {
+                    BackfillStep::Bars(bars) => bars,
+                    // R8: a clean zero-row window is NEVER completion. Record
+                    // the uncovered gap (documenting the hole without
+                    // fabricating coverage), hold the watermark below it, and
+                    // degrade — a later session re-attempts it.
+                    BackfillStep::Empty => {
+                        checkpoint.record_gap_uncovered(
+                            &instrument,
+                            &label,
+                            &range,
+                            GapReason::EmptyHistory,
+                        );
+                        report.uncovered_gaps.push(format!("{instrument} {range}"));
+                        self.degrade_backfill_symbol(
+                            &mut checkpoint,
+                            &checkpoint_path,
+                            &mut report,
+                            &instrument,
+                            &label,
+                            shcode,
+                            &format!(
+                                "window {range} completed cleanly with zero rows through {empty_retry_max} \
+                                 attempts — recorded as an uncovered gap; the watermark did not advance"
+                            ),
+                        )?;
+                        break;
+                    }
+                    BackfillStep::Failed(reason) => {
+                        self.degrade_backfill_symbol(
+                            &mut checkpoint,
+                            &checkpoint_path,
+                            &mut report,
+                            &instrument,
+                            &label,
+                            shcode,
+                            &reason,
+                        )?;
+                        break;
+                    }
+                };
+                let n = bars.len();
+                match append_bars_checked(&self.config.catalog_path, bar_type, bars).await {
+                    Ok(()) => {
+                        report.bars_written += n;
+                        report.windows_pulled += 1;
+                        checkpoint.set_watermark(&instrument, &label, w.edate);
+                        checkpoint.set_backfill_session(&instrument, &label, session_date);
+                        checkpoint.clear_backfill_degraded(&instrument, &label);
+                        checkpoint.save(&checkpoint_path)?;
+                        watermark = Some(w.edate);
+                    }
+                    // The window trim makes every append disjoint from stored
+                    // coverage by construction, so this is the fail-closed net
+                    // for an overlap nothing anticipated (residual pollution, a
+                    // delete that failed to clear). Nothing from the suspect
+                    // window is appended and the watermark holds.
+                    Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
+                        report
+                            .append_refusals
+                            .push(format!("{instrument} {label}: {attempted} overlaps [{stored}]"));
+                        self.degrade_backfill_symbol(
+                            &mut checkpoint,
+                            &checkpoint_path,
+                            &mut report,
+                            &instrument,
+                            &label,
+                            shcode,
+                            &format!("append refused: {attempted} overlaps stored coverage [{stored}]"),
+                        )?;
+                        break;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            if watermark == Some(plan.anchor) {
+                report.symbols_complete += 1;
+            }
+            // Persist the shared spend ledger per symbol, not just at the end
+            // (R12). This mode is designed to be killed at any point across a
+            // multi-hour attended session; an end-of-run-only save would lose
+            // the whole session's spend record to the very stop the protocol
+            // expects, and the next session would plan against a budget it had
+            // already spent.
+            self.save_ledger();
+        }
+
+        // R7: the marker clears only when EVERY manifest symbol is at the
+        // anchor — never when merely this batch finished.
+        let all_at_anchor = plan.symbols.iter().all(|s| {
+            checkpoint.watermark(&instrument_id_for(&s.shcode).to_string(), &label)
+                == Some(plan.anchor)
+        });
+        if all_at_anchor {
+            checkpoint.set_backfill_incomplete(false);
+            checkpoint.save(&checkpoint_path)?;
+            report.marker_cleared = true;
+            tracing::info!(
+                symbols = plan.symbols.len(),
+                anchor = %fmt_ymd(plan.anchor),
+                "backfill complete: every manifest symbol reached the anchor; incomplete-backfill marker cleared"
+            );
+        }
+        // Persist this session's dispatch spend for the next invocation (R12).
+        self.save_ledger();
+        Ok(report)
+    }
+
+    /// Pull one backfill window, absorbing a transient empty page with a
+    /// bounded re-fetch (R8). A clean zero-row completion that survives the
+    /// bound is [`BackfillStep::Empty`] — the caller records the gap; it is
+    /// never read as "the window is done".
+    async fn pull_backfill_window(
+        &self,
+        shcode: &str,
+        bar_type: BarType,
+        window: crate::reference::pit_walk::WalkWindow,
+        range: &str,
+        empty_retry_max: u32,
+    ) -> BackfillStep {
+        let mut step = BackfillStep::Empty;
+        for attempt in 1..=empty_retry_max {
+            // Pacing is the fetcher's: `SdkFetcher::fetch_daily_page` acquires
+            // the per-TR pacer (t8410 1/s) before every dispatch and records it
+            // into the shared spend ledger, so the walk adds no sleep of its
+            // own (R12).
+            match backfill::pull_window(
+                &self.fetcher,
+                shcode,
+                bar_type,
+                window,
+                std::time::Duration::ZERO,
+                backfill::MAX_BACKFILL_PAGES,
+            )
+            .await
+            {
+                Ok(pull) if !pull.bars.is_empty() => return BackfillStep::Bars(pull.bars),
+                Ok(_) => {
+                    tracing::warn!(
+                        shcode,
+                        range,
+                        attempt,
+                        bound = empty_retry_max,
+                        "backfill window completed cleanly with zero rows; re-fetching (bounded) \
+                         before recording an uncovered gap"
+                    );
+                    step = BackfillStep::Empty;
+                }
+                // A failed walk spent real budget; the fetcher already recorded
+                // every dispatch into the ledger (including throttled retries),
+                // so the error only needs to carry the reason.
+                Err(we) => {
+                    return BackfillStep::Failed(crate::scrub::scrub_secrets(&we.to_string()))
+                }
+            }
+        }
+        step
+    }
+
+    /// Degrade one backfill symbol: hold the watermark, persist the reason so
+    /// the completeness report surfaces it, and let the run continue.
+    fn degrade_backfill_symbol(
+        &self,
+        checkpoint: &mut Checkpoint,
+        checkpoint_path: &Path,
+        report: &mut backfill::BackfillRunReport,
+        instrument: &str,
+        label: &str,
+        shcode: &str,
+        reason: &str,
+    ) -> AdapterResult<()> {
+        tracing::warn!(instrument, reason, "backfill symbol degraded; watermark held");
+        checkpoint.mark_backfill_degraded(instrument, label, reason);
+        checkpoint.save(checkpoint_path)?;
+        report.degraded.push(backfill::DegradedSymbol {
+            shcode: shcode.to_string(),
+            reason: reason.to_string(),
+        });
+        Ok(())
     }
 
     /// Detect a basis shift for one daily triple (KTD-3): fetch the overlap
@@ -2580,6 +3052,7 @@ impl Ingestor {
         bar_type: BarType,
         last_closed: NaiveDate,
         floor: NaiveDate,
+        windows: &[crate::reference::pit_walk::WalkWindow],
     ) -> AdapterResult<HealOutcome> {
         // Wipe precondition (KTD-2). An already-wiped re-entry has no stored bars
         // and passes trivially (there is no history left to truncate).
@@ -2609,36 +3082,90 @@ impl Ingestor {
         checkpoint.clear_watermark(instrument, label);
         checkpoint.save(checkpoint_path)?;
 
-        // Re-pull the full history from the floor. Completion keys on the fetch
-        // cursor completing, never on bar count (KTD-3) — a shallow-history
-        // symbol (listed after the floor) still clears its mark. A truncated
-        // fetch (page cap) is NOT complete: keep the mark for the next run.
-        let sdate = fmt_ymd(floor);
-        let edate = fmt_ymd(last_closed);
-        let pulled = match collect_daily(&self.fetcher, shcode, bar_type, &sdate, &edate).await? {
-            TripleOutcome::Bars(bars) => bars,
-            TripleOutcome::Gap(GapReason::PaperThin) => {
-                tracing::warn!(instrument, "heal re-pull truncated; symbol stays marked");
-                return Ok(HealOutcome::Incomplete);
-            }
-            // Cursor completed with zero bars. Trust it as completion ONLY for a
-            // series that was already empty before the wipe — for a series that
-            // HAD stored bars, an empty page is far more likely a transient
-            // gateway hiccup than a genuine delisting, and completing here would
-            // pin the watermark over a wiped store: silent, permanent history
-            // loss with no retry path. Keep the mark instead; the next run
-            // re-enters at the (now no-op) wipe and re-pulls.
-            TripleOutcome::Gap(_) => {
-                if !stored.is_empty() {
+        // Re-pull the full history from the floor — **windowed** (P3/R10). A
+        // single wide-range daily re-pull is no longer reachable here: P4
+        // measured that a wide-range `t8410` request serves only the newest
+        // ~501 rows with a *clean* empty cursor, so healing a deep catalog
+        // through one would truncate the store the wipe just emptied to about
+        // two years and then complete over it — permanent history loss with no
+        // retry path.
+        //
+        // The three-way empty-re-pull rule survives, but is evaluated over the
+        // WHOLE re-pull rather than per window:
+        //
+        // - **truncated → never complete**: any window that fails closed
+        //   (suspect truncation, page cap, dead throttle budget) keeps the mark.
+        // - **empty + was-empty → complete**: every window empty and the series
+        //   was empty before the wipe — a genuinely absent history.
+        // - **empty + was-non-empty → retry, never complete**: applies only
+        //   when EVERY window came back empty. Scoping it per-window would make
+        //   any symbol listed after the floor fail its heal forever, reading
+        //   its pre-listing windows as failures.
+        //
+        // A LEADING empty window (before the first that serves rows) is
+        // pre-listing emptiness: never a gap, never a failure. An interior or
+        // trailing empty window after rows have been served keeps the R8 gap
+        // semantics — recorded loud, never silently completed over.
+        let mut pulled: Vec<Bar> = Vec::new();
+        let mut served_any = false;
+        let mut interior_gaps: Vec<CoverageGap> = Vec::new();
+        for w in windows {
+            let range = format!("{}..{}", fmt_ymd(w.sdate), fmt_ymd(w.edate));
+            match backfill::pull_window(
+                &self.fetcher,
+                shcode,
+                bar_type,
+                *w,
+                std::time::Duration::ZERO,
+                backfill::MAX_BACKFILL_PAGES,
+            )
+            .await
+            {
+                Ok(pull) if !pull.bars.is_empty() => {
+                    served_any = true;
+                    pulled.extend(pull.bars);
+                }
+                Ok(_) if served_any => {
                     tracing::warn!(
                         instrument,
-                        "heal re-pull returned no bars for a previously non-empty series; symbol stays marked"
+                        %range,
+                        "heal re-pull: window served zero rows after the series had started \
+                         serving; recording an uncovered gap"
+                    );
+                    interior_gaps.push(CoverageGap {
+                        instrument: instrument.to_string(),
+                        bar_type: label.to_string(),
+                        range,
+                        reason: GapReason::EmptyHistory,
+                    });
+                }
+                // Leading emptiness — pre-listing, by construction silent.
+                Ok(_) => {}
+                Err(we) => {
+                    tracing::warn!(
+                        instrument,
+                        %range,
+                        error = %crate::scrub::scrub_secrets(&we.to_string()),
+                        "heal re-pull window failed closed; symbol stays marked"
                     );
                     return Ok(HealOutcome::Incomplete);
                 }
-                Vec::new()
             }
-        };
+        }
+        if !served_any && !stored.is_empty() {
+            // For a series that HAD stored bars, an all-empty re-pull is far
+            // more likely a transient gateway state than a genuine absence, and
+            // completing here would pin the watermark over a wiped store.
+            tracing::warn!(
+                instrument,
+                "heal re-pull returned no bars for a previously non-empty series; symbol stays marked"
+            );
+            return Ok(HealOutcome::Incomplete);
+        }
+        // Windows are oldest-first and each window's bars are ascending, so
+        // this is already sorted; the catalog's ascending-`ts_init` requirement
+        // is load-bearing enough to assert it rather than assume it.
+        pulled.sort_by_key(|b| b.ts_init.as_u64());
         // Capture what the re-verify needs BEFORE moving `pulled` into the write
         // (the tail is a handful of bars; cloning the whole multi-year series
         // per healed symbol would be pure ownership plumbing).
@@ -2712,9 +3239,20 @@ impl Ingestor {
             origin,
         });
         checkpoint.set_watermark(instrument, label, last_closed);
+        for gap in &interior_gaps {
+            checkpoint.record_gap_uncovered(instrument, label, &gap.range, gap.reason);
+        }
         checkpoint.save(checkpoint_path)?;
-        tracing::info!(instrument, bars = pulled_len, "basis-shift heal complete");
-        Ok(HealOutcome::Healed(pulled_len))
+        tracing::info!(
+            instrument,
+            bars = pulled_len,
+            gaps = interior_gaps.len(),
+            "basis-shift heal complete"
+        );
+        Ok(HealOutcome::Healed {
+            bars: pulled_len,
+            gaps: interior_gaps,
+        })
     }
 }
 

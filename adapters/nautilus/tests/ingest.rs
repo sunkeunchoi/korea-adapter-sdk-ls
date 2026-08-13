@@ -3637,3 +3637,324 @@ mod calendar_gate_migration {
     //  were retired with #189 U6 — there is no Legacy/Shadow arm to compare against; the
     //  Enforced warn/suppress/uncertain verdicts are asserted directly above.)
 }
+
+// ---------------------------------------------------------------------------
+// Windowed heal (P3/U4, R10). `heal_daily`'s re-pull is partitioned into the
+// same calendar-snapped windows the backfill mode walks, so the single
+// wide-range re-pull — which `t8410` serves as the newest ~501 rows on a CLEAN
+// empty cursor — is no longer reachable for daily series. The responder here
+// models exactly that truncation, so a regression back to the wide re-pull
+// fails these tests rather than silently shortening a deep catalog.
+// ---------------------------------------------------------------------------
+
+mod windowed_heal {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, write_bars};
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    const SAMSUNG: &str = "005930.XKRX";
+    /// The measured server page cap (P4): a wide-range request serves at most
+    /// this many rows, newest-first, with a clean empty cursor.
+    const SERVED_ROW_CAP: usize = 501;
+
+    /// How the mock gateway behaves for the heal re-pull.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Behavior {
+        /// Serve the truncated slice of the requested range (the P4 shape).
+        Truncating,
+        /// Serve nothing at all, on a clean cursor.
+        AlwaysEmpty,
+        /// Serve normally, but fail closed on the Nth t8410 call (a mid-heal
+        /// gateway failure).
+        FailOnCall(usize),
+    }
+
+    struct Gateway {
+        /// Ascending dates the symbol has bars for (`YYYYMMDD`).
+        dates: Vec<String>,
+        behavior: Behavior,
+        calls: AtomicUsize,
+        /// Every `[sdate, edate]` the gateway was asked for.
+        requested: Mutex<Vec<(String, String)>>,
+    }
+
+    fn close_for(date: &str) -> i64 {
+        // Deterministic, distinct per date.
+        50_000 + (date.parse::<i64>().unwrap_or(0) % 977)
+    }
+
+    async fn sdk_over_gateway(server: &MockServer, gw: Arc<Gateway>) -> LsSdk {
+        mount_token(server).await;
+        Mock::given(method("POST"))
+            .and(path(CHART_PATH))
+            .and(header("tr_cd", "t8410"))
+            .respond_with(move |req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let ib = &body["t8410InBlock"];
+                let s = ib["sdate"].as_str().unwrap_or("").to_string();
+                let e = ib["edate"].as_str().unwrap_or("").to_string();
+                let n = gw.calls.fetch_add(1, Ordering::SeqCst) + 1;
+                gw.requested.lock().unwrap().push((s.clone(), e.clone()));
+                if let Behavior::FailOnCall(fail_at) = gw.behavior {
+                    if n == fail_at {
+                        return json_response(serde_json::json!({
+                            "rsp_cd": "IGW00001", "rsp_msg": "gateway failure"
+                        }));
+                    }
+                }
+                let mut in_range: Vec<&String> = if gw.behavior == Behavior::AlwaysEmpty {
+                    Vec::new()
+                } else {
+                    gw.dates.iter().filter(|d| **d >= s && **d <= e).collect()
+                };
+                // The measured truncation: only the NEWEST rows are served, and
+                // the cursor comes back EMPTY — completion evidence that lies.
+                if in_range.len() > SERVED_ROW_CAP {
+                    in_range = in_range.split_off(in_range.len() - SERVED_ROW_CAP);
+                }
+                let rows: Vec<serde_json::Value> = in_range
+                    .iter()
+                    .rev() // LS serves newest-first
+                    .map(|d| {
+                        let c = close_for(d);
+                        serde_json::json!({
+                            "date": d, "open": (c - 5).to_string(), "high": (c + 10).to_string(),
+                            "low": (c - 10).to_string(), "close": c.to_string(), "jdiff_vol": "1000"
+                        })
+                    })
+                    .collect();
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000", "rsp_msg": "정상",
+                    "t8410OutBlock": { "shcode": "005930", "cts_date": "", "rec_count": rows.len().to_string() },
+                    "t8410OutBlock1": rows
+                }))
+            })
+            .mount(server)
+            .await;
+        LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+    }
+
+    /// Every civil date in `[from, through]` as `YYYYMMDD` (the all-sessions
+    /// calendar makes each one a proven Trading Session).
+    fn dates(from: NaiveDate, through: NaiveDate) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut d = from;
+        while d <= through {
+            out.push(d.format("%Y%m%d").to_string());
+            d = d.succ_opt().unwrap();
+        }
+        out
+    }
+
+    fn bar(bar_type: BarType, date: &str) -> Bar {
+        let d = NaiveDate::parse_from_str(date, "%Y%m%d").unwrap();
+        let ts = kst_to_unix_nanos(d, KRX_REGULAR_CLOSE).unwrap();
+        let c = close_for(date);
+        Bar::new(
+            bar_type,
+            Price::from(format!("{}", c - 5)),
+            Price::from(format!("{}", c + 10)),
+            Price::from(format!("{}", c - 10)),
+            Price::from(format!("{c}")),
+            Quantity::from("1000"),
+            ts,
+            ts,
+        )
+    }
+
+    /// Seed the catalog with a stored series and mark it shifted at `through`.
+    async fn seed_shifted(catalog: &Path, stored: &[String], through: NaiveDate) -> BarType {
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        if !stored.is_empty() {
+            let bars: Vec<Bar> = stored.iter().map(|d| bar(bar_type, d)).collect();
+            write_bars(catalog, bars).await.unwrap();
+        }
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
+        cp.set_watermark(SAMSUNG, "1-DAY", through);
+        cp.mark_shifted(SAMSUNG, "1-DAY", through, RebaseOrigin::Heal);
+        cp.save(&cp_path).unwrap();
+        bar_type
+    }
+
+    async fn stored_dates(catalog: &Path) -> Vec<NaiveDate> {
+        let mut bars = read_all_bars(catalog).await.unwrap();
+        bars.sort_by_key(|b| b.ts_event.as_u64());
+        bars.iter().map(|b| nautilus_ls::ingest::kst_date_of(b.ts_event)).collect()
+    }
+
+    /// The deep range: long enough that the full span exceeds the served row
+    /// cap several times over, so a wide-range re-pull would truncate hard.
+    fn deep_range() -> (NaiveDate, NaiveDate) {
+        (ymd(2024, 1, 1), ymd(2026, 6, 30)) // 912 civil days
+    }
+
+    /// R10: a deep series heals window-by-window and comes back WHOLE. The
+    /// wide-range arm would have restored only the newest ~501 sessions and
+    /// then completed over the hole — permanent history loss with no retry
+    /// path, since the wipe already emptied the store.
+    #[tokio::test]
+    async fn a_deep_series_heals_whole_the_truncation_arm_is_unreachable() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+        assert!(all.len() > SERVED_ROW_CAP * 1, "the range must exceed the served cap");
+
+        let server = MockServer::start().await;
+        let gw = Arc::new(Gateway {
+            dates: all.clone(),
+            behavior: Behavior::Truncating,
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
+        });
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        assert_eq!(report.bars_written, all.len(), "every session was restored");
+        assert_eq!(stored_dates(&catalog).await.len(), all.len());
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "the mark cleared on a complete heal");
+        assert_eq!(cp.watermark(SAMSUNG, "1-DAY"), Some(through));
+
+        // No request the heal issued spans more than the window bound — a
+        // regression to the single wide re-pull would show up as one request
+        // covering the whole range.
+        let requested = gw.requested.lock().unwrap().clone();
+        let widest = requested
+            .iter()
+            .map(|(s, e)| {
+                let s = NaiveDate::parse_from_str(s, "%Y%m%d").unwrap();
+                let e = NaiveDate::parse_from_str(e, "%Y%m%d").unwrap();
+                (e - s).num_days() + 1
+            })
+            .max()
+            .unwrap();
+        assert!(
+            widest <= 450,
+            "no daily re-pull request may span more than the window bound; widest was {widest}"
+        );
+    }
+
+    /// A symbol listed AFTER the floor heals cleanly: its leading windows serve
+    /// zero rows, which is pre-listing emptiness — never a gap and never a
+    /// failure. Scoping the "empty + was-non-empty → never complete" rule per
+    /// window (instead of over the whole re-pull) would pin every post-floor
+    /// listing shifted forever.
+    #[tokio::test]
+    async fn a_post_floor_listing_heals_with_leading_empty_windows() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        // Listed well after the floor: the first 450-session window is empty.
+        let listed = dates(ymd(2025, 6, 1), through);
+
+        let server = MockServer::start().await;
+        let gw = Arc::new(Gateway {
+            dates: listed.clone(),
+            behavior: Behavior::Truncating,
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
+        });
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &listed, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        assert_eq!(report.bars_written, listed.len());
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "leading emptiness is not a heal failure");
+        assert_eq!(cp.rebase_events().len(), 1);
+        // Leading emptiness records no gap — it is not a hole in the history.
+        assert!(
+            report.gaps.is_empty(),
+            "pre-listing windows are silent, not gaps: {:?}",
+            report.gaps
+        );
+    }
+
+    /// A mid-heal window failure leaves the mark SET — never half-healed and
+    /// unmarked, which would leave a high watermark over a partially-restored
+    /// store.
+    #[tokio::test]
+    async fn a_mid_heal_window_failure_keeps_the_mark() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+
+        let server = MockServer::start().await;
+        let gw = Arc::new(Gateway {
+            dates: all.clone(),
+            behavior: Behavior::FailOnCall(2), // the second window
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
+        });
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        assert_eq!(report.bars_written, 0, "nothing is written from a partial re-pull");
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "the mark survives so the next run re-heals");
+        assert!(cp.rebase_events().is_empty(), "an incomplete heal records no re-base event");
+    }
+
+    /// Every window empty on a previously NON-EMPTY series → retry, never
+    /// complete. An all-empty re-pull is far more likely a transient gateway
+    /// state than a genuine absence, and completing would pin the watermark
+    /// over the store the wipe just emptied.
+    #[tokio::test]
+    async fn an_all_empty_repull_on_a_non_empty_series_refuses_to_complete() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+
+        let server = MockServer::start().await;
+        let gw = Arc::new(Gateway {
+            dates: all.clone(),
+            behavior: Behavior::AlwaysEmpty,
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
+        });
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(
+            cp.is_shifted(SAMSUNG, "1-DAY"),
+            "an all-empty re-pull on a previously non-empty series never completes"
+        );
+        assert!(cp.rebase_events().is_empty());
+    }
+}
