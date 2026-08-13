@@ -81,6 +81,71 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — daily catalog 2016-floor pull (P3 turn 2, the attended live backfill): 352/352 symbols at the anchor, 741,580 bars, ZERO anomalies — report GO, catalog status GO, pin written (2026-08-13) — plan 2026-08-13-001
+
+- **Verdict: EXECUTED, CLEAN.** The fresh daily home
+  `data/next-daily-2016/catalog` (gitignored, machine-local) holds the frozen
+  352-member pit universe from the 2016-08-01 floor to the frozen 2026-08-12
+  anchor. `backfill_incomplete` **CLEARED**; `backfill-report` **VERDICT: GO** with
+  zero anomalies and zero observations; watermark-gated `catalog status` **GO**;
+  manifest pin written (`universe-metadata-pin.json`, hash `6a63446c…`). Queue item
+  `daily-catalog-2016-floor-pull` closed. P3 is complete; P5 is next on the ladder.
+- **Protocol:** four invocations on 2026-08-13 evening, all strictly after the
+  morning chain (which finished 10:21 KST) and with no live mount, sharing the one
+  absolute ledger `data/turn4-fresh/state/spend-ledger.json`. Batch 1 was a
+  deliberate **5-symbol probe** run *before* committing the rest of session 1 — the
+  cheapest possible test of the plan's premise. Then batches of 120 / 120 / 107.
+  Bootstrap (`t8430` + 2×`t9945`) ran once on the probe; every later invocation set
+  `LS_INGEST_SKIP_UNIVERSE_LOAD=1`.
+- **The plan's arithmetic was confirmed, not merely assumed.** Predicted total from
+  the manifest: 1,885 windows (244 pre-floor × 6, plus 421 for the 108 listed) at one
+  page per window. Measured, per session:
+
+  | Session | Symbols | Windows predicted | Windows observed | Ledger calls | Bars |
+  |---|---|---|---|---|---|
+  | probe | 5 | 30 | 30 | 30 | 12,300 |
+  | 1 | 120 | 716 | 716 | 716 | 292,861 |
+  | 2 | 120 | 703 | 703 | 706 | 285,154 |
+  | 3 | 107 | 436 | 436 | 438 | 151,265 |
+  | **total** | **352** | **1,885** | **1,885** | **1,890** | **741,580** |
+
+  Window counts matched the prediction **exactly**, symbol for symbol. This is the
+  plan's mandated stop-condition check (U6 step 2), owned here: measured calls per
+  window, page sizes, and truncation shape all agree, so session 2 was scheduled.
+- **Two honest variances, neither blocking.** (a) The 3-call universe bootstrap does
+  **not** route through the spend ledger — the probe's ledger delta was 30, not 33 —
+  so the shared ledger under-counts true gateway spend by the bootstrap. True calls
+  this turn: **1,893**; ledger-recorded: 1,890. (b) Sessions 2 and 3 spent **+5 calls
+  above one-page-per-window** (0.26% over 1,885). No anomaly counter explains them —
+  `empty_retries`, `gaps`, `shifted`, `backfill_degraded` are all empty and no
+  `DEGRADED`/`UNCOVERED GAP`/`APPEND REFUSED`/`RESTARTED` line appeared in any log.
+  The likeliest reading is that a handful of windows needed a second page to reach a
+  fail-closed termination, which R3 permits — one page is the *expected* case, not
+  the only one. Recorded as unattributed rather than explained away.
+- **Zero degradation of any kind.** Across 1,885 windows: 0 degraded symbols, 0
+  uncovered gaps, 0 append refusals, 0 basis-shift restarts, 0 empty retries, and **no
+  IGW00201 throttling at any point** — despite the day reaching 2,635 cumulative calls
+  on the one credential (745 morning chain + 1,890 this turn), roughly 4.5× P4's
+  clean 583-call day. The unmeasured ceiling remains unmeasured; this is a
+  lower-bound observation, **not** a licence to size future sessions at 2,600.
+- **Per-symbol completeness (the U5 record, committed at
+  `lab/config/daily-catalog-20160801-20260812.json`):** 352/352 symbols have
+  `front == expected_front` and `tail == anchor`; **0 symbols with any missing
+  session**; 244 symbols hold the full 2,460-session decade and the 108 post-floor
+  listings hold every session from their own first-served date. Total stored
+  sessions 741,580. The catalog is 73 MB on disk.
+- **No session shortfall arose, so the plan's "shortfalls do not block GO" rule was
+  never exercised.** It stays as designed — do not read this clean run as evidence
+  the rule is unnecessary.
+- **Caveat carried forward, unchanged:** `005930`'s true vendor floor is still
+  *inferred*, not measured. This pull was bounded at the 2016-08-01 floor by design
+  and did not probe below it. P6 must not cite that floor as measured.
+- **Blemish noted, not fixed here:** the U5 report writes **absolute** machine-local
+  paths (`/Users/mini/…`) into the committed record's `provenance`, where the
+  sibling `pit-universe-20260812.json` uses a repo-relative `source_artifact`. U6 is
+  attended execution, not code, so this was left alone rather than silently patched
+  mid-rung; worth a follow-up if the inconsistency matters.
+
 ## Turn — pit-universe depth walk over t8410 (P4 turn 2, the attended live walk): 352-symbol screen CLEAN — 244 pre-floor / 108 listed / 0 anomalies, effective S_max 2460, and `cts_date` continuation NEVER ENGAGES on a wide range (2026-08-13) — plan 2026-08-12-001
 
 - **Verdict: EXECUTED, CLEAN.** Full unrestricted walk over the frozen board-ranked
