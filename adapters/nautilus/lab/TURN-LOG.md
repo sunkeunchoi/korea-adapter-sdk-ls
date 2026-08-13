@@ -81,6 +81,53 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — pit-universe depth walk over t8410 (P4 turn 2, the attended live walk): 352-symbol screen CLEAN — 244 pre-floor / 108 listed / 0 anomalies, effective S_max 2460, and `cts_date` continuation NEVER ENGAGES on a wide range (2026-08-13) — plan 2026-08-12-001
+
+- **Verdict: EXECUTED, CLEAN.** Full unrestricted walk over the frozen board-ranked
+  set; artifact committed at `lab/config/pit-universe-20260812.json`; `derive` block
+  present; queue `pit-universe-depth-walk-t8410` closed. P3
+  (`daily-catalog-2016-floor-pull`) is now sized by measurement.
+- **Protocol:** anchor `2026-08-12` passed explicitly (`LS_PIT_ANCHOR`) and validated
+  as a proven TradingSession against the in-force snapshot `24ca3145…` — the default
+  backward scan refuses while the run date itself is Unknown, by design. Floor
+  `2016-08-01`; **2,460 proven sessions, 0 unknown days, 6 ≤450-session windows**;
+  pace 1000 ms, qrycnt 900. **583 gateway calls** (plan band 400–700), 0 failed
+  symbols, no IGW00201 stop. The morning chain landed the 2026-08-12 witness first
+  (catch-up exit 41, 75/75 daily watermarks, catalog GO).
+- **Screen:** 244 `PreFloor` / 108 `Listed(date)` / **0 `NoServedRows`** — the
+  stop-condition anomaly count is zero. Measure set (plan Q1): `000250` (KOSDAQ top),
+  `000100` (KOSPI mid), `373220` (post-floor, screen-confirmed `Listed 2022-01-27`);
+  deep `005930`.
+- **KEY MEASUREMENT FINDING — the page cap is ≥501 (vs 500 inferred), and body
+  `cts_date` continuation never engages on a wide-range request.** All four
+  measurement walks returned exactly **1 page, 501 rows, first_date 2024-07-19,
+  last_date 2026-08-12** — the newest 501 sessions of the requested range — with an
+  honest `rec_count` echo (501) and an **empty** continuation cursor, including
+  `005930` asked from 1980-01-04. A single t8410 request therefore serves at most the
+  newest ~501 rows of whatever range it is given and offers no cursor to continue;
+  explicit calendar-snapped ≤450-proven-session windows (the screening protocol) are
+  the only full-history mechanism. The screening verdicts are unaffected — 450 < 501,
+  so no screening window ever needed a continuation.
+- **P3 re-sized:** the ~2,000-call magnitude holds but the mechanism changes —
+  windowed pulls, not cursor pagination: ceil(2460/450) = **6 windows/symbol ≈ 2,400
+  calls at 400 symbols** (was "~5 pages/symbol ≈ 2,000"). Not a material direction
+  change; the stop condition did not fire.
+- **Deep-floor caveat:** `005930`'s true vendor floor was NOT measured — the
+  unbounded walk collapses to the newest 501 rows, so the 1985 `body_len` inference
+  from 2026-08-10 stays *inferred*. Measuring it needs explicit historical windows
+  (a few extra calls in P3's protocol if wanted); recorded here so P6 does not cite
+  the floor as measured.
+- **Derived (in-artifact):** `N(s)` min/median/max **244/301/352**, mean
+  participation **0.8564**, 244 full-participation symbols; effective `S_max`
+  **2460** (first qualifying session 2016-08-01) at BOTH thresholds — `N(s)` min 244
+  ≥ 140, so every proven session clears ≥70 and ≥140; `bar(N=1) = +0.023063`
+  (projection caveat carried verbatim in the artifact's `margin_note`; R20
+  re-measures before the holdout is spent).
+- **Provenance:** artifact `lab/config/pit-universe-20260812.json` (committed;
+  `restricted: false`), source capture hash `90005f88…`, probed_at
+  2026-08-13T01:04:58Z, `calls_made` 583. Spend recorded to the shared ledger via
+  `LS_PIT_CATALOG` (repo-root `data/turn4-fresh/catalog`, gitignored).
+
 ## Turn — ORB lineage closure (governance axis): the 2026-08-10 arm-C stand-down BINDS to the pre-registered Lineage-closure rule — the ORB lineage is CLOSED, threshold +0.128605 vs best admissible −0.0006, head stays v35 (2026-08-11) — plan 2026-08-11-001
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
