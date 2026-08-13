@@ -1,0 +1,3778 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "tr": "t8410",
+    "probed_at": "2026-08-13T01:04:58.242925+00:00",
+    "anchor": "2026-08-12",
+    "floor": "2016-08-01",
+    "source_artifact": "lab/config/universe-metadata-20260723.json",
+    "source_content_hash": "90005f882d5eac1fa00b7b8a810241a5d0ea38450fe1c10cb56f21767307ee00",
+    "pace_ms": 1000,
+    "qrycnt": 900,
+    "windows": [
+      {
+        "sdate": "2016-08-01",
+        "edate": "2018-06-01",
+        "sessions": 450
+      },
+      {
+        "sdate": "2018-06-04",
+        "edate": "2020-04-01",
+        "sessions": 450
+      },
+      {
+        "sdate": "2020-04-02",
+        "edate": "2022-01-25",
+        "sessions": 450
+      },
+      {
+        "sdate": "2022-01-26",
+        "edate": "2023-11-23",
+        "sessions": 450
+      },
+      {
+        "sdate": "2023-11-24",
+        "edate": "2025-09-29",
+        "sessions": 450
+      },
+      {
+        "sdate": "2025-09-30",
+        "edate": "2026-08-12",
+        "sessions": 210
+      }
+    ],
+    "proven_sessions": 2460,
+    "unknown_days": 0,
+    "calls_made": 583,
+    "dropped_preferred": [
+      "005385",
+      "005387",
+      "005935"
+    ],
+    "dropped_malformed": [],
+    "restricted": false
+  },
+  "symbols": [
+    {
+      "shcode": "000100",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000150",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000240",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000250",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000270",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000500",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000660",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000720",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000810",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000880",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "000990",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "001040",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "001440",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "001450",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "001720",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "002380",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003230",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003380",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-06-30"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003490",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003550",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003670",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "003690",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "004020",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "004170",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "004800",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005290",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005380",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005490",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005830",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005850",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005930",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "005940",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "006260",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "006360",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "006400",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "006730",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "006800",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "007340",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "007390",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "007660",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009150",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009420",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009520",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009540",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009830",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "009970",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010060",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010120",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010130",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010140",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010170",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "010950",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "011070",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "011170",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "011200",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "011780",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "011790",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "012330",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "012450",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "012750",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "014620",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "014680",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "015750",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "015760",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "016360",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "017670",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "017800",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "018260",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "018290",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "018880",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "019210",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "021240",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "022100",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "023160",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "023530",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "024110",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "026960",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "028050",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "028260",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "028300",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "028670",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "029780",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "030200",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "030530",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "031210",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-03-14"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "031330",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "031980",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "032190",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "032500",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "032640",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "032820",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "032830",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "033100",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "033500",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "033640",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "033780",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "033790",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "034020",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "034220",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "034730",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "034950",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035250",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035420",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035720",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035760",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035890",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "035900",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036460",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036540",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036570",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036810",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036830",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "036930",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "037460",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "038500",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "039030",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "039200",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "039490",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "041510",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "041830",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "041960",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "042660",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "042700",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "043260",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "044490",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "045100",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "046890",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "047040",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "047050",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "047810",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "048410",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "050890",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "051900",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "051910",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "052020",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "052400",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "052690",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "053610",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "053800",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "055550",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "056080",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "056190",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "058470",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "058610",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "059090",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "060250",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "060370",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "062040",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-07-29"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "064290",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "064350",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "064400",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-02-05"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "064760",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "065350",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "066570",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "066970",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "067160",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "067310",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "068270",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "068760",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "069960",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "071050",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "074600",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "077360",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "078130",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "078600",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "078930",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "079550",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "079940",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "080220",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "081660",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "082270",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "082740",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "082920",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "083450",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "083650",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "084370",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "085660",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "086280",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "086450",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "086520",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "086790",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "086900",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "087010",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "088350",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "088980",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "089030",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "089890",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "089970",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-08-23"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "090360",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "090430",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "090710",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "093320",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "094170",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "095340",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "095610",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "096530",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "096770",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "097950",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "098460",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "099190",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "099320",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "100790",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-03-15"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "101160",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "101490",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "102710",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "103590",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "104830",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "105560",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "108490",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-10-26"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "111770",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "112040",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "115180",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "119850",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "121600",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "122640",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "122870",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "124500",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "126340",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "127120",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "128940",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "131290",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "131970",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "137400",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "138040",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "138930",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "139130",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "140410",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "140860",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "141080",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "144960",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2016-11-30"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "145020",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "160190",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-06-27"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "161390",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "161580",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-06-01"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "161890",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "166090",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-04-28"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "170920",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "171090",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-09-20"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "175330",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "178320",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-03-27"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "180640",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "183300",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-03-23"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "189300",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2016-10-18"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "195940",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-08-09"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "196170",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "204270",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-03-04"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "207940",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2016-11-10"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "211050",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "213420",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "214150",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "214370",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "214430",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "214450",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "215200",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "218410",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "219130",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "222080",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "222800",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "225570",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "226950",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-07-18"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "232140",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "237690",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "240810",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "pre_floor"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "241560",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2016-11-18"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "241710",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2016-10-28"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "247540",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-03-05"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "251270",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-05-12"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "251970",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-07-04"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "252990",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-05-20"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "253450",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-11-24"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "253590",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-04-04"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "257720",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-09-29"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "259960",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-08-10"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "263750",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-09-14"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "267250",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-05-10"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "267260",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-05-10"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "267270",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-05-10"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "271560",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-07-07"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "272210",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-11-13"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "272290",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-07-10"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "277810",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-02-03"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "278280",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-02-11"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "278470",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-02-27"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "279570",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2026-03-05"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "281740",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-12-12"
+      },
+      "calls": 1,
+      "pages": 1
+    },
+    {
+      "shcode": "290550",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-12-21"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "290650",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-11-01"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "293490",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-09-10"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "295310",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-06-28"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "298040",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-07-13"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "298380",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2018-12-19"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "302440",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-03-18"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "307950",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-03-28"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "310210",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-06-24"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "316140",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-02-13"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "319400",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-05-08"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "319660",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-05-10"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "323280",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-06-24"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "323410",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-08-06"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "326030",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-07-02"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "327260",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-12-24"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "328130",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-07-21"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "329180",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-09-17"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "336260",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-10-18"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "336570",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2019-12-19"
+      },
+      "calls": 2,
+      "pages": 2
+    },
+    {
+      "shcode": "340570",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-11-20"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "347700",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-03-23"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "347850",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-05-02"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "348370",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-11-01"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "352820",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-10-15"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "353200",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-05-21"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "357780",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2020-08-06"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "358570",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-03-30"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "368770",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-01-21"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "373220",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-01-27"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "375500",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-01-25"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "376300",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-11-10"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "376900",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-05-12"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "377300",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-11-03"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "383220",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-05-21"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "383310",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-05-28"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "388210",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-11-20"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "388720",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-03-18"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "389470",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-11-22"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "397030",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-07-28"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "399720",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-05-20"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "402340",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2021-11-29"
+      },
+      "calls": 3,
+      "pages": 3
+    },
+    {
+      "shcode": "403870",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-07-15"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "417200",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-12-12"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "420770",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-05-24"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "425420",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2022-11-17"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "437730",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-03-21"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "439960",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2026-05-11"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "440110",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-08-07"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "443060",
+      "market_class": "kospi",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-05-08"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "445680",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-08-10"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "450080",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-11-17"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "454910",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2023-10-05"
+      },
+      "calls": 4,
+      "pages": 4
+    },
+    {
+      "shcode": "456160",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-08-14"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "458870",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-06-19"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "460930",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-01-26"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "466100",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-10-28"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "475150",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-03-29"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "475830",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-02-14"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "475960",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-11-07"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "476060",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2024-12-19"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "476830",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-12-18"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "477850",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2026-05-20"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "483650",
+      "market_class": "kospi",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-05-22"
+      },
+      "calls": 5,
+      "pages": 5
+    },
+    {
+      "shcode": "490470",
+      "market_class": "kosdaq",
+      "cap_tier": "mid",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-12-29"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "491000",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2025-12-24"
+      },
+      "calls": 6,
+      "pages": 6
+    },
+    {
+      "shcode": "950160",
+      "market_class": "kosdaq",
+      "cap_tier": "top",
+      "outcome": {
+        "kind": "listed",
+        "first_served": "2017-11-06"
+      },
+      "calls": 1,
+      "pages": 1
+    }
+  ],
+  "measurements": [
+    {
+      "shcode": "005930",
+      "sdate": "1980-01-04",
+      "edate": "2026-08-12",
+      "pages": [
+        {
+          "page": 1,
+          "rows": 501,
+          "first_date": "2024-07-19",
+          "last_date": "2026-08-12",
+          "rec_count_echo": "501",
+          "cursor_after": ""
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "shcode": "000250",
+      "sdate": "2016-08-01",
+      "edate": "2026-08-12",
+      "pages": [
+        {
+          "page": 1,
+          "rows": 501,
+          "first_date": "2024-07-19",
+          "last_date": "2026-08-12",
+          "rec_count_echo": "501",
+          "cursor_after": ""
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "shcode": "000100",
+      "sdate": "2016-08-01",
+      "edate": "2026-08-12",
+      "pages": [
+        {
+          "page": 1,
+          "rows": 501,
+          "first_date": "2024-07-19",
+          "last_date": "2026-08-12",
+          "rec_count_echo": "501",
+          "cursor_after": ""
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "shcode": "373220",
+      "sdate": "2016-08-01",
+      "edate": "2026-08-12",
+      "pages": [
+        {
+          "page": 1,
+          "rows": 501,
+          "first_date": "2024-07-19",
+          "last_date": "2026-08-12",
+          "rec_count_echo": "501",
+          "cursor_after": ""
+        }
+      ],
+      "calls": 1
+    }
+  ],
+  "failed": [],
+  "derived": {
+    "proven_sessions": 2460,
+    "symbols_counted": 352,
+    "no_served_rows": [],
+    "listed_count_min": 244,
+    "listed_count_median": 301,
+    "listed_count_max": 352,
+    "thresholds": [
+      {
+        "concurrency": 70,
+        "effective_s_max": 2460,
+        "first_session_at_or_above": "2016-08-01",
+        "margin_bar_n1": 0.023063436097268766
+      },
+      {
+        "concurrency": 140,
+        "effective_s_max": 2460,
+        "first_session_at_or_above": "2016-08-01",
+        "margin_bar_n1": 0.023063436097268766
+      }
+    ],
+    "mean_participation": 0.856407058388766,
+    "full_participation_symbols": 244,
+    "max_observed_rows_per_page": 501,
+    "margin_note": "bar(N=1, S) = 1.96 × 0.087002 × √(45/S) — v35 session-block bootstrap SE projection under ORB clustering (sample-margin.json; scope plan 2026-08-10-001). A PROJECTION: R20 re-measures ICC/m/participation before the holdout is spent."
+  }
+}
