@@ -8,10 +8,44 @@
 //! Configuration (env vars):
 //! - `LS_INGEST_CATALOG`: catalog directory (required).
 //! - `LS_INGEST_MODE`: `range` (default) | `accumulate` (U5) | `rebase` (epoch
-//!   re-base — see the README runbook) | `probe-lookback`. In `accumulate`/`rebase`
-//!   modes, `SDATE`/`EDATE` are ignored; coverage grows from each instrument's
-//!   watermark to the last closed session. `rebase` first marks every daily triple
-//!   shifted (one atomic checkpoint save), then heals each through the same path.
+//!   re-base — see the README runbook) | `probe-lookback` | `backfill` (P3
+//!   windowed deep pull) | `backfill-report` (P3 offline completeness report).
+//!   In `accumulate`/`rebase` modes, `SDATE`/`EDATE` are ignored; coverage grows
+//!   from each instrument's watermark to the last closed session. `rebase` first
+//!   marks every daily triple shifted (one atomic checkpoint save), then heals
+//!   each through the same path.
+//!
+//! ### `backfill` / `backfill-report` (P3, plan 2026-08-13-001)
+//!
+//! The windowed deep pull that seeds a fresh catalog home down to the
+//! pre-registered floor. Neither `range` nor `accumulate` can do this: both
+//! issue ONE wide `collect_daily` range, which `t8410` serves as the newest
+//! ~501 rows with a *clean* empty cursor — appending about two years over a
+//! ten-year hole and attesting it. `backfill` walks each manifest symbol's
+//! calendar-snapped windows oldest-first, appending one verified window at a
+//! time. While a home carries an incomplete backfill, `range`, `accumulate`,
+//! and `rebase` all refuse to run against it.
+//!
+//! - `LS_BACKFILL_MANIFEST`: the committed pit-universe artifact (required).
+//!   A `restricted` or `derived: null` artifact is refused.
+//! - `LS_BACKFILL_SYMBOLS`: optional comma list bounding this session's batch
+//!   to these manifest members.
+//! - `LS_BACKFILL_BATCH`: optional count — take the first N members not yet at
+//!   the anchor (manifest order). Any prefix is safe: every window is
+//!   independently checkpointed.
+//! - `LS_BACKFILL_EVIDENCE`: `backfill-report` output path (default
+//!   `lab/config/daily-catalog-<floor>-<anchor>.json`).
+//!
+//! Calendar admission for both targets the manifest's **frozen anchor**, not
+//! the last closed session — the pull is date-stable regardless of execution
+//! day, and a session can run in the Unknown morning (a `last_closed` target
+//! blocks all-morning runs by design).
+//!
+//! Sessions must run strictly after the morning chain and with no live mount:
+//! the `IGW00201` budget is per-credential and cumulative, while advisory locks
+//! are per-catalog-dir and so give no cross-home protection. Pin one absolute
+//! `LS_SPEND_LEDGER_FILE` shared with the morning chain's invocations so the
+//! cross-session spend memory is real.
 //! - `LS_INGEST_SDATE` / `LS_INGEST_EDATE`: range bounds `YYYYMMDD` (required in
 //!   `range` mode).
 //! - `LS_INGEST_LOOKBACK`: accumulate/rebase-mode floor `YYYYMMDD` for an
@@ -49,6 +83,9 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
+use nautilus_ls::ingest::backfill as backfill_mod;
+use nautilus_ls::ingest::backfill::BackfillRunReport;
+use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{
     last_closed_session, BarKind, CoverageReport, IngestConfig, Ingestor, ProbeOutcome,
     ACCUMULATE_CLOSE_BUFFER, DEFAULT_OVERLAP_DAYS,
@@ -120,6 +157,21 @@ fn backward_widen_uncertainty_line(
     )
 }
 
+/// What a completed invocation produced. Kept distinct so a backfill session's
+/// degradations and a completeness report's NO-GO each map to the refusal exit
+/// code (2) rather than the hard-error code (1) — "the run completed but N
+/// symbols need an operator" is not "the run failed".
+enum RunOutcome {
+    /// No report (a dry run, or the probe mode).
+    Nothing,
+    /// A range/accumulate/rebase run.
+    Coverage(CoverageReport),
+    /// One attended backfill session (P3/U3).
+    Backfill(BackfillRunReport),
+    /// A completeness report's verdict (P3/U5): `true` = GO.
+    Verdict(bool),
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
@@ -127,10 +179,7 @@ async fn main() -> std::process::ExitCode {
     // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
     // printed unscrubbed by the runtime, leaking a raw broker message.
     match run().await {
-        // Probe mode carries no coverage report — nothing to refuse, exit 0.
-        Ok(None) => std::process::ExitCode::SUCCESS,
-        // A completed run: exit nonzero iff it carried a genuine refusal (#104).
-        Ok(Some(report)) => std::process::ExitCode::from(exit_code_for(&report)),
+        Ok(outcome) => std::process::ExitCode::from(exit_code_for_outcome(&outcome)),
         Err(e) => {
             eprintln!("error: {}", scrub::scrub_secrets(&e.to_string()));
             std::process::ExitCode::FAILURE
@@ -138,7 +187,24 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
-async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
+/// The process exit code for a completed invocation.
+fn exit_code_for_outcome(outcome: &RunOutcome) -> u8 {
+    match outcome {
+        RunOutcome::Nothing => 0,
+        RunOutcome::Coverage(report) => exit_code_for(report),
+        RunOutcome::Backfill(report) => {
+            if report.any_refused() {
+                EXIT_REFUSALS
+            } else {
+                0
+            }
+        }
+        RunOutcome::Verdict(true) => 0,
+        RunOutcome::Verdict(false) => EXIT_REFUSALS,
+    }
+}
+
+async fn run() -> Result<RunOutcome, Box<dyn std::error::Error>> {
     require_paper()?;
 
     let catalog: PathBuf = env_required("LS_INGEST_CATALOG")?.into();
@@ -149,14 +215,17 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     let accumulate = match mode.as_str() {
         "range" => false,
         "accumulate" | "rebase" => true,
-        "probe-lookback" => false, // handled early, below
+        "probe-lookback" => false,        // handled early, below
+        "backfill" | "backfill-report" => false, // P3 — its own runner
         other => {
             return Err(format!(
-                "unknown LS_INGEST_MODE {other:?} (want range | accumulate | rebase | probe-lookback)"
+                "unknown LS_INGEST_MODE {other:?} (want range | accumulate | rebase | \
+                 probe-lookback | backfill | backfill-report)"
             )
             .into())
         }
     };
+    let backfill = is_backfill_mode(&mode);
     let bar_kinds = parse_kinds(&std::env::var("LS_INGEST_KIND").unwrap_or_else(|_| "daily".into()))?;
 
     // U3 (plan 2026-07-10-003): tier-stratified symbol selection from the
@@ -188,8 +257,36 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             return Err("LS_INGEST_STRATIFY_DRY_RUN requires LS_INGEST_METADATA".into());
         }
         println!("dry run: no gateway calls, no catalog writes, no pin");
-        return Ok(None);
+        return Ok(RunOutcome::Nothing);
     }
+
+    // P3: the manifest is a local file, so it is resolved (and admitted, R14)
+    // before the lock and before anything gateway-capable exists. Its frozen
+    // anchor is what the calendar admission below targets (KTD3).
+    //
+    // Deliberately NOT unwrapped here. Both the env read and the manifest
+    // admission are fallible, and the calendar startup record is a mandatory
+    // side effect that must precede every early exit — so the error is carried
+    // past the emit below and returned there. Backfill is a calendar-gated
+    // mode, so dropping its diagnostic is a safety gap, not the audit gap the
+    // range-mode EDATE parse below is excused as. See
+    // docs/solutions/conventions/composition-root-always-emit-before-fallible-parse.md.
+    let manifest: Option<Result<(String, _), String>> = if backfill {
+        Some(
+            env_required("LS_BACKFILL_MANIFEST")
+                .and_then(|path| {
+                    backfill_mod::load_manifest(std::path::Path::new(&path))
+                        .map(|artifact| (path, artifact))
+                        .map_err(|e| e.to_string())
+                }),
+        )
+    } else {
+        None
+    };
+    let frozen_anchor = manifest
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|(_, a)| a.provenance.anchor);
 
     // Take the R15 ingest lock FIRST — before any gateway request — so a live
     // session holding the counterpart lock blocks us before we issue the universe
@@ -212,9 +309,20 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         Utc::now(),
         nautilus_ls_calendar::CalendarAdoption::Enforced,
     );
-    let calendar_target = calendar_target_for_mode(&mode, calendar.as_of())?;
+    // A backfill whose manifest failed to resolve still has to emit a startup
+    // record before it returns: fall back to today-KST purely as the record's
+    // target, then surface the real error immediately after the emit.
+    let manifest_error = manifest.as_ref().and_then(|r| r.as_ref().err()).cloned();
+    let calendar_target = match (&manifest_error, backfill) {
+        (Some(_), true) => (calendar.as_of() + Duration::hours(9)).date_naive(),
+        _ => calendar_target_for_mode(&mode, calendar.as_of(), frozen_anchor)?,
+    };
     let startup = calendar.startup_record("ls-ingest", calendar_target);
     nautilus_ls::calendar::emit_startup_record(&startup);
+    if let Some(err) = manifest_error {
+        return Err(err.into());
+    }
+    let manifest = manifest.map(|r| r.expect("the manifest error returned above"));
     if automatic_mode_requires_calendar(&mode)
         && startup.action == nautilus_ls::calendar::ResultingAction::EnforcedFailClosed
     {
@@ -229,17 +337,69 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // closed here — before the universe load / any gateway construction — when that floor is
     // outside calendar coverage, so a fresh triple cannot silently skip with zero bars and then
     // mis-pin a selection whose bars never landed (see `floor_admission`).
-    if accumulate {
-        let floor = parse_yyyymmdd(&env_required("LS_INGEST_LOOKBACK")?)?;
-        let coverage = calendar.view().map(|view| {
-            let c = view.calendar().coverage();
-            (c.materialized_from, c.materialized_through)
-        });
+    let coverage = calendar.view().map(|view| {
+        let c = view.calendar().coverage();
+        (c.materialized_from, c.materialized_through)
+    });
+    if accumulate || backfill {
+        let floor = match &manifest {
+            // P3: the backfill floor is the manifest's, never an env var —
+            // the artifact's `[floor, anchor]` is the immutable fact the
+            // window plan reproduces.
+            Some((_, artifact)) => artifact.provenance.floor,
+            None => parse_yyyymmdd(&env_required("LS_INGEST_LOOKBACK")?)?,
+        };
         if let Err(msg) = floor_admission(floor, coverage) {
             return Err(
                 format!("calendar admission refused {mode} before gateway construction: {msg}").into(),
             );
         }
+    }
+
+    // P3/R7: a home carrying an incomplete windowed backfill is off-limits to
+    // every other bar-writing mode. The library guard fires after each mode's
+    // checkpoint load — already before any bar fetch — but the universe load
+    // (t8430 + 2× t9945) runs before the ingestor is constructed, so refusing
+    // here keeps AE1's "zero gateway calls" literal.
+    if matches!(mode.as_str(), "range" | "accumulate" | "rebase") {
+        nautilus_ls::ingest::refuse_if_backfill_incomplete(&catalog, &mode)?;
+    }
+
+    // P3: build and verify the pull plan (U1) — the manifest's window plan must
+    // reproduce from the local calendar snapshot (R5) or this fails closed
+    // before anything gateway-capable is constructed.
+    let backfill_plan = match &manifest {
+        Some((path, artifact)) => {
+            let view = calendar
+                .view()
+                .ok_or("calendar unavailable — enforced fail-closed (set LS_CALENDAR_SNAPSHOT)")?;
+            let plan = backfill_mod::build_plan(&view, artifact, path)?;
+            println!(
+                "backfill plan: {} manifest members over [{}, {}] — {} proven sessions, {} \
+                 full-range windows (manifest hash {})",
+                plan.symbols.len(),
+                plan.floor,
+                plan.anchor,
+                plan.range.sessions.len(),
+                plan.range.windows.len(),
+                plan.manifest_hash,
+            );
+            for shcode in &plan.excluded_no_served_rows {
+                println!(
+                    "EXCLUDED (no served rows in the P4 walk): {shcode} — surfaced, never \
+                     inferred as delisted"
+                );
+            }
+            Some(plan)
+        }
+        None => None,
+    };
+
+    // `backfill-report` is fully offline: catalog + checkpoint + manifest in, a
+    // GO/NO-GO evidence record out. It returns before the SDK is built.
+    if mode == "backfill-report" {
+        let plan = backfill_plan.expect("backfill modes always build a plan");
+        return run_backfill_report(&catalog, &plan).await;
     }
 
     let adapter_cfg = match std::env::var("LS_INGEST_LANE_FILE") {
@@ -253,7 +413,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // load — the probe walks a single pilot symbol. Operator-gated.
     if mode == "probe-lookback" {
         run_probe(&sdk, catalog, &calendar).await?;
-        return Ok(None);
+        return Ok(RunOutcome::Nothing);
     }
 
     // Resolve the universe. A per-symbol drip loop re-invokes `ls-ingest` many times;
@@ -262,9 +422,17 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // symbols + instruments already persisted by the drip's daily pass) skips it —
     // the dominant avoidable per-invocation cost (KTD5 budget). The stratified
     // metadata selection counts as an explicit symbol list.
+    //
+    // P3/KTD5 bootstrap-then-skip: the manifest IS the explicit symbol list, so
+    // the FIRST backfill invocation runs the 3-call universe load once (writing
+    // the instrument definitions a definition-less home would silently
+    // backtest empty against), and every later invocation sets
+    // `LS_INGEST_SKIP_UNIVERSE_LOAD=1` — making universe expansion structurally
+    // impossible for the rest of the pull.
     let explicit_symbols: Option<String> = metadata_selection
         .as_ref()
         .map(|sel| sel.symbols.join(","))
+        .or_else(|| backfill_plan.as_ref().map(|p| p.shcodes().join(",")))
         .or(symbols_env);
     let skip_load = should_skip_universe_load(
         env_flag("LS_INGEST_SKIP_UNIVERSE_LOAD"),
@@ -310,12 +478,19 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         u
     };
 
-    // Resolve the per-mode date range.
-    let (sdate, edate) = if accumulate {
-        let floor = env_required("LS_INGEST_LOOKBACK")?;
-        automatic_date_range(floor, calendar_target)
-    } else {
-        (env_required("LS_INGEST_SDATE")?, env_required("LS_INGEST_EDATE")?)
+    // Resolve the per-mode date range. In backfill mode the range is
+    // informational only — the window plan is the authority — so it carries the
+    // manifest's `[floor, anchor]`.
+    let (sdate, edate) = match &backfill_plan {
+        Some(plan) => (
+            plan.floor.format("%Y%m%d").to_string(),
+            plan.anchor.format("%Y%m%d").to_string(),
+        ),
+        None if accumulate => {
+            let floor = env_required("LS_INGEST_LOOKBACK")?;
+            automatic_date_range(floor, calendar_target)
+        }
+        None => (env_required("LS_INGEST_SDATE")?, env_required("LS_INGEST_EDATE")?),
     };
 
     let config = IngestConfig {
@@ -328,6 +503,23 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     };
     // The ingest lock is already held (`_lock`), so run without re-acquiring it.
     let mut ingestor = Ingestor::new(sdk, config);
+
+    // P3: one attended windowed backfill session.
+    if let Some(plan) = &backfill_plan {
+        let batch = resolve_backfill_batch(plan, &catalog)?;
+        // The KST pull date — the same-day vs cross-day discriminator the R9
+        // mid-symbol overlap check keys on.
+        let session_date = (calendar.as_of() + Duration::hours(9)).date_naive();
+        println!(
+            "backfill session {session_date}: {} of {} manifest members in this batch",
+            batch.len(),
+            plan.symbols.len()
+        );
+        let report = ingestor.run_backfill(plan, &batch, session_date).await?;
+        print_backfill_session(&report);
+        return Ok(RunOutcome::Backfill(report));
+    }
+
     let report = if accumulate {
         let floor = parse_yyyymmdd(&sdate)?;
         let last_closed = parse_yyyymmdd(&edate)?;
@@ -427,7 +619,170 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         report.budget.per_sec_cap,
         report.budget.min_seconds()
     );
-    Ok(Some(report))
+    Ok(RunOutcome::Coverage(report))
+}
+
+// ---------------------------------------------------------------------------
+// P3 — the windowed backfill (plan 2026-08-13-001)
+// ---------------------------------------------------------------------------
+
+fn is_backfill_mode(mode: &str) -> bool {
+    matches!(mode, "backfill" | "backfill-report")
+}
+
+/// This session's symbol batch (plan Q2). `LS_BACKFILL_SYMBOLS` bounds it
+/// explicitly; otherwise `LS_BACKFILL_BATCH=<n>` takes the first N members not
+/// yet at the anchor, in manifest order. Any prefix is safe — every window is
+/// independently checkpointed, so a session may stop early and lose nothing.
+fn resolve_backfill_batch(
+    plan: &nautilus_ls::ingest::backfill::BackfillPlan,
+    catalog: &std::path::Path,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    if let Ok(list) = std::env::var("LS_BACKFILL_SYMBOLS") {
+        let want: Vec<String> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        for w in &want {
+            if plan.symbol(w).is_none() {
+                return Err(format!(
+                    "LS_BACKFILL_SYMBOLS: {w:?} is not a planned manifest member"
+                )
+                .into());
+            }
+        }
+        if want.is_empty() {
+            return Err("LS_BACKFILL_SYMBOLS is set but empty".into());
+        }
+        return Ok(want);
+    }
+    let all: Vec<String> = plan.shcodes();
+    let Ok(n) = std::env::var("LS_BACKFILL_BATCH") else {
+        return Ok(all);
+    };
+    let n: usize = n
+        .trim()
+        .parse()
+        .map_err(|_| format!("LS_BACKFILL_BATCH must be a positive integer, got {n:?}"))?;
+    if n == 0 {
+        return Err("LS_BACKFILL_BATCH must be at least 1".into());
+    }
+    let checkpoint = Checkpoint::load(&catalog.join("ingest-checkpoint.json"))?;
+    let label = BarKind::Daily.label();
+    Ok(all
+        .into_iter()
+        .filter(|shcode| {
+            let instrument = format!("{shcode}.{}", nautilus_ls::KRX_VENUE);
+            checkpoint.watermark(&instrument, &label) != Some(plan.anchor)
+        })
+        .take(n)
+        .collect())
+}
+
+fn print_backfill_session(report: &BackfillRunReport) {
+    println!(
+        "backfill session complete: {} bars across {} windows; {} symbols attempted ({} already \
+         at the anchor), {} now complete",
+        report.bars_written,
+        report.windows_pulled,
+        report.symbols_attempted,
+        report.symbols_skipped_complete,
+        report.symbols_complete,
+    );
+    for s in &report.restarted {
+        println!(
+            "RESTARTED (cross-day basis shift): {s} — the series was wiped and re-pulled from its \
+             range start rather than splicing two adjustment bases"
+        );
+    }
+    for g in &report.uncovered_gaps {
+        println!(
+            "UNCOVERED GAP: {g} — the window completed cleanly with zero rows through the bounded \
+             re-fetch; the watermark did NOT advance over it"
+        );
+    }
+    for r in &report.append_refusals {
+        println!(
+            "APPEND REFUSED (overlap): {r}. Nothing from the window was appended and the watermark \
+             held; run `lab-research catalog compact` or wipe the series and re-pull it."
+        );
+    }
+    for d in &report.degraded {
+        println!("DEGRADED: {} — {}", d.shcode, d.reason);
+    }
+    if report.marker_cleared {
+        println!(
+            "every manifest symbol reached the anchor — the incomplete-backfill marker is CLEARED; \
+             run LS_INGEST_MODE=backfill-report for the GO/NO-GO evidence record"
+        );
+    } else {
+        println!(
+            "the incomplete-backfill marker STANDS: not every manifest symbol is at the anchor. \
+             range/accumulate/rebase will refuse this home until the pull finishes."
+        );
+    }
+    println!(
+        "progress is a watermark census over ingest-checkpoint.json — never the exit code, which \
+         reads 0 both when a run is caught up and when it is fully blocked"
+    );
+}
+
+/// The offline completeness report (U5): catalog + checkpoint + manifest in, a
+/// GO/NO-GO evidence record out, and the manifest pin on a GO only.
+async fn run_backfill_report(
+    catalog: &std::path::Path,
+    plan: &nautilus_ls::ingest::backfill::BackfillPlan,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    let checkpoint = Checkpoint::load(&catalog.join("ingest-checkpoint.json"))?;
+    let now = Utc::now();
+    let report =
+        backfill_mod::build_report(catalog, plan, &checkpoint, now.to_rfc3339()).await?;
+    let evidence = std::env::var("LS_BACKFILL_EVIDENCE").unwrap_or_else(|_| {
+        format!(
+            "lab/config/daily-catalog-{}-{}.json",
+            plan.floor.format("%Y%m%d"),
+            plan.anchor.format("%Y%m%d"),
+        )
+    });
+    report.write(std::path::Path::new(&evidence))?;
+    println!(
+        "backfill report: {} symbols, {} proven sessions in [{}, {}] → {}",
+        report.symbols.len(),
+        report.provenance.proven_sessions,
+        report.provenance.floor,
+        report.provenance.anchor,
+        evidence,
+    );
+    // Both lists print in full — a halted session legitimately produces missing
+    // bars, and the operator must see every finding at once. Only the blocking
+    // list decides the verdict: gating GO on session shortfalls would make the
+    // rung uncloseable, since some symbol in a 352-member decade has always
+    // halted somewhere.
+    let anomalies = report.all_anomalies();
+    for a in &anomalies {
+        println!("ANOMALY: {a}");
+    }
+    for o in &report.all_observations() {
+        println!("OBSERVED: {o}");
+    }
+    if report.go {
+        backfill_mod::manifest_pin(plan, now.to_rfc3339())
+            .write(catalog)
+            .map_err(|e| format!("writing the manifest pin: {e}"))?;
+        println!(
+            "VERDICT: GO — zero anomalies; manifest pin written (hash {})",
+            report.provenance.manifest_hash
+        );
+    } else {
+        println!(
+            "VERDICT: NO-GO — {} anomalies; the manifest pin is WITHHELD (a pin from a non-clean \
+             state would attest a membership whose bars never fully landed)",
+            anomalies.len()
+        );
+    }
+    Ok(RunOutcome::Verdict(report.go))
 }
 
 /// Staged max-lookback probe (KTD10). Uses a single liquid pilot symbol (default
@@ -498,10 +853,26 @@ fn parse_yyyymmdd(s: &str) -> Result<NaiveDate, String> {
 }
 
 fn automatic_mode_requires_calendar(mode: &str) -> bool {
-    matches!(mode, "accumulate" | "rebase" | "probe-lookback")
+    matches!(mode, "accumulate" | "rebase" | "probe-lookback") || is_backfill_mode(mode)
 }
 
-fn calendar_target_for_mode(mode: &str, as_of: DateTime<Utc>) -> Result<NaiveDate, String> {
+/// The date the calendar admission is evaluated against.
+///
+/// P3/KTD3: the backfill modes target the manifest's **frozen anchor**, not
+/// `last_closed`. The lineage needs data only through the reserved band's end,
+/// which the anchor covers; targeting it keeps the pull date-stable regardless
+/// of execution day, keeps listing evidence and pull provenance on one date,
+/// and lets sessions run in the Unknown morning — a `last_closed` target blocks
+/// all-morning runs by design.
+fn calendar_target_for_mode(
+    mode: &str,
+    as_of: DateTime<Utc>,
+    frozen_anchor: Option<NaiveDate>,
+) -> Result<NaiveDate, String> {
+    if is_backfill_mode(mode) {
+        return frozen_anchor
+            .ok_or_else(|| format!("{mode} mode requires the manifest's frozen anchor"));
+    }
     if automatic_mode_requires_calendar(mode) {
         let now_kst = (as_of + Duration::hours(9)).naive_utc();
         Ok(last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER))
@@ -791,13 +1162,44 @@ mod tests {
         let before = Utc.with_ymd_and_hms(2026, 7, 18, 6, 0, 0).unwrap(); // 15:00 KST Saturday
 
         assert_eq!(
-            calendar_target_for_mode("accumulate", after).unwrap(),
+            calendar_target_for_mode("accumulate", after, None).unwrap(),
             NaiveDate::from_ymd_opt(2026, 7, 18).unwrap()
         );
         assert_eq!(
-            calendar_target_for_mode("probe-lookback", before).unwrap(),
+            calendar_target_for_mode("probe-lookback", before, None).unwrap(),
             NaiveDate::from_ymd_opt(2026, 7, 17).unwrap()
         );
+    }
+
+    /// P3/KTD3: the backfill modes target the manifest's FROZEN anchor, never
+    /// `last_closed` — which is what lets a session run in the Unknown morning
+    /// and keeps the pull date-stable regardless of execution day.
+    #[test]
+    fn backfill_targets_the_frozen_anchor_not_the_last_closed_session() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        // Any wall clock, days later, still targets the anchor.
+        for at in [
+            Utc.with_ymd_and_hms(2026, 8, 13, 0, 30, 0).unwrap(), // 09:30 KST, mid-session
+            Utc.with_ymd_and_hms(2026, 9, 1, 8, 0, 0).unwrap(),
+        ] {
+            for mode in ["backfill", "backfill-report"] {
+                assert_eq!(
+                    calendar_target_for_mode(mode, at, Some(anchor)).unwrap(),
+                    anchor
+                );
+                assert!(automatic_mode_requires_calendar(mode), "{mode} fails closed without a calendar");
+            }
+        }
+        // Without the manifest's anchor there is no target — never a silent
+        // fallback to `last_closed`, which would move the pull's admission
+        // target with the execution day.
+        let err = calendar_target_for_mode(
+            "backfill",
+            Utc.with_ymd_and_hms(2026, 8, 13, 8, 0, 0).unwrap(),
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("frozen anchor"), "{err}");
     }
 
     #[test]

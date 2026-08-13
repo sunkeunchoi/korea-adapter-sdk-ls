@@ -213,6 +213,40 @@ pub struct Checkpoint {
     /// Whether daily bars were ingested with adjusted prices (`sujung="Y"`,
     /// KTD5). Recorded as catalog metadata so downstream knows the price basis.
     pub adjusted_prices: bool,
+    /// Whether this catalog carries an **incomplete windowed backfill** (P3/R7).
+    ///
+    /// Set on the backfill mode's first checkpoint write and cleared only once
+    /// every manifest symbol's watermark equals the frozen anchor. While it is
+    /// set, every other bar-writing mode — `range`, `accumulate`, `rebase` —
+    /// refuses to run: each of them issues ONE wide `collect_daily` range, and
+    /// P4 measured that a wide-range `t8410` request serves only the newest
+    /// ~501 rows with a *clean* empty cursor. Run against a mid-backfill home
+    /// that would silently attest a multi-year hole, or strand truncated rows
+    /// that a later backfill window then dies on at the overlap refusal.
+    ///
+    /// The marker rides the standard checkpoint format (the precedent is the
+    /// `shifted` mark outranking the watermark, KTD2): format compatibility is
+    /// exactly what makes the accumulate foot-gun possible, and this is what
+    /// closes it. `#[serde(default)]` so pre-P3 files load as unmarked.
+    #[serde(default)]
+    backfill_incomplete: bool,
+    /// Per-`(instrument, bar type)` KST session date (`YYYYMMDD`) of the most
+    /// recent backfill window append, keyed like `watermarks` (P3/R9). A
+    /// mid-symbol resume on a *later* day re-runs the overlap check before
+    /// continuing — the adjusted series is rewritten server-side by every
+    /// split/dividend, so splicing across pull days without checking would bake
+    /// two adjustment bases into one symbol. A same-day resume needs no check.
+    /// `#[serde(default)]` for legacy files.
+    #[serde(default)]
+    backfill_sessions: BTreeMap<String, String>,
+    /// Per-`(instrument, bar type)` backfill degradation reason, keyed like
+    /// `watermarks` (P3/R3/R8). A degraded symbol stopped mid-plan with its
+    /// watermark held; the reason persists so the completeness report surfaces
+    /// it as an anomaly rather than reading the short coverage as a mystery.
+    /// Cleared by the next successful window append. `#[serde(default)]` for
+    /// legacy files.
+    #[serde(default)]
+    backfill_degraded: BTreeMap<String, String>,
 }
 
 impl Checkpoint {
@@ -318,6 +352,56 @@ impl Checkpoint {
     pub fn reset_empty_retry(&mut self, instrument: &str, bar_type: &str) {
         self.empty_retries
             .remove(&Self::watermark_key(instrument, bar_type));
+    }
+
+    /// Whether this catalog carries an incomplete windowed backfill (P3/R7).
+    pub fn backfill_incomplete(&self) -> bool {
+        self.backfill_incomplete
+    }
+
+    /// Set or clear the incomplete-backfill marker (P3/R7). Set on the backfill
+    /// mode's first checkpoint write; cleared only once every manifest symbol's
+    /// watermark equals the frozen anchor.
+    pub fn set_backfill_incomplete(&mut self, incomplete: bool) {
+        self.backfill_incomplete = incomplete;
+    }
+
+    /// The KST session date of the most recent backfill window append for a
+    /// `(instrument, bar type)`, if any (P3/R9).
+    pub fn backfill_session(&self, instrument: &str, bar_type: &str) -> Option<NaiveDate> {
+        self.backfill_sessions
+            .get(&Self::watermark_key(instrument, bar_type))
+            .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y%m%d").ok())
+    }
+
+    /// Stamp the KST session date of a backfill window append (P3/R9).
+    pub fn set_backfill_session(&mut self, instrument: &str, bar_type: &str, date: NaiveDate) {
+        self.backfill_sessions.insert(
+            Self::watermark_key(instrument, bar_type),
+            date.format("%Y%m%d").to_string(),
+        );
+    }
+
+    /// Record why a `(instrument, bar type)` degraded mid-backfill (P3/R3/R8) —
+    /// surfaced by the completeness report, never silent.
+    pub fn mark_backfill_degraded(&mut self, instrument: &str, bar_type: &str, reason: &str) {
+        self.backfill_degraded.insert(
+            Self::watermark_key(instrument, bar_type),
+            reason.to_string(),
+        );
+    }
+
+    /// Clear a backfill degradation — the symbol made forward progress.
+    pub fn clear_backfill_degraded(&mut self, instrument: &str, bar_type: &str) {
+        self.backfill_degraded
+            .remove(&Self::watermark_key(instrument, bar_type));
+    }
+
+    /// The recorded backfill degradation for a `(instrument, bar type)`, if any.
+    pub fn backfill_degraded(&self, instrument: &str, bar_type: &str) -> Option<&str> {
+        self.backfill_degraded
+            .get(&Self::watermark_key(instrument, bar_type))
+            .map(String::as_str)
     }
 
     /// Clear the coverage watermark for a `(instrument, bar type)` — the heal's
