@@ -2705,6 +2705,18 @@ impl Ingestor {
         checkpoint.adjusted_prices = self.config.adjusted_prices;
         let label = BarKind::Daily.label();
 
+        // Validate the batch BEFORE the durable marker is written: an unplanned
+        // shcode is an operator typo, and erroring after the marker save would
+        // leave a previously-clean home refusing range/accumulate/rebase for a
+        // run that never fetched anything.
+        for shcode in batch {
+            if plan.symbol(shcode).is_none() {
+                return Err(AdapterError::Ingest(format!(
+                    "backfill batch names {shcode:?}, which is not a planned manifest member"
+                )));
+            }
+        }
+
         // A backfill SEEDS a fresh home. An absent marker means this is the
         // first session against this catalog, so any daily coverage already
         // here came from somewhere else — and R6's watermark reconciliation
@@ -2752,11 +2764,9 @@ impl Ingestor {
         let empty_retry_max = self.empty_retry_max.max(1);
 
         for shcode in batch {
-            let symbol_plan = plan.symbol(shcode).ok_or_else(|| {
-                AdapterError::Ingest(format!(
-                    "backfill batch names {shcode:?}, which is not a planned manifest member"
-                ))
-            })?;
+            let symbol_plan = plan
+                .symbol(shcode)
+                .expect("the batch was validated against the plan before the marker was written");
             let id = instrument_id_for(shcode);
             let instrument = id.to_string();
             let bar_type = BarKind::Daily.bar_type(id)?;
@@ -2806,10 +2816,18 @@ impl Ingestor {
                         "backfill cross-day resume: adjustment-basis shift at the watermark; \
                          wiping the series and restarting the symbol rather than splicing two bases"
                     );
-                    delete_bar_series(&self.config.catalog_path, bar_type).await?;
+                    // Persist the cleared watermark BEFORE destroying the bars.
+                    // The reverse order plus a crash leaves a high watermark
+                    // over an emptied series, and the resume reconciliation only
+                    // ever advances a watermark — never retreats one — so every
+                    // window below the stale value would be skipped forever.
+                    // Clearing first is self-correcting instead: a crash after
+                    // the save leaves no watermark over a populated series,
+                    // which the next run's reconciliation repairs.
                     checkpoint.clear_watermark(&instrument, &label);
                     checkpoint.clear_backfill_degraded(&instrument, &label);
                     checkpoint.save(&checkpoint_path)?;
+                    delete_bar_series(&self.config.catalog_path, bar_type).await?;
                     report.restarted.push(shcode.clone());
                 }
             }
@@ -3075,13 +3093,6 @@ impl Ingestor {
             }
         }
 
-        // Wipe: true-delete the series, then drop the watermark so the accumulate
-        // arithmetic re-pulls from the floor. Persist the wiped state — the mark
-        // (already saved) makes any crash from here converge back to this wipe.
-        delete_bar_series(&self.config.catalog_path, bar_type).await?;
-        checkpoint.clear_watermark(instrument, label);
-        checkpoint.save(checkpoint_path)?;
-
         // Re-pull the full history from the floor — **windowed** (P3/R10). A
         // single wide-range daily re-pull is no longer reachable here: P4
         // measured that a wide-range `t8410` request serves only the newest
@@ -3105,48 +3116,59 @@ impl Ingestor {
         // A LEADING empty window (before the first that serves rows) is
         // pre-listing emptiness: never a gap, never a failure. An interior or
         // trailing empty window after rows have been served keeps the R8 gap
-        // semantics — recorded loud, never silently completed over.
+        // semantics in full — bounded re-fetch first, then a recorded gap AND a
+        // refusal to complete. Completing over one would set the watermark past
+        // unverified emptiness, and every later accumulate run skips below its
+        // watermark, so the hole would never be re-fetched: the same
+        // pin-past-empty loss the whole-series rule exists to prevent, narrowed
+        // to one window.
+        //
+        // Nothing is destroyed until the re-pull is WHOLE. The wipe only has to
+        // precede the append, not the fetch, and a windowed re-pull spans many
+        // more requests than the single wide one it replaces — so wiping first
+        // would multiply the window in which a failure leaves the series empty.
         let mut pulled: Vec<Bar> = Vec::new();
         let mut served_any = false;
-        let mut interior_gaps: Vec<CoverageGap> = Vec::new();
         for w in windows {
             let range = format!("{}..{}", fmt_ymd(w.sdate), fmt_ymd(w.edate));
-            match backfill::pull_window(
-                &self.fetcher,
-                shcode,
-                bar_type,
-                *w,
-                std::time::Duration::ZERO,
-                backfill::MAX_BACKFILL_PAGES,
-            )
-            .await
+            // The same bounded empty re-fetch the backfill mode applies: the
+            // gateway serves transiently empty pages, and one of them must not
+            // be read as authoritative during a destructive heal.
+            match self
+                .pull_backfill_window(shcode, bar_type, *w, &range, self.empty_retry_max.max(1))
+                .await
             {
-                Ok(pull) if !pull.bars.is_empty() => {
+                BackfillStep::Bars(bars) => {
                     served_any = true;
-                    pulled.extend(pull.bars);
+                    pulled.extend(bars);
                 }
-                Ok(_) if served_any => {
+                BackfillStep::Empty if served_any => {
+                    // Deliberately NOT recorded as a checkpoint gap: the
+                    // watermark is still at its pre-heal value here, so
+                    // `prune_below_watermarks` would drop the row at the end of
+                    // the run — durable-looking evidence that silently
+                    // evaporates. The surviving shifted mark is the durable
+                    // signal (it re-enters the heal next run), and the named
+                    // window reaches the operator through this warning and the
+                    // run's coverage-gap report.
                     tracing::warn!(
                         instrument,
                         %range,
-                        "heal re-pull: window served zero rows after the series had started \
-                         serving; recording an uncovered gap"
+                        "heal re-pull: window served zero rows through the bounded re-fetch AFTER \
+                         the series had started serving — a hole in history the series \
+                         demonstrably had; refusing to complete, symbol stays marked"
                     );
-                    interior_gaps.push(CoverageGap {
-                        instrument: instrument.to_string(),
-                        bar_type: label.to_string(),
-                        range,
-                        reason: GapReason::EmptyHistory,
-                    });
+                    return Ok(HealOutcome::Incomplete);
                 }
                 // Leading emptiness — pre-listing, by construction silent.
-                Ok(_) => {}
-                Err(we) => {
+                BackfillStep::Empty => {}
+                BackfillStep::Failed(reason) => {
                     tracing::warn!(
                         instrument,
                         %range,
-                        error = %crate::scrub::scrub_secrets(&we.to_string()),
-                        "heal re-pull window failed closed; symbol stays marked"
+                        error = %reason,
+                        "heal re-pull window failed closed; symbol stays marked and the stored \
+                         series is left intact"
                     );
                     return Ok(HealOutcome::Incomplete);
                 }
@@ -3155,13 +3177,21 @@ impl Ingestor {
         if !served_any && !stored.is_empty() {
             // For a series that HAD stored bars, an all-empty re-pull is far
             // more likely a transient gateway state than a genuine absence, and
-            // completing here would pin the watermark over a wiped store.
+            // completing here would pin the watermark over an emptied store.
             tracing::warn!(
                 instrument,
                 "heal re-pull returned no bars for a previously non-empty series; symbol stays marked"
             );
             return Ok(HealOutcome::Incomplete);
         }
+
+        // The re-pull is whole. NOW wipe: true-delete the old-basis series and
+        // drop the watermark, so the append below is disjoint by construction
+        // (KTD-2). The mark was already durably saved by the caller, so a crash
+        // from here converges back to this wipe.
+        delete_bar_series(&self.config.catalog_path, bar_type).await?;
+        checkpoint.clear_watermark(instrument, label);
+        checkpoint.save(checkpoint_path)?;
         // Windows are oldest-first and each window's bars are ascending, so
         // this is already sorted; the catalog's ascending-`ts_init` requirement
         // is load-bearing enough to assert it rather than assume it.
@@ -3239,19 +3269,14 @@ impl Ingestor {
             origin,
         });
         checkpoint.set_watermark(instrument, label, last_closed);
-        for gap in &interior_gaps {
-            checkpoint.record_gap_uncovered(instrument, label, &gap.range, gap.reason);
-        }
         checkpoint.save(checkpoint_path)?;
-        tracing::info!(
-            instrument,
-            bars = pulled_len,
-            gaps = interior_gaps.len(),
-            "basis-shift heal complete"
-        );
+        tracing::info!(instrument, bars = pulled_len, "basis-shift heal complete");
+        // A completed heal has no interior holes by construction: a window that
+        // served zero rows after the series started serving returns `Incomplete`
+        // above rather than reaching here.
         Ok(HealOutcome::Healed {
             bars: pulled_len,
-            gaps: interior_gaps,
+            gaps: Vec::new(),
         })
     }
 }

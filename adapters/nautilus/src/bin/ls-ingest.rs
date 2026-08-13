@@ -260,17 +260,33 @@ async fn run() -> Result<RunOutcome, Box<dyn std::error::Error>> {
         return Ok(RunOutcome::Nothing);
     }
 
-    // P3: the manifest is a local file, so it is read (and admitted, R14)
+    // P3: the manifest is a local file, so it is resolved (and admitted, R14)
     // before the lock and before anything gateway-capable exists. Its frozen
     // anchor is what the calendar admission below targets (KTD3).
-    let manifest = if backfill {
-        let path = env_required("LS_BACKFILL_MANIFEST")?;
-        let artifact = backfill_mod::load_manifest(std::path::Path::new(&path))?;
-        Some((path, artifact))
+    //
+    // Deliberately NOT unwrapped here. Both the env read and the manifest
+    // admission are fallible, and the calendar startup record is a mandatory
+    // side effect that must precede every early exit — so the error is carried
+    // past the emit below and returned there. Backfill is a calendar-gated
+    // mode, so dropping its diagnostic is a safety gap, not the audit gap the
+    // range-mode EDATE parse below is excused as. See
+    // docs/solutions/conventions/composition-root-always-emit-before-fallible-parse.md.
+    let manifest: Option<Result<(String, _), String>> = if backfill {
+        Some(
+            env_required("LS_BACKFILL_MANIFEST")
+                .and_then(|path| {
+                    backfill_mod::load_manifest(std::path::Path::new(&path))
+                        .map(|artifact| (path, artifact))
+                        .map_err(|e| e.to_string())
+                }),
+        )
     } else {
         None
     };
-    let frozen_anchor = manifest.as_ref().map(|(_, a)| a.provenance.anchor);
+    let frozen_anchor = manifest
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|(_, a)| a.provenance.anchor);
 
     // Take the R15 ingest lock FIRST — before any gateway request — so a live
     // session holding the counterpart lock blocks us before we issue the universe
@@ -293,9 +309,20 @@ async fn run() -> Result<RunOutcome, Box<dyn std::error::Error>> {
         Utc::now(),
         nautilus_ls_calendar::CalendarAdoption::Enforced,
     );
-    let calendar_target = calendar_target_for_mode(&mode, calendar.as_of(), frozen_anchor)?;
+    // A backfill whose manifest failed to resolve still has to emit a startup
+    // record before it returns: fall back to today-KST purely as the record's
+    // target, then surface the real error immediately after the emit.
+    let manifest_error = manifest.as_ref().and_then(|r| r.as_ref().err()).cloned();
+    let calendar_target = match (&manifest_error, backfill) {
+        (Some(_), true) => (calendar.as_of() + Duration::hours(9)).date_naive(),
+        _ => calendar_target_for_mode(&mode, calendar.as_of(), frozen_anchor)?,
+    };
     let startup = calendar.startup_record("ls-ingest", calendar_target);
     nautilus_ls::calendar::emit_startup_record(&startup);
+    if let Some(err) = manifest_error {
+        return Err(err.into());
+    }
+    let manifest = manifest.map(|r| r.expect("the manifest error returned above"));
     if automatic_mode_requires_calendar(&mode)
         && startup.action == nautilus_ls::calendar::ResultingAction::EnforcedFailClosed
     {
@@ -728,11 +755,17 @@ async fn run_backfill_report(
         report.provenance.anchor,
         evidence,
     );
-    // Anomalies are LOUD and never fatal — a halted session legitimately
-    // produces missing bars, and the operator must see every one at once.
+    // Both lists print in full — a halted session legitimately produces missing
+    // bars, and the operator must see every finding at once. Only the blocking
+    // list decides the verdict: gating GO on session shortfalls would make the
+    // rung uncloseable, since some symbol in a 352-member decade has always
+    // halted somewhere.
     let anomalies = report.all_anomalies();
     for a in &anomalies {
         println!("ANOMALY: {a}");
+    }
+    for o in &report.all_observations() {
+        println!("OBSERVED: {o}");
     }
     if report.go {
         backfill_mod::manifest_pin(plan, now.to_rfc3339())

@@ -957,20 +957,22 @@ async fn a_symbol_short_at_the_tail_withholds_go_and_the_pin() {
     let sdk = sdk_over(&server, Gateway::new(Behavior::Truncating, short)).await;
     let mut ing = Ingestor::new(sdk, daily_config(&catalog));
     ing.run_backfill(&plan, &plan.shcodes(), ymd(2026, 7, 1)).await.unwrap();
+    write_instrument_defs(&catalog, &plan.shcodes()).await;
 
     let report = report_over(&catalog, &plan).await;
     assert!(!report.go);
     let listed = report.symbols.iter().find(|s| s.shcode == LISTED).unwrap();
     assert!(
         listed.anomalies.iter().any(|a| a.contains("coverage tail")),
-        "{:?}",
+        "a tail short of the anchor BLOCKS go: {:?}",
         listed.anomalies
     );
     assert!(
-        listed.anomalies.iter().any(|a| a.contains("session shortfall")),
-        "{:?}",
-        listed.anomalies
+        listed.observations.iter().any(|o| o.contains("session shortfall")),
+        "a session shortfall is reported loud but does NOT block go: {:?}",
+        listed.observations
     );
+    assert!(listed.missing_sessions > 0);
     // The clean symbol is still clean — anomalies are per symbol, enumerated.
     let pre = report.symbols.iter().find(|s| s.shcode == PRE_FLOOR).unwrap();
     assert!(pre.anomalies.is_empty(), "{:?}", pre.anomalies);
@@ -1048,8 +1050,19 @@ async fn a_home_with_no_instrument_definitions_is_not_a_go() {
 
     // Bars are complete; the bootstrap never ran.
     let report = report_over(&catalog, &plan).await;
-    assert!(report.symbols.iter().all(|s| s.anomalies.is_empty()), "the BARS are complete");
+    assert!(
+        report.symbols.iter().all(|s| s.missing_sessions == 0),
+        "the BARS are complete"
+    );
     assert!(!report.go);
+    for s in &report.symbols {
+        assert!(
+            s.anomalies.iter().any(|a| a.contains("no instrument definition")),
+            "R11 is checked per manifest member, not just catalog-wide: {} {:?}",
+            s.shcode,
+            s.anomalies
+        );
+    }
     assert!(
         report.anomalies.iter().any(|a| a.contains("no instrument definitions")),
         "{:?}",
@@ -1129,4 +1142,121 @@ async fn backfill_on_a_completed_home_is_a_no_op() {
         .unwrap();
     assert_eq!(report.symbols_skipped_complete, 2);
     assert_eq!(gw.call_count(), before, "a completed home costs nothing to re-run");
+}
+
+// ---------------------------------------------------------------------------
+// Review-hardening regressions. Each of these covers a defect found in review;
+// they exist so the specific failure cannot come back silently.
+// ---------------------------------------------------------------------------
+
+/// An unplanned shcode in the batch is refused BEFORE the durable marker is
+/// written. Erroring after the marker save would leave a previously-clean home
+/// locked out of range/accumulate/rebase for a run that never fetched anything.
+#[tokio::test]
+async fn an_unplanned_batch_member_is_refused_without_marking_the_home() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let manifest = write_manifest(dir.path(), default_symbols());
+    let plan = plan_over(&manifest);
+    let server = MockServer::start().await;
+    let gw = Gateway::new(Behavior::Truncating, full_dates());
+    let sdk = sdk_over(&server, Arc::clone(&gw)).await;
+
+    let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+    let err = ing
+        .run_backfill(&plan, &["999999".to_string()], ymd(2026, 7, 1))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not a planned manifest member"), "{err}");
+    assert_eq!(gw.call_count(), 0);
+    assert!(
+        !checkpoint_at(&catalog).backfill_incomplete(),
+        "a refused batch must not leave the home marked"
+    );
+}
+
+/// A session shortfall is loud but NON-blocking: a halted symbol legitimately
+/// serves fewer bars than the calendar has sessions, and gating GO on that
+/// would make the rung uncloseable — on a 352-member decade some symbol has
+/// always halted somewhere.
+#[tokio::test]
+async fn a_mid_range_halt_is_observed_loudly_but_still_reads_go() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let manifest = write_manifest(dir.path(), default_symbols());
+    let plan = plan_over(&manifest);
+    // A halt in the middle of the pre-floor symbol's history: the front, the
+    // tail, and every window boundary are intact, but ~10 sessions have no bar.
+    let mut halted: Vec<String> = dates(floor(), anchor());
+    let halt_start = halted.len() / 2;
+    let removed: Vec<String> = halted.drain(halt_start..halt_start + 10).collect();
+    assert_eq!(removed.len(), 10);
+    let server = MockServer::start().await;
+    let sdk = sdk_over(
+        &server,
+        Gateway::new(
+            Behavior::Truncating,
+            vec![
+                (PRE_FLOOR, halted),
+                (LISTED, dates(listed_first_served(), anchor())),
+            ],
+        ),
+    )
+    .await;
+    let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+    ing.run_backfill(&plan, &plan.shcodes(), ymd(2026, 7, 1)).await.unwrap();
+    write_instrument_defs(&catalog, &plan.shcodes()).await;
+
+    let report = report_over(&catalog, &plan).await;
+    let pre = report.symbols.iter().find(|s| s.shcode == PRE_FLOOR).unwrap();
+    assert_eq!(pre.missing_sessions, 10, "the halt is measured exactly");
+    assert!(
+        pre.observations.iter().any(|o| o.contains("session shortfall")),
+        "the halt is reported loud: {:?}",
+        pre.observations
+    );
+    assert!(pre.anomalies.is_empty(), "but it does not block: {:?}", pre.anomalies);
+    assert!(report.go, "blocking anomalies: {:?}", report.all_anomalies());
+    assert!(!report.all_observations().is_empty(), "and it is never silently dropped");
+}
+
+/// The shortfall count is an exact SET difference, not a count comparison: a
+/// bar stored on a non-session date must not offset a genuinely missing
+/// session, or two real holes cancel into a clean-looking total.
+#[tokio::test]
+async fn an_off_calendar_bar_cannot_offset_a_missing_session() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let manifest = write_manifest(dir.path(), default_symbols());
+    let plan = plan_over(&manifest);
+    // The fixture calendar makes EVERY civil date in range a session, so an
+    // off-calendar bar has to come from beyond the anchor.
+    let mut served: Vec<String> = dates(floor(), anchor());
+    served.remove(served.len() / 2); // one genuinely missing session
+    served.push(
+        anchor()
+            .succ_opt()
+            .unwrap()
+            .format("%Y%m%d")
+            .to_string(),
+    ); // one bar the window trim will drop
+    let server = MockServer::start().await;
+    let sdk = sdk_over(
+        &server,
+        Gateway::new(
+            Behavior::Truncating,
+            vec![
+                (PRE_FLOOR, served),
+                (LISTED, dates(listed_first_served(), anchor())),
+            ],
+        ),
+    )
+    .await;
+    let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+    ing.run_backfill(&plan, &plan.shcodes(), ymd(2026, 7, 1)).await.unwrap();
+    write_instrument_defs(&catalog, &plan.shcodes()).await;
+
+    let report = report_over(&catalog, &plan).await;
+    let pre = report.symbols.iter().find(|s| s.shcode == PRE_FLOOR).unwrap();
+    assert_eq!(pre.missing_sessions, 1, "the hole is counted despite the extra row");
 }

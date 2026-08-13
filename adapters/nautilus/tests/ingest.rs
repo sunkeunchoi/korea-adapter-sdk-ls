@@ -1116,7 +1116,16 @@ mod basis_shift_heal {
         let cp = checkpoint_at(&catalog);
         assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "an empty re-pull must not complete the heal");
         assert!(cp.rebase_events().is_empty());
-        assert!(cp.watermark(SAMSUNG, "1-DAY").is_none(), "no watermark pinned over the wiped store");
+        // The re-pull never completed, so nothing was destroyed: the stored
+        // series and its watermark both survive, consistent with each other.
+        // (Before the wipe was deferred, this asserted the weaker property that
+        // no watermark was left pinned over an already-emptied store.)
+        assert_eq!(
+            stored_closes(&catalog).await,
+            vec![60000, 61800, 62000],
+            "an incomplete heal leaves the stored series intact"
+        );
+        assert_eq!(cp.watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 5)));
         assert_eq!(report.gaps.len(), 1, "the incomplete heal is reported");
 
         // The server recovers → the next run re-pulls and completes.
@@ -1360,12 +1369,20 @@ mod basis_shift_heal {
         LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
     }
 
-    /// Covers AE3 (heal half) / R7: a heal re-pull whose append overlaps stored
-    /// coverage records an `AppendRefusal` and lets the run continue — the clean
-    /// sibling still ingests, the marked symbol stays marked, and its watermark is
-    /// not advanced (so the next run re-heals). No propagated fatal error.
+    /// P3/R10 follow-up: pollution written into the series WHILE the re-pull is
+    /// in flight is cleared by the wipe and the heal completes cleanly.
+    ///
+    /// This test used to assert the opposite — that such an overlap survived
+    /// the wipe and surfaced as a per-triple `AppendRefusal`. That was a
+    /// property of wiping BEFORE the multi-window fetch: everything the gateway
+    /// wrote during the re-pull landed after the delete. Deferring the wipe to
+    /// immediately before the append closes that window entirely; there is no
+    /// longer a gateway call between the delete and the write. `HealOutcome::
+    /// AppendRefused` is kept as a defensive net for an overlap no fixture can
+    /// now stage (a delete that silently fails to clear), so this asserts the
+    /// stronger post-fix behavior instead.
     #[tokio::test]
-    async fn heal_append_overlap_is_recorded_and_run_continues() {
+    async fn heal_wipe_clears_pollution_written_during_the_repull() {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
@@ -1398,14 +1415,32 @@ mod basis_shift_heal {
             .await
             .unwrap();
 
-        assert_eq!(report.append_refusals.len(), 1, "the heal overlap is recorded, not fatal");
-        assert_eq!(report.append_refusals[0].instrument, SAMSUNG);
-        assert_eq!(report.triples_ingested, 1, "the clean sibling still ingests");
+        assert!(
+            report.append_refusals.is_empty(),
+            "the wipe now runs after the fetch, so in-flight pollution cannot survive it: {:?}",
+            report.append_refusals
+        );
         assert!(report.heal_refusals.is_empty(), "not a wipe-precondition refusal");
+        // Scoped to samsung: the catalog also holds the clean sibling's bars.
+        let bt = BarKind::Daily.bar_type(samsung).unwrap();
+        let mut healed = nautilus_ls::ingest::read_bars_scoped(&catalog, bt, None, None)
+            .await
+            .unwrap();
+        healed.sort_by_key(|b| b.ts_event.as_u64());
+        let closes: Vec<i64> = healed.iter().map(|b| b.close.to_string().parse().unwrap()).collect();
+        assert_eq!(
+            closes,
+            vec![30000, 30900, 31000, 31500],
+            "the healed series is on ONE basis, with the injected rows gone"
+        );
 
         let cp = checkpoint_at(&catalog);
-        assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "the marked symbol stays marked → next run re-heals");
-        assert!(cp.watermark(SAMSUNG, "1-DAY").is_none(), "the refused heal did not advance the watermark");
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "the heal completed");
+        assert_eq!(
+            cp.watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 8)),
+            "a COMPLETED heal advances the watermark to the heal endpoint"
+        );
         assert!(cp.watermark("000660.XKRX", "1-DAY").is_some(), "the clean sibling advanced");
     }
 }
@@ -3672,6 +3707,12 @@ mod windowed_heal {
         /// Serve normally, but fail closed on the Nth t8410 call (a mid-heal
         /// gateway failure).
         FailOnCall(usize),
+        /// Serve normally except on the Nth call, which comes back cleanly
+        /// EMPTY — the transient empty page the gateway really does serve.
+        EmptyOnCall(usize),
+        /// Serve the first window, then come back empty forever: a persistent
+        /// hole in history the series demonstrably had.
+        EmptyAfterFirstWindow,
     }
 
     struct Gateway {
@@ -3707,7 +3748,10 @@ mod windowed_heal {
                         }));
                     }
                 }
-                let mut in_range: Vec<&String> = if gw.behavior == Behavior::AlwaysEmpty {
+                let blank = gw.behavior == Behavior::AlwaysEmpty
+                    || matches!(gw.behavior, Behavior::EmptyOnCall(at) if at == n)
+                    || (gw.behavior == Behavior::EmptyAfterFirstWindow && n > 1);
+                let mut in_range: Vec<&String> = if blank {
                     Vec::new()
                 } else {
                     gw.dates.iter().filter(|d| **d >= s && **d <= e).collect()
@@ -3737,6 +3781,15 @@ mod windowed_heal {
             .mount(server)
             .await;
         LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+    }
+
+    fn gateway(behavior: Behavior, dates: Vec<String>) -> Arc<Gateway> {
+        Arc::new(Gateway {
+            dates,
+            behavior,
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
+        })
     }
 
     /// Every civil date in `[from, through]` as `YYYYMMDD` (the all-sessions
@@ -3956,5 +4009,112 @@ mod windowed_heal {
             "an all-empty re-pull on a previously non-empty series never completes"
         );
         assert!(cp.rebase_events().is_empty());
+    }
+
+    // -- review-hardening regressions -------------------------------------
+
+
+    /// A TRANSIENT empty window is absorbed by the bounded re-fetch, exactly as
+    /// the backfill mode absorbs one. Without the retry, one transient empty
+    /// page during a destructive heal became a permanent hole: the heal
+    /// completed and set the watermark past it, and every later accumulate run
+    /// skips below its watermark, so the window was never re-fetched.
+    #[tokio::test]
+    async fn a_transient_empty_window_is_retried_and_the_heal_still_completes() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+
+        let server = MockServer::start().await;
+        // Call 2 is the second window's first page — empty once, then healthy.
+        let gw = gateway(Behavior::EmptyOnCall(2), all.clone());
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        assert_eq!(report.bars_written, all.len(), "the retry recovered the whole series");
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "a transient empty is not a failure");
+        assert_eq!(stored_dates(&catalog).await.len(), all.len());
+    }
+
+    /// A window that stays empty through the bounded re-fetch AFTER the series
+    /// has started serving is a hole in history the series demonstrably had.
+    /// The heal records it and REFUSES to complete — completing would pin the
+    /// watermark past unverified emptiness, and no later run would re-fetch it.
+    #[tokio::test]
+    async fn a_persistent_interior_empty_window_refuses_to_complete() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+
+        let server = MockServer::start().await;
+        // Window 1 serves; window 2 is empty on every attempt.
+        let gw = gateway(Behavior::EmptyAfterFirstWindow, all.clone());
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog)).with_empty_retry_max(2);
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+        assert!(
+            report.gaps.iter().any(|g| g.instrument == SAMSUNG),
+            "the incomplete heal is surfaced in the run report, never silent: {:?}",
+            report.gaps
+        );
+
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(
+            cp.is_shifted(SAMSUNG, "1-DAY"),
+            "the heal must not complete over a hole in served history"
+        );
+        assert!(cp.rebase_events().is_empty());
+        assert_eq!(
+            stored_dates(&catalog).await.len(),
+            all.len(),
+            "and the stored series survives — nothing was destroyed for a re-pull that never completed"
+        );
+    }
+
+    /// Nothing is destroyed until the re-pull is WHOLE. A window failure part
+    /// way through leaves the STORED SERIES INTACT — the windowed re-pull spans
+    /// many more requests than the single wide one it replaced, so wiping first
+    /// would multiply the window in which a failure leaves the series empty.
+    #[tokio::test]
+    async fn a_failed_window_leaves_the_stored_series_intact() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let (floor, through) = deep_range();
+        let all = dates(floor, through);
+
+        let server = MockServer::start().await;
+        let gw = gateway(Behavior::FailOnCall(2), all.clone());
+        let sdk = sdk_over_gateway(&server, Arc::clone(&gw)).await;
+        seed_shifted(&catalog, &all, through).await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], through, floor, all_sessions_gate())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            stored_dates(&catalog).await.len(),
+            all.len(),
+            "a mid-heal failure must not leave the operator with an emptied series"
+        );
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+            .unwrap();
+        assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "the mark survives so the next run re-heals");
     }
 }

@@ -42,6 +42,7 @@ use chrono::NaiveDate;
 use ls_core::LsError;
 use nautilus_core::UnixNanos;
 use nautilus_model::data::{Bar, BarType};
+use nautilus_model::instruments::Instrument;
 use nautilus_ls_calendar::AsOfView;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -650,8 +651,19 @@ pub struct SymbolVerdict {
     /// Distinct stored sessions (duplicate rows collapse — a polluted catalog
     /// must not read as complete).
     pub stored_sessions: usize,
-    /// This symbol's anomalies; empty means clean.
+    /// Proven Trading Sessions in `[expected_front, anchor]` with no stored bar
+    /// — the exact set difference, not a count comparison. A bar stored on a
+    /// non-session date must not offset a genuinely missing session.
+    pub missing_sessions: usize,
+    /// **GO-blocking** anomalies: the structural ones that mean the pull did
+    /// not finish (no bars, front truncation, tail short of the anchor,
+    /// watermark short of the anchor, a recorded degradation).
     pub anomalies: Vec<String>,
+    /// Loud but **non-blocking** observations. A halted symbol legitimately
+    /// serves fewer bars than the calendar has sessions, so a session shortfall
+    /// is reported at full volume without making the rung uncloseable — on a
+    /// 352-symbol decade some symbol has always halted somewhere.
+    pub observations: Vec<String>,
 }
 
 /// The rung's GO/NO-GO evidence record (R15).
@@ -667,19 +679,35 @@ pub struct BackfillReport {
     pub provenance: ReportProvenance,
     /// Per-symbol verdicts, in manifest order.
     pub symbols: Vec<SymbolVerdict>,
-    /// Run-level anomalies (excluded members, the marker, degradations).
+    /// Run-level **GO-blocking** anomalies (missing instrument definitions, the
+    /// standing incomplete-backfill marker, excluded members).
     pub anomalies: Vec<String>,
-    /// `true` only when the report found nothing to report.
+    /// Run-level loud but non-blocking observations.
+    pub observations: Vec<String>,
+    /// `true` when no GO-blocking anomaly was found. Observations are reported
+    /// at full volume either way — they are never silently dropped, and they
+    /// never make the verdict unreachable.
     pub go: bool,
 }
 
 impl BackfillReport {
-    /// Every anomaly across the report, run-level first.
+    /// Every GO-blocking anomaly across the report, run-level first.
     pub fn all_anomalies(&self) -> Vec<String> {
         let mut out = self.anomalies.clone();
         for s in &self.symbols {
             for a in &s.anomalies {
                 out.push(format!("{}: {a}", s.shcode));
+            }
+        }
+        out
+    }
+
+    /// Every non-blocking observation across the report, run-level first.
+    pub fn all_observations(&self) -> Vec<String> {
+        let mut out = self.observations.clone();
+        for s in &self.symbols {
+            for o in &s.observations {
+                out.push(format!("{}: {o}", s.shcode));
             }
         }
         out
@@ -708,6 +736,15 @@ pub async fn build_report(
     generated_at: String,
 ) -> AdapterResult<BackfillReport> {
     let label = BarKind::Daily.label();
+    // R11: instrument definitions are checked per MANIFEST MEMBER, not just
+    // "the catalog has some". The lab resolves each symbol individually, so one
+    // member missing from the bootstrap backtests empty just as silently as an
+    // empty catalog does.
+    let defined: std::collections::HashSet<String> = read_all_instruments(catalog_path)
+        .await?
+        .iter()
+        .map(|i| i.id().to_string())
+        .collect();
     let mut symbols = Vec::with_capacity(plan.symbols.len());
     for sp in &plan.symbols {
         let id = instrument_id_for(&sp.shcode);
@@ -725,6 +762,14 @@ pub async fn build_report(
         let tail = stored.iter().next_back().copied();
         let watermark = checkpoint.watermark(&instrument, &label);
         let mut anomalies = Vec::new();
+        let mut observations = Vec::new();
+        if !defined.contains(&instrument) {
+            anomalies.push(
+                "no instrument definition in the catalog — the lab would resolve nothing for this \
+                 symbol and backtest it as empty"
+                    .to_string(),
+            );
+        }
         match front {
             None => anomalies.push("no stored bars".to_string()),
             Some(f) if f > sp.start => anomalies.push(format!(
@@ -752,13 +797,20 @@ pub async fn build_report(
                 None => "no watermark — the symbol was never pulled".to_string(),
             });
         }
-        if stored.len() < sp.expected_sessions {
-            anomalies.push(format!(
-                "session shortfall: {} of {} proven sessions in [{}, {}]",
-                stored.len(),
-                sp.expected_sessions,
-                sp.start,
-                plan.anchor
+        // The exact set difference, never a count comparison: a bar stored on a
+        // non-session date would otherwise offset a genuinely missing session
+        // and the two holes would cancel out into a clean-looking total.
+        let missing_sessions = plan
+            .range
+            .sessions
+            .iter()
+            .filter(|d| **d >= sp.start && !stored.contains(*d))
+            .count();
+        if missing_sessions > 0 {
+            observations.push(format!(
+                "session shortfall: {} of {} proven sessions in [{}, {}] have no bar (a halt \
+                 legitimately produces these)",
+                missing_sessions, sp.expected_sessions, sp.start, plan.anchor
             ));
         }
         if let Some(reason) = checkpoint.backfill_degraded(&instrument, &label) {
@@ -772,17 +824,21 @@ pub async fn build_report(
             watermark,
             expected_sessions: sp.expected_sessions,
             stored_sessions: stored.len(),
+            missing_sessions,
             anomalies,
+            observations,
         });
     }
 
     let mut anomalies = Vec::new();
+    let observations = Vec::new();
     // R11: a home with bars but no instrument definitions makes every lab
     // backtest read EMPTY — silently, with no error anywhere. The bootstrap
     // writes them on the first invocation; this is the check that the bootstrap
     // actually happened, and it belongs in the completeness proof rather than
-    // being discovered by a backtest that returns nothing.
-    if read_all_instruments(catalog_path).await?.is_empty() {
+    // being discovered by a backtest that returns nothing. (Per-symbol coverage
+    // is checked above; this names the bootstrap-never-ran case outright.)
+    if defined.is_empty() {
         anomalies.push(
             "the catalog holds no instrument definitions — a lab backtest would read empty with \
              no error. Re-run one invocation WITHOUT LS_INGEST_SKIP_UNIVERSE_LOAD to bootstrap them."
@@ -819,6 +875,7 @@ pub async fn build_report(
         },
         symbols,
         anomalies,
+        observations,
         go,
     })
 }
