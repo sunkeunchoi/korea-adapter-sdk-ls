@@ -81,6 +81,86 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — preferred-share exclusion by issue-sequence digit (P5): the rule moves from the pit walk INTO `capture.rs`, the overclaiming provenance sentence is retired, and the drops are now counted — offline, zero gateway calls (2026-08-14) — queue `preferred-share-issue-seq-filter`
+
+- **Verdict: EXECUTED, offline.** P5 was never a design problem: the rule already
+  existed, tested and live-proven, in `pit_walk.rs`'s `freeze_walk_set` (P4). This turn
+  ports it into `capture.rs`'s `t8430` master loop — the point of *construction* — so the
+  artifact is clean at the source rather than only in the sets derived from it. **Zero
+  gateway calls**; the whole turn is a filter change plus offline verification.
+- **The figure that motivated the rung, re-verified at this HEAD (not quoted from the
+  2026-08-11 queue note): exactly 90 of 2,689** records in
+  `lab/config/universe-metadata-20260723.json` carry a 6th digit ≠ `0`, and 75 of the 90
+  are `tradable: true`.
+- **The distribution is the interesting part, and it sharpens what the old provenance
+  string got wrong.** 87 of the 90 are `below_board`; **three are in the *inclusion*
+  strata** — `005385` (kospi/mid), `005387` (kospi/top), `005935` (kospi/top). The
+  retired sentence located the pollution "in the exclusion stratum", which understated
+  it: the three that matter most were in Top/Mid, and `005935` 삼성전자우 is exactly the
+  code that traded four times in head v35.
+- **A clean cross-check fell out of that.** Those three codes are *precisely*
+  `pit-universe-20260812.json`'s `provenance.dropped_preferred` — `["005385", "005387",
+  "005935"]`. P4's walk screens Top+Mid only, so it saw exactly three of the 90 and
+  dropped all three; the other 87 were below-board and never entered its screen. The two
+  modules agree symbol-for-symbol on the population they share, which is the strongest
+  available evidence that the ported rule is the same rule.
+- **Counted, not silently dropped.** The master loop now classifies through a pure
+  `classify_master_row` seam returning a named `MasterRowVerdict`, and the codes the
+  issue-sequence rule removes land in the new `provenance.dropped_preferred` (sorted;
+  `#[serde(default, skip_serializing_if)]`, mirroring `paper_incompatible`, so pre-P5
+  artifacts still deserialize and empty vectors leave content hashes byte-stable). The
+  alternative — a bare `continue` — would have replaced one unverifiable provenance claim
+  with another; P4's precedent is that a filter should be evidenced by what it excluded.
+- **Precedence inside the filter is load-bearing twice.** The 6-digit numeric guard runs
+  first because it is what makes indexing the 6th byte safe, and the `etfgubun` check
+  precedes the issue-sequence rule so an ETF is reported as an ETF instead of inflating
+  `dropped_preferred`. Both are asserted by
+  `master_row_filter_precedence_is_stable`, which also pins the multi-byte and
+  letter-suffixed (`02826K` / `33626L` 신형우선주) inputs against a panic on the byte index.
+- **The recorded filter string was rewritten, and that was the easiest thing to forget.**
+  `INSTRUMENT_TYPE_FILTER` previously declared numeric-coded preferred shares an
+  "accepted, documented limitation" — a sentence that becomes *false* the moment the code
+  filters them, leaving the artifact attesting a filter it no longer applied. It now
+  declares the applied rule and points at `dropped_preferred`; the surviving limitation is
+  narrowed to **SPACs and REITs**, which `t8430` genuinely exposes no flag for. A test
+  (`recorded_filter_declares_the_applied_preferred_rule`) fails if the retired sentence
+  ever returns. The `MetadataProvenance::instrument_type_filter` doc comment carried the
+  same claim and was corrected with it.
+- **Deliberately NOT done: the committed artifact was not re-captured.** A re-capture
+  would move `universe-metadata-20260723.json`'s content hash, which
+  `pit-universe-20260812.json` names as its `source_artifact` and which P3's
+  `universe-metadata-pin.json` (`6a63446c…`) pins — breaking the KTD2 handshake — and it
+  would cost live gateway calls P5 does not have. Provenance is **per-artifact**: the
+  2026-07-23 capture's recorded string accurately describes the filter that was applied
+  *to it*, so rewriting it would be falsifying a historical record, not fixing one. The
+  90 therefore remain in that file by design.
+- **What that leaves open, stated plainly.** Because the artifact is unchanged, the paths
+  that read it — `ls-ingest`'s `stratified_selection` and the lab's metadata mount — would
+  still see the 90 if pointed at it. The next lineage is nonetheless clean on this axis,
+  but for a *different* reason than P5: P4's `freeze_walk_set` already filtered at the pit
+  level, and P3's catalog is scoped to that frozen 352-member set (0 members with a 6th
+  digit ≠ 0, verified again this turn). P5's contribution is that the **next** capture is
+  clean at construction, so that protection no longer rests on a single downstream module.
+- **Scope note for the record:** R2 in plan `2026-07-10-003` still reads "residual
+  non-common-stock pollution … is an accepted, documented limitation". That plan is a
+  dated design record and was left untouched; P5 supersedes the preferred-share half of
+  that clause, and the SPAC/REIT half stands.
+- **Gate:** `adapter-check` **1,535 passed / 0 failed across 75 binaries, MAKE_EXIT=0**;
+  `lane-check`, `docs-check`, `todo-check` all green. Root `cargo test` and `script-check`
+  are correctly out of scope — the diff touches nothing under `crates/`, nothing under
+  `adapters/nautilus/scripts/`, and not `calendar-fetch-inputs.rs`.
+- **The gate earned its keep — it caught a real fixture collision the unit tests could
+  not.** `tests/reference_capture.rs`'s wiremock master used a synthetic below-board
+  KOSDAQ code `300001`, whose 6th digit is `1`; the new rule correctly dropped it and the
+  join assertion failed. The code was incidental to its fixture role, so it moved to
+  `300000` and the master gained a *real* `005935` row — turning the regression into the
+  one place the **live `capture()` path** (not just the pure classifier) is asserted to
+  populate `dropped_preferred`. Worth noting for the next agent: that integration test
+  lives at `adapters/nautilus/tests/`, not beside the module, and a `src`-only search for
+  capture tests misses it.
+- **Ladder position:** P5 closes. **P6** (the pre-registration artifact) is next and is the
+  rung that actually opens the successor lineage; P7 remains unsized.
+
 ## Turn — daily catalog 2016-floor pull (P3 turn 2, the attended live backfill): 352/352 symbols at the anchor, 741,580 bars, ZERO anomalies — report GO, catalog status GO, pin written (2026-08-13) — plan 2026-08-13-001
 
 - **Verdict: EXECUTED, CLEAN.** The fresh daily home
