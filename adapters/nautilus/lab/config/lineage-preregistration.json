@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "frozen_utc": "2026-08-15T00:00:00+00:00",
+  "lineage": {
+    "name": "daily-resolution-v1",
+    "hypothesis_class": "Daily-bar cross-sectional ranking with a multi-session hold: each session, take the top target_m names from the pit universe by a ranking signal frozen on the specification window; hold each position for holding_period_sessions; long only; exit on the frozen stop rule or at the end of the hold.",
+    "predecessor": "ORB (opening-range breakout). CLOSED 2026-08-10 under the pre-registered Lineage-closure rule, declared 2026-08-11 (adapters/nautilus/lab/TURN-LOG.md, 'Open lineage (STANDING)'). Supply was the wall: LS serves minute bars on a rolling ~1-year window, so ~237 sessions were reachable against 3,499 required."
+  },
+  "power": {
+    "power": 0.8,
+    "confidence": 0.95,
+    "basis": "One-sided power 0.80 (nautilus_ls_lab::stats::power_z) against a two-sided 0.95 bar. The bar itself is struck with pit_walk::Z_95 = 1.96, a rounding of the exact two-sided critical value 1.959964; the 3.6e-5 difference is immaterial to every figure frozen here and the guard bounds it rather than claiming equality."
+  },
+  "supply": {
+    "s_max": 2460,
+    "s_max_origin_plan": {
+      "sessions": 2457,
+      "to": "2026-08-07",
+      "delta_note": "A date-range mismatch, not a disagreement. The origin plan (docs/plans/2026-08-10-001) counted proven sessions from the 2016-08-01 floor through 2026-08-07; the P4 pit walk counted the same floor through its own 2026-08-12 anchor. The three-session delta is exactly the proven sessions in 2026-08-08 ..= 2026-08-12, and it lands entirely inside the reserved tail — the specification and holdout counts are identical under both readings."
+    },
+    "universe_listing_depth": 0.856407058388766,
+    "universe_listing_depth_basis": "The P4 walk's derived mean_participation: mean per-symbol LISTING DEPTH over the ceiling range (the fraction of the 2,460 sessions on which a symbol was listed and served rows). reference::pit_walk documents it as an UPPER BOUND on tradable participation, and it is survivorship-biased upward because the walk enumerated the universe as of the 2026-08-12 anchor. It is NOT the clustering table's p — see hypothesis.target_session_participation.",
+    "listed_count_min": 244,
+    "split": {
+      "specification": {
+        "sessions": 837,
+        "from": "2016-08-01",
+        "to": "2019-12-31",
+        "first_session": "2016-08-01",
+        "last_session": "2019-12-30"
+      },
+      "holdout": {
+        "sessions": 1566,
+        "from": "2020-01-02",
+        "to": "2026-05-20",
+        "first_session": "2020-01-02",
+        "last_session": "2026-05-20"
+      },
+      "reserved": {
+        "sessions": 57,
+        "from": "2026-05-21",
+        "to": "2026-08-12",
+        "first_session": "2026-05-21",
+        "last_session": "2026-08-12"
+      }
+    },
+    "provenance": {
+      "calendar_artifact_id": "24ca3145084c27f9ac2ae39b000a67b7552ef0bb9c6f34b0042109b6cf8105ef",
+      "calendar_id": "b4382ad3a7c9ec0034a9328c0d29336f9219002ba01305ee7860f3872d5e4ac0",
+      "reproduction": "CITATION-reproducible, not test-reproducible. The KRX calendar snapshot at adapters/nautilus/state/krx.calendar.json is machine-local and gitignored, so CI checks out a tree without it and no committed test can recount these sessions. To reproduce: restore a snapshot carrying the artifact_id and calendar_id above, then run the operator harness `cargo test -p nautilus-ls-lab --test lineage_prereg_derive -- --ignored --nocapture` with LS_CALENDAR_SNAPSHOT set. Every day in 2016-08-01 ..= 2026-08-12 was proven open or proven closed in that snapshot — zero Unknown days — so these are counts, not lower bounds. The committed derivation guard asserts the split's internal relationships (sum, disjointness, bar reproduction) against synthetic facts and the committed pit-universe artifact instead."
+    }
+  },
+  "search": {
+    "n_max": 1,
+    "sigma_trials": null,
+    "sigma_trials_trigger": "Null by design, not by omission. At N_max = 1 the expected maximum of a single draw from a zero-mean null is exactly zero (stats::expected_max_null(1, sigma) = 0.0 for every sigma), so cross-trial dispersion never enters a single judgment's arithmetic. sigma_trials would become load-bearing the moment N_max rose above 1 — that is, if this lineage were ever re-registered to permit more than one look at the same holdout. Raising N_max requires re-deriving the bar, the haircut, the effect size, the holding period, and the upgrade-segment floor, so it is a new pre-registration, not an amendment.",
+    "lineage_multiplicity": {
+      "judgments_max": 3,
+      "lifetime_correction": "None — the finite cap IS the control, and this records that choice rather than leaving a reader to infer that a null sigma_trials means no multiplicity exists. The schedule permits at most three one-sided judgments of this lineage: the turn-one holdout judgment plus upgrade_schedule.max_turns further turns. The lineage-level false-pass rate is therefore roughly three times the per-judgment rate. No lifetime correction is applied."
+    }
+  },
+  "hypothesis": {
+    "class": "daily cross-sectional ranking, multi-session hold",
+    "effect_size_ratio_to_orb_gross": 3.880367438664134,
+    "effect_size_ratio_origin_plan_rounded": 3.8803,
+    "effect_size_net_ror": 0.04854555488459612,
+    "effect_size_gross_r": 0.11028780334171201,
+    "orb_measured_gross_r": 0.028422,
+    "orb_measured_net_r": -0.033320248457115884,
+    "orb_measured_cost_r": 0.061742248457115886,
+    "holding_period_sessions": 16,
+    "directionality": "long_only",
+    "target_m": 8,
+    "target_session_participation": 1.0,
+    "steady_state_concurrency": 128,
+    "selection_breadth": 0.5245901639344263,
+    "stop_rule": "1.5 x ATR(1 session), per position",
+    "stop_implied_pct_of_price": 0.03725163980054117,
+    "derivation": {
+      "directionality": {
+        "input": "SDK capability surface",
+        "basis": "chosen. Long/short would halve the sell-tax drag per unit of gross exposure, but adds borrow availability, which the LS SDK cannot answer. Long-only keeps the external data surface at zero."
+      },
+      "effect_size_gross_r": {
+        "input": "effect_size_net_ror + orb_measured_cost_r",
+        "basis": "derived. The net target plus the round-trip cost the strategy must earn back."
+      },
+      "effect_size_net_ror": {
+        "input": "verdict.hurdle + stats::power_z(0.80) x pit_walk::SE_AT_ROOT x sqrt(SE_ROOT_SESSIONS / holdout.sessions)",
+        "basis": "derived. The net RoR that clears the HAIRCUT-INCLUSIVE hurdle at the registered power over the frozen holdout. Registering against the bare bar instead would put realized power near 0.64 — a true effect would be closed on measurement about a third of the time."
+      },
+      "effect_size_ratio_to_orb_gross": {
+        "input": "effect_size_gross_r / orb_measured_gross_r",
+        "basis": "derived. The origin plan quotes 3.8803, computed with a rounded z(0.80) = 0.8416; this artifact freezes the value at the in-repo probit's full precision. The two agree to five figures and imply the same holding period."
+      },
+      "holding_period_sessions": {
+        "input": "ceil(effect_size_ratio_to_orb_gross^2)",
+        "basis": "derived under sqrt-time scaling: an edge that must be 3.88x larger per round trip needs 3.88^2 = 15.06 sessions of accrual, so the floor is 16."
+      },
+      "orb_measured_cost_r": {
+        "input": "orb_measured_gross_r - orb_measured_net_r",
+        "basis": "measured. ORB v35's realized round-trip cost in R over 24 KST sessions and 111 closed trades."
+      },
+      "orb_measured_gross_r": {
+        "input": "adapters/nautilus/lab/TURN-LOG.md, v35 per-trade gross r mean",
+        "basis": "measured. Cited, not machine-read: the gross figure lives in the committed turn log, not in a machine-readable artifact."
+      },
+      "orb_measured_net_r": {
+        "input": "adapters/nautilus/lab/config/sample-margin.json, provenance.net_r_mean",
+        "basis": "measured. Read from the committed artifact at full precision."
+      },
+      "selection_breadth": {
+        "input": "steady_state_concurrency / supply.listed_count_min",
+        "basis": "derived. 128 concurrent positions against the pit universe's FLOOR listed count of 244 — the tightest supply moment in the ceiling range, so this is the widest the breadth ever gets."
+      },
+      "steady_state_concurrency": {
+        "input": "target_m x holding_period_sessions",
+        "basis": "derived. A 16-session hold entered 8 times a session reaches 128 open positions in steady state."
+      },
+      "stop_implied_pct_of_price": {
+        "input": "(transaction-costs.json sell_tax_rate + 2 x commission_rate_per_side) / orb_measured_cost_r",
+        "basis": "derived from measured inputs: 23 bps round trip divided by ORB's measured cost in R inverts to the average stop width ORB actually ran, 3.73% of price."
+      },
+      "stop_rule": {
+        "input": "stop_implied_pct_of_price",
+        "basis": "INFERRED. The 1.5x daily-ATR multiple is chosen because it is approximately the width that reproduces stop_implied_pct_of_price on this universe; the equivalence is a judgement about typical daily ATR as a fraction of price, NOT a measurement on the pit universe. It is frozen because cost_R = 0.0023 / stop_pct, so changing the multiple changes the required gross edge and therefore every figure above."
+      },
+      "target_m": {
+        "input": "the P4 walk's verified concurrency threshold rows",
+        "basis": "chosen, bounded by measurement. The walk's derived block carries verified threshold rows only at concurrency 70 and 140. At m = 10 steady-state concurrency would be 160, which is supply the walk never measured; at m = 8 it is 128, under the verified 140 row. The clustering requirement at m = 8 is bracketed by two computed rows that both clear the 2,460 ceiling, so no new table row is invented."
+      },
+      "target_session_participation": {
+        "input": "the clustering table's p",
+        "basis": "structural. A take-top-N-every-session ranking trades on every session by construction, so p = 1.0. This is a DIFFERENT quantity from supply.universe_listing_depth, which is per-symbol listing depth and a survivorship upper bound; the two are recorded as separate fields precisely so they cannot be conflated."
+      }
+    }
+  },
+  "verdict": {
+    "statistic": "net RoR (sum realized / sum risk_capital), session-block bootstrap",
+    "bootstrap_block_length_sessions": 16,
+    "bar": 0.028906511661588693,
+    "haircut_fraction": 0.25,
+    "haircut": 0.007226627915397173,
+    "hurdle": 0.036133139576985863,
+    "predicate": "observed_net_ror - haircut > bar",
+    "haircut_basis": "A PRE-REGISTERED CONSERVATIVE CONSTANT, not an estimate. It covers survivorship and eligibility bias in the pit universe, which was enumerated as of the 2026-08-12 anchor and therefore cannot see names that delisted inside the ceiling range. The magnitude cannot be estimated without delisting data the universe structurally lacks. It is frozen as a FRACTION of the bar rather than an absolute constant so that it re-derives automatically if the bar moves, needs no external data, and can only ever be tightened: later evidence may raise this fraction, never lower it.",
+    "block_length_basis": "Tied to the hold, not to a literal. A one-session block assumes independence between blocks, but a 16-session hold spans many of them, which understates the standard error. The guard asserts bootstrap_block_length_sessions >= hypothesis.holding_period_sessions so the two cannot drift apart."
+  },
+  "upgrade_schedule": {
+    "max_turns": 2,
+    "segment_min_sessions": 1566,
+    "turns": [
+      {
+        "turn": 1,
+        "segment_sessions": 1566,
+        "bar": 0.028906511661588693,
+        "haircut": 0.007226627915397173,
+        "hurdle": 0.036133139576985863
+      },
+      {
+        "turn": 2,
+        "segment_sessions": 1566,
+        "bar": 0.028906511661588693,
+        "haircut": 0.007226627915397173,
+        "hurdle": 0.036133139576985863
+      }
+    ],
+    "segment_basis": "A segment is only real if the registered effect clears its own bar + haircut at the registered power. Solving that at the frozen effect gives 1,566 proven sessions -- identical to the turn-one holdout, because the power calculus is the same. Each upgrade turn therefore needs about 6.4 years of forward accrual at ~246 sessions a year, and the two scheduled turns are about 12.7 years. A shorter segment cannot be added: a 500-session segment carries a post-haircut hurdle of +0.0639 against a registered effect of +0.0486 and could never be passed.",
+    "exhaustion": "Exhausting the schedule is a LINEAGE-CLOSURE condition. When the last scheduled turn is spent, this lineage closes under the pre-registered Lineage-closure rule (CONCEPTS.md) and its exclusive one-lineage slot is released. There is no extension: the finite cap is the multiplicity control, so adding a turn after the fact would retroactively invalidate the false-pass rate this freeze registers."
+  },
+  "gates": {
+    "pre_turn_admissibility_recheck": "BEFORE the lineage opens, and therefore before any turn runs, re-measure this lineage's own ICC, realized trades-per-session, and realized session participation on the SPECIFICATION window, and re-evaluate the admissibility case at those measured values. The bar frozen here is a PROJECTION under ORB's clustering, not a measurement of this lineage. If the class no longer clears at its own measured clustering, the re-check REFUSES TO OPEN the lineage: it does not close it, and it does not lower the bar. This freeze does not open the lineage — the TURN-LOG standing block is edited by a later commit gated on this re-check clearing.",
+    "prospective_paper_stage": "A holdout judgment that clears is NOT a successful lineage. Labelling this lineage successful additionally requires a prospective paper stage under the live designation policy: the specified strategy runs forward on the paper lane, and its realized behaviour is compared against the registered effect before any production-ladder rung is requested. The paper lane can never accrue clean sessions toward a rung on its own; the stage is a falsification opportunity, not a qualification."
+  },
+  "holdout_judged": null,
+  "not_claimed": [
+    "005930's vendor floor is INFERRED, not measured. The walk never observed a refusal at that symbol's earliest date; the floor is inferred from the served range. The observed page cap IS measured — the walk requested 900 rows and observed a maximum of 501, and 501 is strictly below 900, which is the condition reference::pit_walk names for measured status.",
+    "The margin bar is a PROJECTION, not a measurement of this lineage. bar(N=1, S) = 1.96 x 0.087002 x sqrt(45/S) projects ORB v35's session-block bootstrap SE under ORB's clustering onto S sessions. This lineage's own ICC, trades-per-session, and participation are unmeasured; the pre-turn admissibility re-check measures them before the holdout is spent.",
+    "supply.universe_listing_depth is a survivorship UPPER bound on tradable participation, not a measurement of it, because the pit universe was enumerated as of the 2026-08-12 anchor and cannot see names that delisted inside the ceiling range.",
+    "The lineage-level multiplicity is STATED, not corrected. Up to three one-sided judgments of this lineage are permitted, so its lifetime false-pass rate is roughly three times the per-judgment rate. The finite cap is the chosen control; no lifetime correction is applied.",
+    "The split counts are CITATION-reproducible, not test-reproducible. The calendar snapshot is machine-local and gitignored; the committed suite asserts the split's relationships against synthetic facts, never the counts themselves.",
+    "The refusal mechanic is GIT-AUDITABLE, not tamper-proof. A revert can remove a ledger line and restore the ability to judge. What the mechanic buys is that a second judgment cannot happen SILENTLY — it requires an explicit, reviewable deletion. Two further boundaries of the same shape: the content-hash citation binds the BYTES READ AT LOAD TIME, so a caller that mutates the parsed values in memory before judging would record a citation that does not describe the terms it used; and the loader refuses a drifted file, but nothing stops a caller holding a legitimately-loaded artifact from lying to itself. Both sit outside the mechanic in the same way a revert does — the control is that the artifact and the ledger are both committed and reviewable.",
+    "The judgment entry point takes the observed statistic as a bare number and CANNOT VERIFY it was computed over the holdout window. The window check on the non-consuming dry run refuses the obvious mistake and makes the declared scope explicit; it does not bind a statistic to the dates that produced it. Binding it needs a typed observation carrying its own date range and catalog fingerprint, and there is no producer to type against until the daily multi-session-hold backtest path exists (P7). Until then this rests on the operator, and the recorded attempt's catalog fingerprint is the audit trail.",
+    "The committed derivation guard CANNOT RECOUNT the split. It proves the frozen counts sum to the measured ceiling, that the outer boundaries match the P4 walk's own floor and anchor, and that the reserved tail opens the day after the holdout closes — but a coordinated edit that moved an interior boundary AND its session count together would pass, because no committed test has a calendar. That is the price of the counts being citation-reproducible rather than test-reproducible; the operator harness is what recounts them.",
+    "hypothesis.stop_implied_pct_of_price is derived from ORB's measured cost, but the claim that a 1.5x daily-ATR stop reproduces that width on THIS universe is INFERRED, not measured.",
+    "Turn one is effectively this lineage's only shot within a realistic planning horizon. Each upgrade turn needs about 6.4 years of forward accrual. The schedule is finite and honest, but it is not a second chance anyone should plan around."
+  ],
+  "rederivation_trigger": "This freeze is invalidated, and every figure above must be re-derived before any turn runs, when ANY of the following holds. (1) The daily catalog the lineage trades on carries a fingerprint other than the one the turn declares — in-range content growth changes the trade set, so the bar, the effect size, and the hold are all catalog-specific. (2) The pit-universe artifact adapters/nautilus/lab/config/pit-universe-20260812.json no longer hashes to d5cbf1557f03e6377ec40b1aebeae78649859399fdb69e73697ca6eec72e137c — s_max, listed_count_min, universe_listing_depth, and the verified concurrency threshold rows all come from its derived block. (3) The calendar snapshot backing supply.provenance no longer carries artifact_id 24ca3145084c27f9ac2ae39b000a67b7552ef0bb9c6f34b0042109b6cf8105ef, and a re-count moves the specification or holdout session count. (4) The pre-turn admissibility re-check measures an ICC, trades-per-session, or session participation that moves the projected bar. (5) N_max rises above 1, which makes sigma_trials load-bearing and is a new pre-registration rather than an amendment."
+}

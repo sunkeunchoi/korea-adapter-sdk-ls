@@ -81,6 +81,114 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — successor daily lineage PRE-REGISTRATION FROZEN (P6): terms, refusal mechanic, and derivation guard land; the lineage is NOT opened — offline, zero gateway calls (2026-08-15) — plan 2026-08-14-001, queue `next-lineage-preregistration-artifact`
+
+- **Verdict: FROZEN, and deliberately NOT OPENED.** The successor daily-resolution
+  lineage's terms are now committed at
+  `adapters/nautilus/lab/config/lineage-preregistration.json`, content hash
+  **`0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`**, with the prose
+  companion at `config/LINEAGE-PREREGISTRATION.md`. The standing "Open lineage" block
+  above is **unchanged** and still reads `currently open: NONE`. **Zero gateway calls**;
+  the whole turn is artifact + loader + guard + prose.
+- **Why the freeze does not open the lineage.** The origin scoping plan
+  (`docs/plans/2026-08-10-001`) gates opening on a **pre-turn admissibility re-check**
+  that must *refuse to open* if the class no longer clears at its own measured
+  clustering — and it places that check **upstream** of the freeze. Opening here would
+  spend the exclusive one-lineage slot and perform the one-time disjointness reset before
+  the class is confirmed admissible. So the freeze and the opening are two commits, and
+  the second one is gated. **This supersedes the third bullet of the standing block
+  above**, which still says "the freeze commit updates this block to name the newly open
+  lineage" — that sentence describes the convention KTD11 overrides, and its correction
+  is part of the staged replacement text below.
+- **The frozen terms.** `S_max` **2460** proven sessions over `2016-08-01 ..= 2026-08-12`,
+  split **837 specification / 1566 holdout / 57 reserved**. `N_max = 1` on the holdout;
+  `sigma_trials` null by design (E[max of one draw] is exactly zero). Bar
+  `+0.0289065117` from `pit_walk::margin_bar_n1(1566)`; haircut **0.25 × bar**
+  (`+0.0072266279`); hurdle `+0.0361331396`; predicate
+  `observed_net_ror − haircut > bar`. Registered effect **3.8804×** ORB's measured
+  `0.028422 R` gross, implying a **16-session** hold, `m = 8`, **128** steady-state
+  concurrent positions, selection breadth `128/244 = 0.5246`, long-only, stop
+  `1.5 × ATR(1 session)`, bootstrap block 16. Upgrade schedule: **2** turns at a
+  **1566**-session segment floor, **3** lifetime judgments, no lifetime correction.
+- **The ceiling gap was a date-range mismatch, not a disagreement.** The origin plan's
+  2,457 counts `2016-08-01 ..= 2026-08-07`; the P4 walk's 2,460 counts the same floor to
+  its own `2026-08-12` anchor. The operator recount attributes the three-session delta
+  exactly to `2026-08-08 ..= 2026-08-12`, and it lands **entirely in the reserved tail** —
+  so the specification and holdout counts, the two that move the bar, are identical under
+  both readings. The Goal Capsule's stop condition did not fire.
+- **The effect size was re-derived against the haircut-inclusive hurdle, not the bare
+  bar.** The origin's `≥14` / `3.626×` were solved at 0.80 power against the bare bar;
+  the haircut raises the hurdle, so registering at those figures would put realized power
+  near 0.64 and close a true effect on measurement about a third of the time. The frozen
+  ratio is carried at the in-repo probit's full precision (`3.880367438664134`) with the
+  origin's rounded `3.8803` recorded beside it; both imply the same 16-session hold.
+- **Refusal is a claim-then-evaluate ledger append, not an operator courtesy.**
+  `judge_holdout` appends an attempt — run id, catalog fingerprint, UTC, prereg content
+  hash — to `lab/ledger/lineage-holdout-judgments.jsonl` **before** it computes a verdict;
+  a second call finds the claim and returns `AlreadyJudged` naming the recorded run and
+  instant. That ordering is what closes the hole where an operator evaluates, dislikes the
+  answer, declines to write it back, and evaluates again. A torn or partial ledger line is
+  read as a **claim**, never as absent. `holdout_judged` stays `null` in the artifact
+  forever, so its content-hash citation survives the judgment — the loader refuses to load
+  a file where it is populated, at any time. Stated plainly in the companion: this is
+  **git-auditable, not tamper-proof** — a revert can remove the line; what it buys is that
+  a second judgment cannot happen *silently*.
+- **The guard proves the numbers rather than restating them.** 40 hermetic tests
+  reproduce every frozen figure from named in-repo inputs (`pit_walk::SE_AT_ROOT` /
+  `SE_ROOT_SESSIONS` / `Z_95` / `margin_bar_n1`, `stats::power_z` / `expected_max_null`,
+  and the committed `pit-universe-20260812.json`, `sample-margin.json`,
+  `transaction-costs.json`), asserting **relationships** so two fields cannot drift apart:
+  block ≥ hold, concurrency = m × hold and inside the largest *verified* threshold row,
+  breadth = concurrency / floor listed count, segment floor is the *smallest* clearable
+  segment, and every scheduled turn's `bar + haircut` sits below the registered effect. A
+  five-way mutation check confirmed each load-bearing assertion fails when its field is
+  moved, then restored the artifact byte-identical.
+- **The split counts are citation-reproducible, not test-reproducible — and that is
+  recorded rather than hidden.** The KRX calendar snapshot is machine-local and gitignored,
+  so CI cannot recount them. The artifact carries the snapshot's `artifact_id`
+  `24ca3145…` and `calendar_id` `b4382ad3…`; the committed suite asserts the split's
+  relationships against **synthetic** calendar facts and passes on a tree with no
+  `adapters/nautilus/state/`. The recount lives in an `#[ignore]`d operator harness
+  (`tests/lineage_prereg_derive.rs`) — **pass it an absolute `LS_CALENDAR_SNAPSHOT`**, the
+  test binary's CWD is the lab crate root, not the adapter root.
+- **Turn one is effectively the only shot, and the artifact says so.** Each upgrade turn
+  needs a 1,566-session segment — about 6.4 years of forward accrual — so the two
+  scheduled turns are ~12.7 years. A 500-session segment carries a post-haircut hurdle of
+  `+0.0639` against a registered effect of `+0.0486` and could never be passed. Recorded
+  so nobody plans around an upgrade that will not arrive.
+- **Deliberately NOT done:** the lineage is not opened; the pre-turn admissibility
+  re-check is not executed (this freezes the *rule*, the re-check measures this lineage's
+  own ICC, trades-per-session, and participation on the specification window); the
+  strategy specification itself is not written; and P7's daily multi-session-hold backtest
+  path is untouched. `preregistration.json` and `PREREGISTRATION.md` are **byte-identical**
+  — confirmed by diff, not by memory.
+
+### Staged replacement text for the standing block (apply in the OPENING commit, not here)
+
+When the pre-turn admissibility re-check clears, the opening commit replaces the body of
+the "Open lineage (STANDING)" block above with the text below and retitles it
+`## Open lineage (STANDING) — currently open: daily-resolution-v1, opened <DATE>`. It is
+written out here so the opening commit is a **mechanical edit**, not a fresh judgment.
+
+```markdown
+- **Currently open: `daily-resolution-v1`** — the successor daily-resolution lineage,
+  opened <DATE> after the pre-turn admissibility re-check cleared (see the dated entry
+  for that re-check below). Its terms are frozen at
+  `config/lineage-preregistration.json`, content hash
+  `0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`, with the rationale
+  in `config/LINEAGE-PREREGISTRATION.md`. `N_max = 1`: the 1,566-session holdout
+  (`2020-01-02 ..= 2026-05-20`) admits exactly one judgment, enforced by
+  `lineage_prereg::judge_holdout` against `ledger/lineage-holdout-judgments.jsonl`.
+- **The ORB lineage remains CLOSED** (2026-08-10, declared 2026-08-11) under the
+  pre-registered Lineage-closure rule. Its closure is what freed the exclusive slot this
+  lineage now holds.
+- **A freeze does not open a lineage.** The pre-registration freeze (2026-08-15) and this
+  opening are separate commits by design: the origin scoping plan places the pre-turn
+  admissibility re-check upstream of opening, and that check must be able to REFUSE TO
+  OPEN — which it cannot do if the freeze has already spent the slot and performed the
+  one-time disjointness reset.
+```
+
 ## Turn — preferred-share exclusion by issue-sequence digit (P5): the rule moves from the pit walk INTO `capture.rs`, the overclaiming provenance sentence is retired, and the drops are now counted — offline, zero gateway calls (2026-08-14) — queue `preferred-share-issue-seq-filter`
 
 - **Verdict: EXECUTED, offline.** P5 was never a design problem: the rule already
