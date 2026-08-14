@@ -1281,6 +1281,7 @@ mod tests {
                     tier_boundary_rule: "test quantile 0.5".to_string(),
                     cap_cutoffs: cutoffs,
                     paper_incompatible: Vec::new(),
+                    dropped_preferred: Vec::new(),
                 },
                 records,
             }

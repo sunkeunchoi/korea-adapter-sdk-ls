@@ -2203,6 +2203,7 @@ mod report_tiers {
                 tier_boundary_rule: "test".to_string(),
                 cap_cutoffs: Vec::new(),
                 paper_incompatible: Vec::new(),
+                dropped_preferred: Vec::new(),
             },
             records: vec![
                 record("005930", MarketClass::Kospi, CapTier::Top),

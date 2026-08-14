@@ -1284,6 +1284,7 @@ mod tests {
                 tier_boundary_rule: "test".into(),
                 cap_cutoffs: Vec::new(),
                 paper_incompatible: Vec::new(),
+                dropped_preferred: Vec::new(),
             },
             records,
         }

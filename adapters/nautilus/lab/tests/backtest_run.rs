@@ -1594,6 +1594,7 @@ mod metadata_driven {
                     boundary_cap: Some(4_000_000.0),
                 }],
                 paper_incompatible: Vec::new(),
+                dropped_preferred: Vec::new(),
             },
             records: vec![InstrumentMetadata {
                 shcode: "005930".to_string(),

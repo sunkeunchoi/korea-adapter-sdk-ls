@@ -382,8 +382,9 @@ pub struct MetadataProvenance {
     /// The TRs the capture joined.
     pub source_trs: Vec<String>,
     /// The applied instrument-type filter (R2): equities-only, non-empty
-    /// `etfgubun` rows dropped. Residual non-common-stock pollution in the
-    /// exclusion stratum is an accepted, documented limitation.
+    /// `etfgubun` rows dropped, and preferred shares excluded by issue-sequence
+    /// digit (P5). SPACs and REITs remain undetectable from `t8430` alone — that
+    /// residual is an accepted, documented limitation.
     pub instrument_type_filter: String,
     /// The pre-registered cap-tier boundary rule, in words.
     pub tier_boundary_rule: String,
@@ -392,6 +393,12 @@ pub struct MetadataProvenance {
     /// Reference TRs that failed on paper, with their failure codes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paper_incompatible: Vec<TrFailure>,
+    /// The codes the issue-sequence rule dropped (P5), sorted — the evidence
+    /// that the declared filter was actually applied, mirroring the pit walk's
+    /// `FrozenSet::dropped_preferred`. Absent on artifacts captured before P5,
+    /// which is why it defaults rather than being required.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_preferred: Vec<String>,
 }
 
 /// The one metadata artifact both consumers read (KTD2): provenance + the
@@ -552,6 +559,7 @@ mod tests {
             ),
             cap_cutoffs: cutoffs,
             paper_incompatible: Vec::new(),
+            dropped_preferred: Vec::new(),
         }
     }
 

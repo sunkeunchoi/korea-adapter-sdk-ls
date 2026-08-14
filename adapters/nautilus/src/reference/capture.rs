@@ -4,7 +4,8 @@
 //!
 //! Sources (R1–R3):
 //! - skeleton: `t8430` master (market class; equities-only — non-empty
-//!   `etfgubun` rows dropped, R2), `t2522` (single-stock-futures underlying
+//!   `etfgubun` rows dropped, and preferred shares dropped by issue-sequence
+//!   digit, R2/P5), `t2522` (single-stock-futures underlying
 //!   set), `t1904` ×2 (KODEX 200 / KOSDAQ150 holdings = index proxy);
 //! - decorate: `t1444` ranked cap boards (bounded — below-board symbols keep
 //!   `market_cap = Unavailable` and take the small-cap tier by exclusion);
@@ -35,13 +36,65 @@ use crate::reference::universe_metadata::{
 /// The TR set the capture joins (provenance `source_trs`).
 pub const SOURCE_TRS: [&str; 6] = ["t8430", "t2522", "t1904", "t1444", "t1405", "t1404"];
 
-/// The recorded instrument-type filter (R2): the skeleton is equities-only.
+/// The recorded instrument-type filter (R2): the skeleton is equities-only and
+/// common-issue-only — preferred shares are excluded by issue-sequence digit (P5).
 pub const INSTRUMENT_TYPE_FILTER: &str =
     "t8430 etfgubun in {empty, '0'} (equities-only; ETF '1' / ETN '2' rows dropped before \
      tiering — the live master serves '0' for common equities). Letter-suffixed shcodes \
-     (e.g. 02826K/33626L, 신형우선주) are dropped — the one detectable preferred-share class. \
-     t8430 exposes no flag for numeric-coded preferred shares/SPACs/REITs — residual \
-     non-common-stock pollution in the exclusion stratum is an accepted, documented limitation.";
+     (e.g. 02826K/33626L, 신형우선주) are dropped. Preferred shares are excluded by \
+     issue-sequence digit (P5): the 6th digit of a 6-digit code encodes the issue sequence, \
+     and a digit other than '0' is a non-common issue class (e.g. 005935 삼성전자우) — dropped \
+     before tiering, the same rule the pit walk freezes on, with the dropped codes recorded \
+     in provenance.dropped_preferred. t8430 exposes no flag for SPACs or REITs; that residual \
+     is an accepted, documented limitation.";
+
+/// What the recorded instrument-type filter (R2) does with one `t8430` master
+/// row. Each drop reason is named rather than folded into a bare `continue`, so
+/// the capture can *report* what it excluded instead of only asserting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MasterRowVerdict {
+    /// A common-equity row — kept in the skeleton under this market class.
+    Keep(MarketClass),
+    /// Not a 6-digit numeric code: the letter-suffixed 신형우선주 class
+    /// (`02826K` / `33626L`), the one preferred class the master makes
+    /// detectable from its own fields.
+    NotSixDigitNumeric,
+    /// An ETF (`etfgubun` `"1"`) or ETN (`"2"`) row.
+    NotEquity,
+    /// P5's issue-sequence rule: the 6th digit encodes the issue sequence, and
+    /// ≠ `0` is a preferred-share class (e.g. `005935` 삼성전자우). This is the
+    /// same rule [`crate::reference::pit_walk::freeze_walk_set`] applies when it
+    /// freezes a walk set — applied here at construction so the artifact itself
+    /// is clean, not only the sets derived from it.
+    PreferredIssueSequence,
+    /// Neither KOSPI nor KOSDAQ — outside the v1 identity.
+    OutsideMarketClasses,
+}
+
+/// Apply the recorded instrument-type filter to one `t8430` master row.
+///
+/// Order is load-bearing twice over: the 6-digit numeric guard runs first
+/// because it is what makes indexing the 6th byte safe, and the `etfgubun`
+/// check precedes the issue-sequence rule so an ETF is reported as an ETF
+/// rather than counted into `dropped_preferred`.
+pub fn classify_master_row(shcode: &str, etfgubun: &str, gubun: &str) -> MasterRowVerdict {
+    if shcode.len() != 6 || !shcode.bytes().all(|b| b.is_ascii_digit()) {
+        return MasterRowVerdict::NotSixDigitNumeric;
+    }
+    // The live master serves "0" (not empty) for common equities — the adapter's
+    // instrument mapper reads the same convention (`instruments.rs`).
+    if !matches!(etfgubun, "" | "0") {
+        return MasterRowVerdict::NotEquity;
+    }
+    if shcode.as_bytes()[5] != b'0' {
+        return MasterRowVerdict::PreferredIssueSequence;
+    }
+    match gubun {
+        "1" => MasterRowVerdict::Keep(MarketClass::Kospi),
+        "2" => MasterRowVerdict::Keep(MarketClass::Kosdaq),
+        _ => MasterRowVerdict::OutsideMarketClasses,
+    }
+}
 
 /// Page-walk safety cap for the `t1405`/`t1404` category walks (mirrors the
 /// SDK's `market_cap_top_all` cap).
@@ -421,28 +474,21 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
         fail(format!("t8430 master failed — no skeleton, no capture: {}", fail_code(&e)), calls_made)
     })?;
     let mut skeleton: Vec<(String, MarketClass)> = Vec::new();
+    // Counted, not silently dropped (P4's precedent): provenance carries the
+    // codes the issue-sequence rule removed, so the declared filter is evidenced
+    // by what it excluded rather than merely asserted.
+    let mut dropped_preferred: Vec<String> = Vec::new();
     for row in &master.outblock {
         let shcode = row.shcode.trim().to_string();
-        // 6-digit numeric codes only: letter-suffixed codes (02826K / 33626L,
-        // 신형우선주) are the one preferred-share class the master makes
-        // detectable — dropped per the recorded instrument-type filter (R2).
-        if shcode.len() != 6 || !shcode.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
+        match classify_master_row(&shcode, row.etfgubun.trim(), row.gubun.trim()) {
+            MasterRowVerdict::Keep(market_class) => skeleton.push((shcode, market_class)),
+            MasterRowVerdict::PreferredIssueSequence => dropped_preferred.push(shcode),
+            MasterRowVerdict::NotSixDigitNumeric
+            | MasterRowVerdict::NotEquity
+            | MasterRowVerdict::OutsideMarketClasses => {}
         }
-        // Equities-only (R2): an ETF/ETN etfgubun ("1" ETF / "2" ETN) drops the
-        // row. The live master serves "0" (not empty) for common equities — the
-        // adapter's instrument mapper reads the same convention
-        // (`instruments.rs`: `etfgubun == "1"` → ETF).
-        if !matches!(row.etfgubun.trim(), "" | "0") {
-            continue;
-        }
-        let market_class = match row.gubun.trim() {
-            "1" => MarketClass::Kospi,
-            "2" => MarketClass::Kosdaq,
-            _ => continue, // neither KOSPI nor KOSDAQ — outside the v1 identity
-        };
-        skeleton.push((shcode, market_class));
     }
+    dropped_preferred.sort();
     if skeleton.is_empty() {
         return Err(fail(
             "t8430 returned no equity rows — cannot capture an empty skeleton".to_string(),
@@ -507,6 +553,7 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
             ),
             cap_cutoffs,
             paper_incompatible: failures,
+            dropped_preferred,
         },
         records,
     };
@@ -710,6 +757,72 @@ mod tests {
         // The confirmed category counts: t1405 1..=7, t1404 1..=4.
         assert_eq!(cfg.t1405_categories.len(), 7);
         assert_eq!(cfg.t1404_categories.len(), 4);
+    }
+
+    /// P5: the issue-sequence digit excludes preferred shares at construction.
+    /// Mirrors `pit_walk`'s `freeze_takes_board_tiers_and_applies_the_preferred_rule`
+    /// — the two must not drift, since the pit walk freezes over this artifact.
+    #[test]
+    fn issue_sequence_digit_excludes_preferred_shares() {
+        // The common issue is kept; its preferred class (same stem, 6th digit
+        // ≠ 0) is dropped — 005930 삼성전자 vs 005935 삼성전자우.
+        assert_eq!(
+            classify_master_row("005930", "0", "1"),
+            MasterRowVerdict::Keep(MarketClass::Kospi)
+        );
+        assert_eq!(
+            classify_master_row("005935", "0", "1"),
+            MasterRowVerdict::PreferredIssueSequence
+        );
+        // Every non-zero digit is an issue sequence, not just '5' (the artifact
+        // carries 000087, 000155, 000225, … across the range).
+        for c in ['1', '2', '3', '4', '5', '6', '7', '8', '9'] {
+            let code = format!("00008{c}");
+            assert_eq!(
+                classify_master_row(&code, "0", "1"),
+                MasterRowVerdict::PreferredIssueSequence,
+                "{code}"
+            );
+        }
+        // An empty etfgubun is the other common-equity spelling (R2).
+        assert_eq!(
+            classify_master_row("035720", "", "2"),
+            MasterRowVerdict::Keep(MarketClass::Kosdaq)
+        );
+    }
+
+    /// The filter's precedence: the numeric guard is what makes the 6th-byte
+    /// index safe, and an ETF is reported as an ETF rather than counted into
+    /// `dropped_preferred` (which would overstate the preferred-share evidence).
+    #[test]
+    fn master_row_filter_precedence_is_stable() {
+        // Letter-suffixed 신형우선주 — dropped by the numeric guard, and it must
+        // not panic reaching for a 6th ASCII digit that is not there.
+        assert_eq!(classify_master_row("02826K", "0", "1"), MasterRowVerdict::NotSixDigitNumeric);
+        assert_eq!(classify_master_row("33626L", "0", "1"), MasterRowVerdict::NotSixDigitNumeric);
+        // Multi-byte input must not panic on the byte index either.
+        assert_eq!(classify_master_row("삼성전자", "0", "1"), MasterRowVerdict::NotSixDigitNumeric);
+        // ETF / ETN classify as non-equity even when the 6th digit is non-zero.
+        assert_eq!(classify_master_row("069500", "1", "1"), MasterRowVerdict::NotEquity);
+        assert_eq!(classify_master_row("500055", "2", "1"), MasterRowVerdict::NotEquity);
+        // Neither KOSPI nor KOSDAQ (e.g. KONEX) — outside the v1 identity.
+        assert_eq!(classify_master_row("123450", "0", "3"), MasterRowVerdict::OutsideMarketClasses);
+    }
+
+    /// The recorded filter must describe what the code applies. Before P5 the
+    /// string declared the numeric-coded residual an accepted limitation while
+    /// the code let it through; that sentence is exactly what P5 retires.
+    #[test]
+    fn recorded_filter_declares_the_applied_preferred_rule() {
+        assert!(INSTRUMENT_TYPE_FILTER.contains("issue-sequence digit"), "{INSTRUMENT_TYPE_FILTER}");
+        assert!(INSTRUMENT_TYPE_FILTER.contains("005935"), "names the worked example");
+        assert!(INSTRUMENT_TYPE_FILTER.contains("dropped_preferred"), "points at the evidence");
+        // The surviving limitation is SPACs/REITs only — preferred shares are no
+        // longer part of it.
+        assert!(
+            !INSTRUMENT_TYPE_FILTER.contains("numeric-coded preferred"),
+            "the retired limitation must not survive: {INSTRUMENT_TYPE_FILTER}"
+        );
     }
 
     #[test]

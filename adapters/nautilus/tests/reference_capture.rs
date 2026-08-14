@@ -21,7 +21,9 @@ fn json_response(body: serde_json::Value) -> ResponseTemplate {
 }
 
 /// t8430 all-markets master: two KOSPI equities, one KOSPI ETF (dropped), two
-/// KOSDAQ equities on the cap board, one below-board KOSDAQ equity.
+/// KOSDAQ equities on the cap board, one below-board KOSDAQ equity, and both
+/// preferred-share spellings (letter-suffixed `02826K`, numeric-coded `005935`)
+/// — each dropped by a different half of the recorded filter.
 fn t8430_body() -> serde_json::Value {
     let row = |hname: &str, shcode: &str, etfgubun: &str, gubun: &str| {
         serde_json::json!({
@@ -38,8 +40,11 @@ fn t8430_body() -> serde_json::Value {
             row("KODEX 200", "069500", "1", "1"),
             row("에코프로", "086520", "0", "2"),
             row("에코프로비엠", "247540", "0", "2"),
-            row("소형주", "300001", "0", "2"),
+            row("소형주", "300000", "0", "2"),
             row("삼성물산우B", "02826K", "0", "1"),
+            // P5: a numeric-coded preferred share (6th digit ≠ 0) — the class the
+            // master exposes no flag for, dropped by the issue-sequence rule.
+            row("삼성전자우", "005935", "0", "1"),
         ]
     })
 }
@@ -181,10 +186,19 @@ async fn capture_joins_six_trs_by_shcode_into_resolved_records() {
     let outcome = capture(&sdk, &test_config()).await.expect("capture joins");
     let artifact = outcome.artifact;
 
-    // The ETF master row and the letter-suffixed preferred share are dropped
-    // (R2); five common equities remain, sorted by shcode.
+    // The ETF master row, the letter-suffixed preferred share, and the
+    // numeric-coded preferred share are all dropped (R2/P5); five common
+    // equities remain, sorted by shcode.
     let codes: Vec<&str> = artifact.records.iter().map(|r| r.shcode.as_str()).collect();
-    assert_eq!(codes, ["000660", "005930", "086520", "247540", "300001"]);
+    assert_eq!(codes, ["000660", "005930", "086520", "247540", "300000"]);
+    // P5: the issue-sequence drop is recorded, not merely applied — this is the
+    // provenance half of the filter, and the only place the live capture path
+    // (rather than the pure classifier) is asserted to populate it.
+    assert_eq!(artifact.provenance.dropped_preferred, ["005935"]);
+    assert!(
+        artifact.provenance.instrument_type_filter.contains("issue-sequence digit"),
+        "the recorded filter declares the rule it applied"
+    );
     let by = |code: &str| artifact.records.iter().find(|r| r.shcode == code).unwrap();
 
     // Market class from the master gubun.
@@ -207,8 +221,8 @@ async fn capture_joins_six_trs_by_shcode_into_resolved_records() {
     assert_eq!(by("000660").cap_tier, CapTier::Mid);
     assert_eq!(by("086520").cap_tier, CapTier::Top);
     assert_eq!(by("247540").cap_tier, CapTier::Mid);
-    assert_eq!(by("300001").cap_tier, CapTier::BelowBoard);
-    assert!(by("300001").market_cap.is_unavailable());
+    assert_eq!(by("300000").cap_tier, CapTier::BelowBoard);
+    assert!(by("300000").market_cap.is_unavailable());
     assert_eq!(by("005930").market_cap, Resolved::Value(4_000_000.0));
 
     // Turnover is deferred this turn (R2): Unavailable, liquidity Unknown.
@@ -227,7 +241,7 @@ async fn capture_joins_six_trs_by_shcode_into_resolved_records() {
     assert!(!managed.tradable);
     assert_eq!(managed.designation.as_ref().unwrap().kind, DesignationKind::Managed);
     assert!(by("005930").tradable);
-    assert!(by("300001").tradable);
+    assert!(by("300000").tradable);
 
     // Every source served → no paper-incompatible records; provenance complete.
     assert!(artifact.provenance.paper_incompatible.is_empty());
