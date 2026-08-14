@@ -185,7 +185,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1427` | 상/하한가직전 | `paginated` | implemented | [t1427](./t1427.md) |
 | `t1441` | 등락율상위 | `paginated` | implemented | [t1441](./t1441.md) |
 | `t1442` | 신고/신저가 | `paginated` | implemented | [t1442](./t1442.md) |
-| `t1444` | 시가총액상위 | `paginated` | implemented | [t1444](./t1444.md) |
+| `t1444` | 시가총액상위 | `paginated` | recommended | [t1444](./t1444.md) |
 | `t1449` | 가격대별매매비중조회 | `market_session` | implemented | [t1449](./t1449.md) |
 | `t1452` | 거래량상위 | `paginated` | implemented | [t1452](./t1452.md) |
 | `t1463` | 거래대금상위 | `paginated` | implemented | [t1463](./t1463.md) |

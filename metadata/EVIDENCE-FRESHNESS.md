@@ -133,11 +133,21 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   skeleton) on 2026-08-12 on a CLEAN in-window differential — the second promotion
   off the Verification Bar deferral list (queue item `promote-universe-skeleton-trs`,
   P2b of the next-lineage ladder; `gubun/enum` rejected distinctly IGW40011,
-  `gubun/required` expected-tolerant, observed for `t8430` itself on `/stock/etc`)
+  `gubun/required` expected-tolerant, observed for `t8430` itself on `/stock/etc`),
+  and `t1444` (per-board market-cap ranking, the universe *tiering* input) on
+  2026-08-14 on a CLEAN differential — the third promotion off the Verification Bar
+  deferral list (queue item `promote-t1444-recommended`, the P2b **residual** of the
+  next-lineage ladder: P2b closed on `t8430` alone, but `freeze_walk_set` admits a
+  symbol only when its `t1444`-derived `cap_tier` is Top or Mid, so `t1444` gates
+  membership in the universe the P6 pre-registration freezes; `idx/type` +
+  `idx/required` rejected distinctly IGW40011, `upcode/required` expected-tolerant,
+  observed for `t1444` itself on `/stock/high-item`. Unlike its siblings this pair
+  ran OFF-session under the TR's under-closure certification, so in-window serving
+  is excluded rather than assumed)
   — bringing the total to
-  **12 Recommended TRs** — `token` (auth), `t1101` + `t1102` + `t8430`
+  **13 Recommended TRs** — `token` (auth), `t1101` + `t1102` + `t8430`
   (market_session), `S3_` (realtime), `CSPAQ12200` (account), `t0425` + `t8410` +
-  `t8412` (paginated), and
+  `t8412` + `t1444` (paginated), and
   `CSPAT00601` + `CSPAT00701` + `CSPAT00801` (orders) — spanning 6 owner classes,
   each on a clean live differential chain (except
   `S3_`, whose realtime subscribe has no differential and rests on the lifecycle-scoped

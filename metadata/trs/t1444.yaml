@@ -18,7 +18,33 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: e13e94995ae7
-  last_reviewed: 2026-06-26
+  last_reviewed: 2026-08-14
+recommendation:
+  behavior: Paper single-page per-board market-cap ranking read (시가총액상위, upcode="001" KOSPI, idx=0 first page) through the self-paginated body-cursor response shape — a genuine round-trip (rsp_cd=00000, rows=20)
+  evidence_ref: evidence/t1444.yaml
+  excludes:
+    - Production-credential reads (evidence is paper only)
+    - Per-board correctness beyond KOSPI (the smoke exercised upcode="001" only; the universe capture also walks 301 KOSDAQ, which this evidence does not certify)
+    - Multi-page ranking correctness (the smoke proves the first page on the idx cursor; continuation beyond one page is uncertified)
+    - Completeness or stability of the ranking (the smoke proves a non-empty ordered page, not that the board's membership or its ordering is exhaustive or reproducible across calls)
+    - Row-value correctness beyond the round-trip (price/change/diff/volume/total/rate/for_rate are point-in-time quotes; the smoke asserts a structural count, never values)
+    - Correctness of the market-cap ordering itself (the `total` column and the rank it implies are taken as served; nothing here independently verifies the cap arithmetic or its as-of instant)
+    - In-session serving during an open KRX window (both the smoke and the differential probe ran OFF-session on 2026-08-14 — past 15:30 KST, and the day itself reads Unknown on the KRX calendar snapshot, so this evidence cannot claim a proven trading session either way; the TR is certified under closure, so in-window serving is uncertified by THIS evidence rather than assumed)
+    - Intra-day freshness of the price-bearing ranking columns during halts/VI or across session transitions (the quote columns are not certified fresh)
+    - Gateway-side rejection of an omitted upcode — preflight enforces it locally, the gateway tolerates its absence and defaults the board (gateway_tolerant; the differential probe reads the accepted violation as expected-tolerant). This exclusion is load-bearing for consumers that read one board at a time — a defaulted board returns the wrong market's ranking under a successful rsp_cd
+    - Point-in-time historical ranking (the board is a current-state read; using it to tier a PAST window is a disclosed look-ahead the consumer owns, not something this recommendation licenses)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+# Error-resilience gate (plan 2026-07-01-004, via the t8412 exemplar): request
+# field-constraint schema (drives preflight + the negative probe + the Reference
+# "Errors & validation" section) and the error-coverage evidence artifact. The
+# differential live probe (R10, `make live-smoke-t1444-negative`) ran CLEAN on
+# the real paper gateway (2026-08-14) — idx/type and idx/required rejected
+# distinctly (IGW40011), upcode/required expected-tolerant, zero Held/Divergent,
+# no residual throttle — clearing this TR for Recommended (queue item
+# promote-t1444-recommended, the P2b residual of the next-lineage ladder, plan
+# 2026-08-10-001; t1444 gates membership in the universe P6 freezes).
+constraints_ref: constraints/t1444.yaml
+error_coverage_ref: error-coverage/t1444.yaml

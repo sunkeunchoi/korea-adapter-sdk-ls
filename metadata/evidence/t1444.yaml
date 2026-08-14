@@ -1,0 +1,288 @@
+# Focused Evidence — t1444 (시가총액상위 / per-board market-cap ranking, the
+# universe tiering input)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that fetched
+# one page of the KOSPI market-cap ranking. The `line` below is captured
+# VERBATIM from the `LIVE-SMOKE` stdout of `make live-smoke-t1444`
+# (crates/ls-sdk/tests/live/paginated_boards.rs::live_smoke_t1444). The smoke
+# emits no `rsp_msg` (localized, account-identifying text) — only the numeric
+# `rsp_cd` plus a public structural `rows` count — so a verbatim capture stays
+# credential-free, matching the token/t1101/t8410/t8430 evidence shape.
+#
+# Secret-safety: structural descriptors only — never the token, appkey, secret,
+# or account number. The only caller identifier is the public board code
+# (upcode="001", KOSPI), which the smoke line does not even carry; `date` is
+# the capture date; `rows` is a ranking-page row count.
+#
+# WHY THIS TR WAS CERTIFIED (the P2b residual, plan 2026-08-10-001): t1444 is
+# not merely referenced by the adapter — it *gates membership* in the frozen
+# research universe. `capture-universe-metadata` walks it per board to rank by
+# market cap; the capture's `tier_boundary_rule` turns that rank into
+# `cap_tier`; and `reference::pit_walk::freeze_walk_set` admits a symbol only
+# when `cap_tier ∈ {Top, Mid}` — unresolved cap falls to `BelowBoard` and is
+# dropped. Every member of the frozen pit universe was admitted by a
+# t1444-derived number, so P2's "contamination reach" rationale applies in
+# full. P2b closed 2026-08-12 on t8430 alone, leaving this residual open; queue
+# item `promote-t1444-recommended` carries it.
+#
+# Integrity of THIS record: `rsp_cd=00000` (gateway success) plus a non-empty
+# `rows=20` count confirm a genuine ranking round-trip through the
+# self-paginated body-cursor shape (`t1444OutBlock1` modeled as
+# Vec<T1444OutBlock1> via `de_vec_or_single`; an empty list would not record —
+# the smoke asserts non-empty and treats 00707 as PENDING). The row count
+# matches the ~20-names-per-page the board is characterized to serve.
+#
+# SESSION SCOPE — read this before reusing the record: the smoke ran
+# OFF-session, past 15:30 KST on 2026-08-14. Note the day itself reads Unknown
+# on the KRX calendar snapshot, so this record does not claim 2026-08-14 was a
+# proven Trading Session — only that the read landed outside the 09:00–15:30
+# clock either way. That is a valid capture for this TR (the smoke registry
+# certifies t1444 "any session (certified UNDER closure)", and a ranking board
+# is a snapshot read), and it is what the differential probe's control also
+# proved. But it certifies off-session reachability ONLY: in-session serving
+# during an open KRX window, and the intra-day freshness of the price-bearing
+# ranking columns, are excluded from the recommendation scope rather than
+# assumed.
+#
+# Differential certification (2026-08-14, same off-session window as the
+# smoke): the error-resilience gate (`make live-smoke-t1444-negative`) ran
+# CLEAN on the real paper gateway. The valid control succeeded (rsp_cd=00000,
+# ok=true); the injected invalid variants read `Clean` (a genuine IGW40011
+# reject: idx/type, idx/required) or `expected-tolerant` (the gateway accepts
+# the violation but the SDK enforces it at preflight as a caller contract —
+# gateway_tolerant, observed for THIS TR on /stock/high-item on its first probe
+# pass and marked from that evidence: upcode/required). Zero Held, zero
+# Divergent, no IGW00201 throttle (probe paced at 1000 ms — the
+# /stock/chart-settled figure for the same warm-sensitive cumulative
+# market-data budget, and 2× this TR's own 2/s per-TR cap). The recommendation
+# therefore does NOT assert gateway-side rejection of the tolerant pair (see
+# the TR's `excludes`) — which matters more here than for a filter field: a
+# silently defaulted board would return the wrong market's ranking under a
+# successful rsp_cd.
+tr_code: t1444
+date: 2026-08-14
+env: paper
+target: live-smoke-t1444
+line: "LIVE-SMOKE target=live-smoke-t1444 inputs=[env=paper] result=[rsp_cd=00000 rows=20]"
+
+attested_normalizer_version: 2
+attested_shape:
+  tr_code: t1444
+  tr_name: 시가총액상위
+  protocol: rest
+  is_websocket: false
+  endpoint_path: /stock/high-item
+  api_group_id: d3d0ef41-6a0f-4bda-9e28-160071f66206
+  source_group_name: '[주식] 상위종목'
+  request_blocks:
+  - direction: request
+    block_name: request_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: request
+    block_name: request_header
+    field_index: 1
+    field_name: authorization
+    korean_name: 접근토큰
+    type: String
+    length: 1000
+    required: true
+    description_hash: 62956eed2a6e506a
+  - direction: request
+    block_name: request_header
+    field_index: 2
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: request
+    block_name: request_header
+    field_index: 3
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: request
+    block_name: request_header
+    field_index: 4
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: request
+    block_name: request_header
+    field_index: 5
+    field_name: mac_address
+    korean_name: MAC 주소
+    type: String
+    length: 12
+    required: true
+    description_hash: 1d2213655779faf2
+  - direction: request
+    block_name: t1444InBlock
+    field_index: 0
+    field_name: upcode
+    korean_name: 업종코드
+    type: String
+    length: 3
+    required: true
+  - direction: request
+    block_name: t1444InBlock
+    field_index: 1
+    field_name: idx
+    korean_name: IDX
+    type: Number
+    length: 4
+    required: true
+    description_hash: f1236d12822bd49b
+  response_blocks:
+  - direction: response
+    block_name: response_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: response
+    block_name: response_header
+    field_index: 1
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: response
+    block_name: response_header
+    field_index: 2
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: response
+    block_name: response_header
+    field_index: 3
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 0
+    field_name: idx
+    korean_name: IDX
+    type: Number
+    length: 4
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 1
+    field_name: t1444OutBlock1
+    korean_name: |
+      t1444OutBlock1
+    type: Object Array
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 2
+    field_name: shcode
+    korean_name: 종목코드
+    type: String
+    length: 6
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 3
+    field_name: hname
+    korean_name: 종목명
+    type: String
+    length: 20
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 4
+    field_name: price
+    korean_name: 현재가
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 5
+    field_name: sign
+    korean_name: 전일대비구분
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 6
+    field_name: change
+    korean_name: 전일대비
+    type: Number
+    length: 8
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 7
+    field_name: diff
+    korean_name: 등락율
+    type: Number
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 8
+    field_name: volume
+    korean_name: 거래량
+    type: Number
+    length: 12
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 9
+    field_name: vol_rate
+    korean_name: 거래비중
+    type: Number
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 10
+    field_name: total
+    korean_name: 시가총액
+    type: Number
+    length: 12
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 11
+    field_name: rate
+    korean_name: 비중
+    type: Number
+    required: true
+  - direction: response
+    block_name: t1444OutBlock
+    field_index: 12
+    field_name: for_rate
+    korean_name: 외인비중
+    type: Number
+    required: true
+  rate_limit_per_sec: 2
+  corp_rate_limit_per_sec: 3
+  rate_source_group: d3d0ef41-6a0f-4bda-9e28-160071f66206

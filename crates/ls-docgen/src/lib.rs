@@ -1349,7 +1349,10 @@ mod tests {
             "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "t8464", "t8465", "t8466", "t2216", "t8405",
-            "t1444", "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
+            // t1444 promoted to Recommended (2026-08-14, queue item
+            // promote-t1444-recommended, the P2b residual of the next-lineage ladder)
+            // on a CLEAN differential — moved to the recommended-no-banner loop below.
+            "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
             // CSPAT00601/00701/00801 + t0425 promoted to Recommended (plan
             // 2026-06-30-002) — moved to the recommended-no-banner loop below.
             // Closed-window account-lane flip wave (plan -001).
@@ -1481,9 +1484,9 @@ mod tests {
         // 2026-08-10-001).
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 12] = [
+        let recommended_no_banner: [&str; 13] = [
             "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
-            "CSPAT00701", "CSPAT00601", "t8410", "t8430",
+            "CSPAT00701", "CSPAT00601", "t8410", "t8430", "t1444",
         ];
         for rec in recommended_no_banner {
             let page = reference

@@ -1,0 +1,66 @@
+# Request field-constraint schema for t1444 (시가총액상위 — the per-board
+# market-cap ranking read on `/stock/high-item`). The single source from which
+# the preflight validator (ls-core), the differential negative probe, and the
+# Reference "Errors & validation" section are derived.
+#
+# Why this TR is being certified now (P2b residual, plan 2026-08-10-001): t1444
+# is not merely referenced by the adapter — it *gates membership* in the frozen
+# research universe. `capture-universe-metadata` walks it per board to rank by
+# market cap; the capture's `tier_boundary_rule` turns that rank into
+# `cap_tier`, and `reference::pit_walk::freeze_walk_set` admits a symbol only
+# when `cap_tier ∈ {Top, Mid}` (unresolved cap falls to `BelowBoard` and is
+# dropped). Every member of the frozen pit universe was admitted by a
+# t1444-derived number, so P2's "contamination reach" rationale applies in full.
+#
+# Grounding (KTD5, R4):
+#   - `type` + `required` are cross-checked offline against the normalized
+#     baseline (crates/ls-trackers/baselines/api-drift/normalized/trs/t1444.json):
+#     upcode — String, length 3, required; idx — Number, length 4, required.
+#   - `idx` is the body pagination cursor. The certified struct
+#     (`T1444Request::new`) pins it to "0" and serializes it via
+#     `ls_core::string_as_number`, so it crosses the wire as a JSON number
+#     (IGW40011 guard). It is declared `required: true` to match both the wire
+#     and the struct — the caller cannot omit it.
+#   - `upcode` carries NO enum. Unlike t8430's 구분(0:전체1:코스피2:코스닥), the
+#     source spec enumerates no values for 업종코드: it is an open board/sector
+#     code space (the capture defaults 001 KOSPI / 301 KOSDAQ via
+#     LS_CAPTURE_KOSPI_UPCODE / LS_CAPTURE_KOSDAQ_UPCODE). Declaring a closed
+#     enum here would be a guess, and R6 keeps preflight permissive rather than
+#     inventing a bound the spec does not state.
+#   - `upcode` also carries no `format`: FormatKind is the closed set
+#     {symbol, date} (crates/ls-metadata/src/schema.rs), and a 3-digit board
+#     code is neither. The class is marked N/A explicitly so exhaustiveness
+#     stays auditable rather than inferred from silence (R5).
+#
+# gateway_tolerant (this TR's OWN differential probe, first pass 2026-08-14,
+# control rsp_cd=00000 ok=true, zero Held, zero throttle): the gateway returns
+# rsp_cd=00000 when `upcode` is omitted (`required` class) — it defaults the
+# board rather than rejecting. Same tolerance profile the /stock/chart siblings
+# (t8410/t8412) and t8430 showed for their required fields, but observed for
+# THIS TR on /stock/high-item, not inherited. Merits-rejected distinctly
+# (IGW40011): idx/type and idx/required.
+#
+# WHY `gateway_tolerant` AND NOT `required: false` (the recipe's fork): `upcode`
+# is a genuine caller contract, not an optional filter. `T1444Request::new`
+# cannot be built without it, and the consumer that makes this TR load-bearing
+# reads ONE BOARD AT A TIME — the capture walks 001 (KOSPI) and 301 (KOSDAQ)
+# separately and joins them by market. A silently defaulted board would return
+# the wrong market's ranking under a successful rsp_cd, which is precisely the
+# contamination this certification exists to bound. Preflight therefore keeps
+# enforcing `required` locally; the Recommended claim does NOT assert
+# gateway-side enforcement of the tolerant pair (see the TR's `excludes`).
+tr_code: t1444
+fields:
+  - name: upcode
+    type: string          # baseline: String, length 3, required (업종코드 board code)
+    required: true
+    gateway_tolerant: [required]   # gateway accepts removal and defaults the board (probe 2026-08-14); preflight still enforces (certified struct always sends it).
+    enum: { applicable: false }   # open board/sector code space — the spec enumerates none
+    range: { applicable: false }
+    format: { applicable: false } # 3-digit board code: neither FormatKind::Symbol nor ::Date
+  - name: idx
+    type: integer         # baseline: Number, length 4, required (body pagination cursor)
+    required: true        # certified struct pins "0" and sends it as a JSON number
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

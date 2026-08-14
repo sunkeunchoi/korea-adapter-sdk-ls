@@ -493,9 +493,10 @@ mod tests {
     use std::path::PathBuf;
 
     /// The real authored metadata, with the 10 error-resilience-demoted TRs plus
-    /// the 2026-08-11-promoted `t8410` and the 2026-08-12-promoted `t8430`
+    /// the 2026-08-11-promoted `t8410`, the 2026-08-12-promoted `t8430`, and the
+    /// 2026-08-14-promoted `t1444`
     /// re-marked `recommended` so the freshness *machinery* (the age/change
-    /// rules) stays exercised against a realistic 12-TR recommended set. These
+    /// rules) stays exercised against a realistic 13-TR recommended set. These
     /// tests validate the evaluator, not the current promotion state, so they
     /// restore a synthetic recommended set. To keep the age-rule math
     /// DETERMINISTIC and immune to real re-certifications (the re-cert wave,
@@ -514,7 +515,7 @@ mod tests {
             .trs;
         for code in [
             "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601", "CSPAT00701",
-            "CSPAT00801", "t0425", "t8410", "t8430",
+            "CSPAT00801", "t0425", "t8410", "t8430", "t1444",
         ] {
             if let Some(m) = trs.get_mut(code) {
                 m.support.recommended = true;
@@ -535,14 +536,14 @@ mod tests {
         let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
         assert!(report.findings.is_empty());
         assert!(!report.has_errors());
-        assert_eq!(report.recommended_count, 12);
+        assert_eq!(report.recommended_count, 13);
     }
 
     #[test]
     fn stale_emits_one_evidence_finding_per_recommended_tr() {
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
-        assert_eq!(report.findings.len(), 12);
-        assert_eq!(report.recommended_count, 12);
+        assert_eq!(report.findings.len(), 13);
+        assert_eq!(report.recommended_count, 13);
         for f in &report.findings {
             assert_eq!(f.severity, Severity::Evidence);
             assert_eq!(f.reasons, vec![Reason::Age]);
@@ -563,10 +564,10 @@ mod tests {
     #[test]
     fn non_recommended_trs_are_exempt() {
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
-        assert_eq!(report.recommended_count, 12);
+        assert_eq!(report.recommended_count, 13);
         let recommended: std::collections::BTreeSet<&str> = [
             "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
-            "CSPAT00701", "CSPAT00801", "t0425", "t8410", "t8430",
+            "CSPAT00701", "CSPAT00801", "t0425", "t8410", "t8430", "t1444",
         ]
         .into_iter()
         .collect();
@@ -583,7 +584,7 @@ mod tests {
     fn default_today_uses_a_real_forward_moving_clock() {
         assert!(today() >= date(2026, 6, 19));
         let report = evaluate_recommended(&real_trs(), today());
-        assert_eq!(report.recommended_count, 12);
+        assert_eq!(report.recommended_count, 13);
         assert!(!report.has_errors());
     }
 
@@ -600,7 +601,7 @@ mod tests {
         }
         let cleared = evaluate_recommended(&trs, as_of);
         assert!(!cleared.has_stale());
-        assert_eq!(cleared.recommended_count, 12);
+        assert_eq!(cleared.recommended_count, 13);
     }
 
     #[test]
@@ -611,10 +612,10 @@ mod tests {
             meta.maintenance.last_reviewed = "not-a-date".to_string();
         }
         let report = evaluate_recommended(&trs, as_of);
-        assert_eq!(report.recommended_count, 12);
+        assert_eq!(report.recommended_count, 13);
         assert_eq!(report.unparseable, vec!["token".to_string()]);
         assert!(report.has_errors());
-        assert_eq!(report.findings.len(), 11);
+        assert_eq!(report.findings.len(), 12);
         assert!(report.findings.iter().all(|f| f.tr_code != "token"));
     }
 
@@ -1107,7 +1108,7 @@ recommendation:
         let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
         assert_eq!(v["stale"].as_array().unwrap().len(), 0);
         assert_eq!(v["has_errors"], serde_json::json!(false));
-        assert_eq!(v["recommended_count"], serde_json::json!(12));
+        assert_eq!(v["recommended_count"], serde_json::json!(13));
         assert_eq!(v["window_days"], serde_json::json!(90));
         assert_eq!(v["as_of"], serde_json::json!("2026-06-18"));
         assert_eq!(v["reattest"], serde_json::json!([]));

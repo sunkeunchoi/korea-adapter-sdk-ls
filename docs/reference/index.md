@@ -162,7 +162,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1427` | 상/하한가직전 | `paginated` | implemented, not yet recommended |
 | `t1441` | 등락율상위 | `paginated` | implemented, not yet recommended |
 | `t1442` | 신고/신저가 | `paginated` | implemented, not yet recommended |
-| `t1444` | 시가총액상위 | `paginated` | implemented, not yet recommended |
+| `t1444` | 시가총액상위 | `paginated` | recommended |
 | `t1449` | 가격대별매매비중조회 | `market_session` | implemented, not yet recommended |
 | `t1452` | 거래량상위 | `paginated` | implemented, not yet recommended |
 | `t1463` | 거래대금상위 | `paginated` | implemented, not yet recommended |
