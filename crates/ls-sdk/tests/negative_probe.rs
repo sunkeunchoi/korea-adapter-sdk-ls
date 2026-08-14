@@ -380,6 +380,36 @@ fn t8430_probe_is_paced() {
     );
 }
 
+/// Inter-dispatch pace for the t1444 live differential probe. The shortest read
+/// chain of the four (control + upcode/required + idx/required + idx/type), but
+/// t1444 sits on a TIGHTER per-TR cap than the /stock/chart legs — its normalized
+/// baseline declares `rate_limit_per_sec: 2` (corp 3) against the market-data
+/// legs' 10/s — while still drawing on the same warm-sensitive CUMULATIVE budget.
+/// 1000 ms is therefore both the empirically-settled market-data figure (see
+/// `T8412_PROBE_PACE` above; 250/500 ms merely MOVED the throttle) and 2× this
+/// TR's own 500 ms bucket period, so neither bound is the binding one. Offline
+/// only the non-zero property is asserted (`t1444_probe_is_paced`); the true
+/// anti-throttle proof is the live probe run.
+const T1444_PROBE_PACE: Duration = Duration::from_millis(1000);
+
+#[test]
+fn t1444_probe_is_paced() {
+    // Same structural obligation as `t8412_probe_is_paced` (§27 reason A): the
+    // probe fires into the warm-sensitive cumulative market-data budget and must
+    // carry a non-zero, meaningfully sized inter-dispatch pace so a
+    // self-inflicted IGW00201 cannot mask variants.
+    assert!(
+        !T1444_PROBE_PACE.is_zero(),
+        "t1444 probe must be paced (non-zero) so it does not self-throttle"
+    );
+    // t1444's own per-TR cap is 2/s (baseline `rate_limit_per_sec`), a 500 ms
+    // bucket period — a stricter floor than the 10/s market-data period.
+    assert!(
+        T1444_PROBE_PACE >= Duration::from_millis(500),
+        "t1444 pace should be at least its own 2/s bucket period (500 ms)"
+    );
+}
+
 /// Inter-fire pace for the ORDER differential negative probe (`run_order_negative_probe`,
 /// CSPAT006/007/008). The order fire loop dispatches the control submit + every
 /// type/required variant against the Orders rate bucket; with no pace they collided
@@ -656,6 +686,31 @@ async fn live_smoke_t8430_negative() {
         "t8430InBlock",
         serde_json::json!({ "gubun": "0" }),
         T8430_PROBE_PACE,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "live probe: needs real LS paper credentials; run via `make live-smoke-t1444-negative`"]
+async fn live_smoke_t1444_negative() {
+    // Seed mirrors the certified smoke shape (`T1444Request::new("001")` — the
+    // KOSPI board, idx pinned to the first page), the same board the universe
+    // capture walks (LS_CAPTURE_KOSPI_UPCODE default). `idx` is a JSON NUMBER,
+    // not a quoted string: the struct serializes it via `string_as_number`
+    // (IGW40011 guard), and a quoted numeric control would trip the ingress and
+    // mask the differential — the same trap documented on the t8410 seed above.
+    //
+    // Session note: unlike the /stock/chart legs this control is expected to
+    // succeed OFF-session too — the smoke registry certifies t1444 "any session
+    // (certified UNDER closure)". A ranking board is a snapshot read, so an
+    // off-session control that returns rows is a valid control. An empty
+    // (00707) answer is still a HELD, not a pass.
+    run_inblock_negative_probe(
+        "t1444",
+        "/stock/high-item",
+        "t1444InBlock",
+        serde_json::json!({ "upcode": "001", "idx": 0 }),
+        T1444_PROBE_PACE,
     )
     .await;
 }

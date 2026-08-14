@@ -75,6 +75,24 @@ fn authored_slice_metadata_validates_clean() {
         t8430.support.recommended,
         "t8430 is recommended (P2b differential-probe gate, 2026-08-12)"
     );
+
+    // t1444 is the P2b RESIDUAL: P2b's queue item closed 2026-08-12 on t8430
+    // alone, but t1444 gates universe MEMBERSHIP, not just decoration —
+    // `reference::pit_walk::freeze_walk_set` admits a symbol only when its
+    // t1444-derived `cap_tier` is Top or Mid (unresolved cap falls to
+    // BelowBoard and is dropped). Promoted 2026-08-14 (queue item
+    // promote-t1444-recommended) on a CLEAN differential, ahead of the P6
+    // pre-registration freeze that cites the universe it gates.
+    let t1444 = report
+        .trs
+        .get("t1444")
+        .expect("t1444 must be present in the slice metadata");
+    assert!(t1444.support.tracked, "t1444 is tracked");
+    assert!(t1444.support.implemented, "t1444 is implemented");
+    assert!(
+        t1444.support.recommended,
+        "t1444 is recommended (P2b-residual differential-probe gate, 2026-08-14)"
+    );
 }
 
 /// The error-resilience gate (plan 2026-07-01-004, R12) demoted the 10 TRs
@@ -110,7 +128,16 @@ fn authored_slice_metadata_validates_clean() {
 /// gubun/required expected-tolerant, observed for t8430 itself on /stock/etc) —
 /// the second promotion off the Verification Bar deferral list (queue item
 /// `promote-universe-skeleton-trs`, P2b of the next-lineage ladder).
-/// These twelve are the ONLY ones currently allowed to carry the Recommended badge.
+/// Then on 2026-08-14 `t1444` (per-board market-cap ranking) promoted on a CLEAN
+/// differential (idx/type + idx/required IGW40011-rejected, upcode/required
+/// expected-tolerant, observed for t1444 itself on /stock/high-item) — the third
+/// promotion off the Verification Bar deferral list, and the P2b **residual**:
+/// P2b closed on `t8430` alone, but `reference::pit_walk::freeze_walk_set` admits a
+/// symbol only when its `t1444`-derived `cap_tier` is Top or Mid, so `t1444` gates
+/// membership in the universe the P6 pre-registration freezes (queue item
+/// `promote-t1444-recommended`). Unlike its siblings this differential ran
+/// OFF-session, under the TR's under-closure certification.
+/// These thirteen are the ONLY ones currently allowed to carry the Recommended badge.
 /// This test guards against an accidental re-promotion of any TR that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
@@ -124,7 +151,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8410", "t8412", "t8430", "token"],
+        ["CSPAQ12200", "CSPAT00601", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t1444", "t8410", "t8412", "t8430", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );
