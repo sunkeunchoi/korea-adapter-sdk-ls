@@ -11,6 +11,10 @@
 //! - [`artifacts`] — the RunWriter and the four run artifacts (KTD2, R4–R9).
 //! - [`runner`] — the backtest and live-paper runners (F1, F2).
 //! - [`margin`] — the frozen pre-registered sample margin (`config/sample-margin.json`).
+//! - [`lineage_prereg`] — the successor daily lineage's frozen pre-registration
+//!   (`config/lineage-preregistration.json`) and the claim-then-evaluate holdout
+//!   judgment ledger (plan 2026-08-14-001). Distinct from [`dispatch::prereg`], which
+//!   freezes the production ladder.
 //! - [`stats`] — the sample-sufficiency statistics core: clustering, design
 //!   effect, minimum detectable edge, required trade count, and the
 //!   trials-corrected margin threshold (plan 2026-08-05-001).
@@ -24,6 +28,7 @@ pub mod artifacts;
 pub mod candidates;
 pub mod dispatch;
 pub mod fingerprint;
+pub mod lineage_prereg;
 pub mod margin;
 pub mod params;
 pub mod queue;
