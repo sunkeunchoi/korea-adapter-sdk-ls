@@ -47,6 +47,7 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,
+        daily_params: None,
         created_utc: "2024-01-05T09:00:00Z".into(),
     }
 }

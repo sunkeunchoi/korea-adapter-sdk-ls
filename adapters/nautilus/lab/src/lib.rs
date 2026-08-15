@@ -7,6 +7,9 @@
 //! - [`agent`] — the agent decision layer: decision envelope, intent, runtime
 //!   action, context, and the in-run decision sink (R1, R5, R6, R9).
 //! - [`params`] — ORB v0's parameter set (all manifest-recorded, KTD6).
+//! - [`params_daily`] — the daily-resolution multi-session-hold path's parameter set
+//!   (P7), carried in the manifest as an optional sibling of [`params`] so no ORB
+//!   identity hash moves.
 //! - [`strategy`] — the ORB v0 payload: universe scan + range/entry/exit machine (R2).
 //! - [`artifacts`] — the RunWriter and the four run artifacts (KTD2, R4–R9).
 //! - [`runner`] — the backtest and live-paper runners (F1, F2).
@@ -31,6 +34,7 @@ pub mod fingerprint;
 pub mod lineage_prereg;
 pub mod margin;
 pub mod params;
+pub mod params_daily;
 pub mod queue;
 pub mod runner;
 pub mod stats;

@@ -2,12 +2,14 @@
 //! the explicit bar data range, a range-scoped catalog fingerprint, and the universe
 //! snapshot hash, so any two runs are comparable and any run is reproducible.
 
+use chrono::{DateTime, Utc};
 use nautilus_model::data::Bar;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::artifacts::RunSource;
+use crate::artifacts::{run_id, RunSource};
 use crate::params::OrbParams;
+use crate::params_daily::{DailyParams, DAILY_STRATEGY_ID};
 
 /// The explicit bar-data range a run pinned (inclusive `YYYYMMDD` trading days). A
 /// comparison re-run pins the same range so the range-scoped fingerprint is stable
@@ -80,8 +82,164 @@ pub struct Manifest {
     /// run or a pre-U5 artifact; absent from prior manifests, hence the `serde(default)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<DispatchLink>,
+    /// The daily-resolution multi-session-hold path's parameter set (P7/U3, KTD4).
+    /// `Some` on a daily run, `None` on every ORB run — including every manifest
+    /// already committed — so an ORB manifest serializes byte-identically to its
+    /// pre-P7 form and `governed_params_hash`, which hashes the untouched
+    /// [`Self::params`], is undisturbed. Retyping `params` into a strategy enum was
+    /// rejected for exactly that reason.
+    ///
+    /// The pairing is enforced, not conventional:
+    /// [`Manifest::validate_strategy_identity`] refuses an ORB manifest that carries
+    /// daily params (a silent "ignore the extra field" would let an ORB-identified run
+    /// claim daily terms) and refuses a daily-identified manifest that carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_params: Option<DailyParams>,
     /// The instant the run started (UTC, RFC3339-like stamp).
     pub created_utc: String,
+}
+
+/// The inputs [`Manifest::new_daily`] cannot derive for itself. A struct rather than a
+/// dozen positional arguments, and it deliberately has **no** `strategy_id`,
+/// `strategy_code_hash`, `run_id` or `source` field: those are the four values a daily
+/// run must not be able to get wrong (KTD14), so the constructor derives every one of
+/// them.
+#[derive(Debug, Clone)]
+pub struct DailyManifestParts<'a> {
+    /// The daily parameter set. Validated by the constructor; the source of the
+    /// manifest's `strategy_id`, `strategy_version`, and run id.
+    pub daily: DailyParams,
+    /// The `OrbParams` the *shared* candidate assembly ran with (`atr_window` and
+    /// friends). Recorded verbatim for reproducibility; its `strategy_id` is
+    /// deliberately **ignored** — that field defaults to `"orb"` and reading it here is
+    /// precisely how a daily run would come to look like an ORB run.
+    pub assembly_params: OrbParams,
+    /// The daily strategy's embedded source, hashed into
+    /// [`Manifest::strategy_code_hash`] via [`daily_strategy_code_hash`]. U4 passes its
+    /// `include_str!` const.
+    pub daily_source: &'a str,
+    /// When the run started; the run id's stamp and `created_utc` both come from it.
+    pub started_utc: DateTime<Utc>,
+    /// The explicit pinned bar-data range.
+    pub data_range: DataRange,
+    /// The range-scoped catalog fingerprint.
+    pub catalog_fingerprint: String,
+    /// The per-session selection-sequence hash ([`universe_sequence_hash`]).
+    pub universe_hash: String,
+    /// The running binary's embedded lab-source fingerprint.
+    pub lab_src_fingerprint: Option<String>,
+    /// The ingest checkpoint's content hash.
+    pub checkpoint_hash: Option<String>,
+    /// The universe-metadata artifact hash for a metadata-driven run.
+    pub universe_metadata_hash: Option<String>,
+}
+
+impl Manifest {
+    /// Construct a **daily-path** run manifest (P7/U3) — the daily path's run-construction
+    /// point, and the call site of [`DailyParams::validate`].
+    ///
+    /// Everything identity-bearing is derived here rather than accepted:
+    ///
+    /// - `strategy_id` and `strategy_version` come from `parts.daily`, **never** from
+    ///   `parts.assembly_params` (whose `strategy_id` defaults to `"orb"`). This is the
+    ///   registry discriminator (KTD14): the ORB path derives both from its parameter
+    ///   set at `runner::backtest`, so a daily runner reusing that derivation would emit
+    ///   a manifest no strategy filter could tell apart from an ORB run.
+    /// - `run_id` is built from the same discriminator, so the id and the field agree.
+    /// - `strategy_code_hash` is [`daily_strategy_code_hash`] of the daily source — the
+    ///   *sibling* of [`strategy_code_hash`], which stays untouched (KTD5).
+    /// - `source` is [`RunSource::Backtest`]: this path has no live runner.
+    /// - `dispatch` is `None`: a research backtest is not ladder-authorized.
+    ///
+    /// # Errors
+    ///
+    /// Returns the offending message when [`DailyParams::validate`] rejects the frozen
+    /// terms, or when the assembled manifest fails
+    /// [`Manifest::validate_strategy_identity`].
+    pub fn new_daily(parts: DailyManifestParts<'_>) -> Result<Manifest, String> {
+        // The run-construction gate: a parameter set off a frozen term never reaches the
+        // engine, and never reaches the registry.
+        parts.daily.validate()?;
+        let manifest = Manifest {
+            run_id: run_id(
+                parts.started_utc,
+                RunSource::Backtest,
+                &parts.daily.strategy_id,
+                parts.daily.strategy_version,
+            ),
+            source: RunSource::Backtest,
+            strategy_id: parts.daily.strategy_id.clone(),
+            strategy_version: parts.daily.strategy_version,
+            params: parts.assembly_params,
+            data_range: parts.data_range,
+            catalog_fingerprint: parts.catalog_fingerprint,
+            universe_hash: parts.universe_hash,
+            strategy_code_hash: daily_strategy_code_hash(parts.daily_source),
+            lab_src_fingerprint: parts.lab_src_fingerprint,
+            checkpoint_hash: parts.checkpoint_hash,
+            universe_metadata_hash: parts.universe_metadata_hash,
+            dispatch: None,
+            daily_params: Some(parts.daily),
+            created_utc: parts.started_utc.to_rfc3339(),
+        };
+        manifest.validate_strategy_identity()?;
+        Ok(manifest)
+    }
+
+    /// Check that this manifest's strategy identity and its carried parameter sets
+    /// agree (KTD14). Enforced at construction by [`Manifest::new_daily`]; also usable
+    /// on a manifest read back from the registry.
+    ///
+    /// The rules, all of which exist because the alternative is a *silent* misread:
+    ///
+    /// 1. An ORB-identified manifest carrying daily params is **refused**, not ignored.
+    ///    Ignoring it would let a run whose engine, OMS, and hold semantics are ORB's
+    ///    advertise the daily lineage's frozen terms.
+    /// 2. A manifest carrying daily params must agree with them on `strategy_id`, and
+    ///    those params must themselves validate.
+    /// 3. A daily-identified manifest carrying **no** daily params is refused: the
+    ///    discriminator would partition the registry while the terms it partitions on
+    ///    are absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns the offending message on any of the three.
+    pub fn validate_strategy_identity(&self) -> Result<(), String> {
+        match &self.daily_params {
+            Some(daily) => {
+                if self.strategy_id == crate::params::STRATEGY_ID {
+                    return Err(format!(
+                        "manifest {} is identified as ORB (strategy_id {:?}) but carries daily \
+                         params — refused rather than ignored: an ORB run's engine, OMS, and \
+                         hold semantics are not this lineage's, so the carried terms would be a \
+                         false claim (KTD14)",
+                        self.run_id, self.strategy_id
+                    ));
+                }
+                daily.validate()?;
+                if self.strategy_id != daily.strategy_id {
+                    return Err(format!(
+                        "manifest {} records strategy_id {:?} but its daily params say {:?} — \
+                         the registry discriminator and the parameter set must agree, or a \
+                         strategy filter and the terms it selects describe different runs",
+                        self.run_id, self.strategy_id, daily.strategy_id
+                    ));
+                }
+                Ok(())
+            }
+            None => {
+                if self.strategy_id == DAILY_STRATEGY_ID {
+                    return Err(format!(
+                        "manifest {} is identified as the daily path (strategy_id {:?}) but \
+                         carries no daily params — the frozen terms the discriminator exists to \
+                         partition on would be absent from the run's own record (KTD4/KTD14)",
+                        self.run_id, self.strategy_id
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// The dispatch↔run linkage recorded in a live run's manifest (KTD3). Lets a reducer
@@ -137,6 +295,24 @@ pub fn range_fingerprint(bars: &[Bar], start_ns: u64, end_ns: u64) -> String {
 /// ORB source). Changes whenever the strategy logic changes.
 pub fn strategy_code_hash() -> String {
     hash_bytes(crate::strategy::ORB_SOURCE.as_bytes())
+}
+
+/// The **daily** path's strategy-source fingerprint — the sibling of
+/// [`strategy_code_hash`], not a generalization of it (KTD5).
+///
+/// [`strategy_code_hash`] hashes `ORB_SOURCE` and keeps its zero-argument signature:
+/// every one of its production call sites is ORB-domain with no strategy id in scope, so
+/// dispatching it on a strategy id would buy a fan of edits that all pass the literal
+/// `"orb"` on the most identity-critical function in the crate. A daily run's code hash
+/// is therefore *this* function's, and it can never move the ORB digest.
+///
+/// The source is a parameter rather than a baked const because the daily strategy
+/// module lands in a later unit; U4 passes its `include_str!` const, exactly as
+/// [`strategy_code_hash`] passes `ORB_SOURCE`. Callers should not pass an ad-hoc string:
+/// [`Manifest::new_daily`] is the only production path, and it feeds this straight into
+/// `Manifest.strategy_code_hash`.
+pub fn daily_strategy_code_hash(daily_source: &str) -> String {
+    hash_bytes(daily_source.as_bytes())
 }
 
 /// Hash a sorted list of universe symbols into a stable hex digest. Order-insensitive

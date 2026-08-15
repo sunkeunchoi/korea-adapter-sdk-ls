@@ -264,6 +264,7 @@ mod tests {
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch,
+            daily_params: None,
             created_utc: "2026-07-16T01:00:00Z".into(),
         };
         writer.write_manifest(&manifest).unwrap();

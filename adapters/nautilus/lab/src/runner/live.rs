@@ -2110,6 +2110,7 @@ fn stage_and_finalize(
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: ctx.dispatch.clone(),
+        daily_params: None,
         created_utc: ctx.created_utc.clone(),
     };
     writer.write_manifest(&manifest)?;

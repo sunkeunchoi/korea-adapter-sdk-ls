@@ -315,6 +315,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         checkpoint_hash: checkpoint_hash(&catalog_path),
         universe_metadata_hash: metadata.as_ref().map(|(hash, _)| hash.clone()),
         dispatch: None,
+        daily_params: None,
         created_utc: start.to_rfc3339(),
     };
 

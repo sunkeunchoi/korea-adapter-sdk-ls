@@ -38,6 +38,7 @@ fn write_head_run(data_home: &Path, run_id: &str, universe_metadata_hash: Option
         checkpoint_hash: None,
         universe_metadata_hash: universe_metadata_hash.map(str::to_string),
         dispatch: None,
+        daily_params: None,
         created_utc: "2026-07-26T00:00:00+00:00".to_string(),
     };
     std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap()).unwrap();
