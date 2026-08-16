@@ -87,6 +87,13 @@ pub fn head_governed_params_pinned(data_home: &Path, expected_version: Option<u3
     list_runs(data_home)
         .into_iter()
         .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        // Belt-and-braces beside the code-hash filter (P7/U8, KTD14). The code hash alone
+        // is already sufficient here — KTD5 keeps `strategy_code_hash()` ORB-only and gives
+        // the daily path a sibling digest, so no daily run can ever match it. The
+        // discriminator is added anyway because "sufficient by an invariant maintained
+        // elsewhere" is what this filter chain must not depend on: if that invariant ever
+        // moved, head selection is where it would fail silently and worst.
+        .filter(|(_rid, m)| m.strategy_id == crate::params::STRATEGY_ID)
         .filter(|(_rid, m)| m.strategy_code_hash == code_hash)
         .filter(|(_rid, m)| expected_version.map_or(true, |v| m.strategy_version == v))
         .max_by(|(a, _), (b, _)| a.cmp(b))
@@ -106,6 +113,13 @@ pub fn head_manifest_pinned(
     list_runs(data_home)
         .into_iter()
         .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        // Belt-and-braces beside the code-hash filter (P7/U8, KTD14). The code hash alone
+        // is already sufficient here — KTD5 keeps `strategy_code_hash()` ORB-only and gives
+        // the daily path a sibling digest, so no daily run can ever match it. The
+        // discriminator is added anyway because "sufficient by an invariant maintained
+        // elsewhere" is what this filter chain must not depend on: if that invariant ever
+        // moved, head selection is where it would fail silently and worst.
+        .filter(|(_rid, m)| m.strategy_id == crate::params::STRATEGY_ID)
         .filter(|(_rid, m)| m.strategy_code_hash == code_hash)
         .filter(|(_rid, m)| expected_version.map_or(true, |v| m.strategy_version == v))
         .max_by(|(a, _), (b, _)| a.cmp(b))

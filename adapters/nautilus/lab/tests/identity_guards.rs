@@ -364,6 +364,15 @@ async fn an_orb_run_reproduces_its_pre_change_positions_and_performance() {
         "an ORB run carries no daily params — `validate_strategy_identity` refuses that \
          combination outright, but a run that never produces it is the real guard"
     );
+    // U6's fifth artifact is the daily path's alone. Asserted POSITIVELY here because the
+    // existing artifact test only checks that four expected files are present — it never
+    // asserts the set is exactly four, so an ORB run that started emitting an observation
+    // would pass it.
+    assert!(
+        !outcome.run_dir.join(nautilus_ls_lab::artifacts::OBSERVATION_FILE).exists(),
+        "an ORB run writes no observation: the artifact carries the DAILY lineage's frozen \
+         verdict statistic, and an ORB run emitting one would be a false claim to it"
+    );
 
     // The position set, field by field. A count alone would pass against a run that
     // entered the right number of positions at the wrong prices.
@@ -418,4 +427,282 @@ fn pinned_orb_summary() -> Vec<(String, f64)> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect()
+}
+
+// ---------------------------------------------------------------------------
+// U8 — the registry strategy partition (KTD14, R24)
+//
+// Nothing structurally separates the two strategies' data homes: the separation is one
+// `LS_DATA_HOME` slip deep, and every failure this partition guards is silent. A daily run
+// finalized after the newest ORB run would otherwise become the ORB turn's adopted params,
+// its inherited range, its KEEP/REVERT baseline, and its trial anchor — with no error
+// anywhere, because `Manifest.params` is a non-optional `OrbParams` and so a daily run
+// asserts a complete, fictitious ORB parameter set.
+// ---------------------------------------------------------------------------
+
+use nautilus_ls_lab::artifacts::manifest::{
+    range_fingerprint, universe_hash, DailyManifestParts, DataRange,
+};
+use nautilus_ls_lab::artifacts::{list_runs, run_id, RunSource, RunWriter};
+use nautilus_ls_lab::params_daily::{DailyParams, DAILY_STRATEGY_ID};
+use nautilus_ls_lab::runner::research::{latest_finalized_run, latest_finalized_run_for};
+
+/// Read a staged run's manifest off disk. `research::read_manifest` is crate-private, and
+/// deliberately so — the partition's whole point is that a consumer resolves runs through
+/// the filtered lookup rather than reaching for individual manifests.
+fn manifest_of(data: &Path, run_id: &str) -> Manifest {
+    let text =
+        std::fs::read_to_string(data.join("runs").join(run_id).join(MANIFEST_FILE)).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+/// An ORB manifest stamped at `hour`, staged into `data`.
+fn stage_orb_run(data: &Path, hour: u32, version: u32) -> String {
+    let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
+    let params = OrbParams { strategy_version: version, ..OrbParams::default() };
+    let id = run_id(started, RunSource::Backtest, &params.strategy_id, version);
+    let m = Manifest {
+        run_id: id.clone(),
+        source: RunSource::Backtest,
+        strategy_id: params.strategy_id.clone(),
+        strategy_version: version,
+        params,
+        data_range: DataRange { start: "20240102".into(), end: "20240105".into() },
+        catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
+        universe_hash: universe_hash(&["005930.XKRX".to_string()]),
+        strategy_code_hash: strategy_code_hash(),
+        lab_src_fingerprint: None,
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+        dispatch: None,
+        daily_params: None,
+        created_utc: started.to_rfc3339(),
+    };
+    let w = RunWriter::new(data, &id).unwrap();
+    w.write_manifest(&m).unwrap();
+    w.finalize().unwrap();
+    id
+}
+
+/// A daily manifest stamped at `hour`, staged into `data`. Built through
+/// `Manifest::new_daily` — the only production path — so the test cannot accidentally
+/// hand-write a discriminator the real runner would never produce.
+fn stage_daily_run(data: &Path, hour: u32) -> String {
+    let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
+    let m = Manifest::new_daily(DailyManifestParts {
+        daily: DailyParams::default(),
+        assembly_params: OrbParams::default(),
+        daily_source: nautilus_ls_lab::strategy::DAILY_SOURCE,
+        started_utc: started,
+        data_range: DataRange { start: "20240102".into(), end: "20240105".into() },
+        catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
+        universe_hash: universe_hash(&["005930.XKRX".to_string()]),
+        lab_src_fingerprint: None,
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+    })
+    .unwrap();
+    let id = m.run_id.clone();
+    let w = RunWriter::new(data, &id).unwrap();
+    w.write_manifest(&m).unwrap();
+    w.finalize().unwrap();
+    id
+}
+
+/// The core partition: a daily run finalized AFTER the newest ORB run is not what "the
+/// current run" resolves to.
+///
+/// All seven consumers that trust `latest_finalized_run` — `turn()`'s params adoption, the
+/// inherited range, `decide_keep_or_revert`, the diagnose trial anchor, and the three
+/// reporting commands — go through this one function, so this is the partition for every
+/// one of them at once. `the_seven_consumers_all_resolve_through_the_filtered_lookup`
+/// below is what keeps that true.
+#[test]
+fn a_newer_daily_run_is_not_the_current_orb_run() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let orb = stage_orb_run(data, 9, 35);
+    let daily = stage_daily_run(data, 17);
+
+    assert_eq!(list_runs(data).len(), 2, "both runs are in the registry");
+    let (resolved, m) = latest_finalized_run(data).unwrap().expect("an ORB run resolves");
+    assert_eq!(resolved, orb, "the newer daily run did not displace the ORB head");
+    assert_eq!(m.strategy_id, nautilus_ls_lab::params::STRATEGY_ID);
+    assert!(m.daily_params.is_none());
+
+    // The daily run is still reachable — by name, which is the point. The partition is a
+    // partition, not a deletion.
+    let (dresolved, dm) =
+        latest_finalized_run_for(data, DAILY_STRATEGY_ID).unwrap().expect("the daily run resolves");
+    assert_eq!(dresolved, daily);
+    assert_eq!(dm.strategy_id, DAILY_STRATEGY_ID);
+}
+
+/// Without this, every filter above would pass for the WRONG reason.
+///
+/// Both `Manifest.strategy_id` and the run id derive from the parameter set's
+/// `strategy_id`, whose `OrbParams` default is `"orb"`. Had the daily runner written
+/// `OrbParams::default()` into the non-optional `params` field and derived the
+/// discriminator from it, every strategy filter would pass the daily run through and the
+/// partition would be vacuous — the exact silent head-reversion it exists to prevent.
+#[test]
+fn a_daily_manifest_is_not_identified_as_orb() {
+    let dir = tempdir().unwrap();
+    let daily = stage_daily_run(dir.path(), 17);
+    let m = manifest_of(dir.path(), &daily);
+
+    assert_ne!(m.strategy_id, nautilus_ls_lab::params::STRATEGY_ID);
+    assert_eq!(m.strategy_id, DAILY_STRATEGY_ID);
+    assert!(!daily.contains("-orb-"), "nor does the run id read as an ORB run: {daily}");
+    // …while the assembly params it records still carry ORB's id, deliberately ignored.
+    assert_eq!(m.params.strategy_id, nautilus_ls_lab::params::STRATEGY_ID);
+}
+
+/// Head selection does not resolve a daily run either — belt-and-braces beside the
+/// code-hash filter, and the two filter chains stay verbatim-identical.
+#[test]
+fn head_selection_does_not_resolve_a_daily_run() {
+    use nautilus_ls_lab::dispatch::ladder::{head_governed_params_pinned, head_manifest_pinned};
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let orb = stage_orb_run(data, 9, 35);
+    stage_daily_run(data, 17);
+
+    let (head_id, head) = head_manifest_pinned(data, Some(35)).expect("the ORB head resolves");
+    assert_eq!(head_id, orb);
+    assert_eq!(head.strategy_id, nautilus_ls_lab::params::STRATEGY_ID);
+    assert_eq!(head_governed_params_pinned(data, Some(35)).strategy_id, "orb");
+}
+
+/// An unreadable older manifest is skipped, not fatal.
+///
+/// A filtered lookup has to read *every* manifest rather than only the newest, so it now
+/// touches old runs a bare newest-by-id lookup never opened. A strict read would turn a
+/// previously-succeeding lookup into a hard error the first time one of those failed to
+/// parse — a regression introduced by the fix.
+#[test]
+fn an_unreadable_older_manifest_is_skipped() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let old = stage_orb_run(data, 8, 34);
+    let newer = stage_orb_run(data, 9, 35);
+    stage_daily_run(data, 17);
+
+    std::fs::write(data.join("runs").join(&old).join(MANIFEST_FILE), "{ not json").unwrap();
+
+    let (resolved, _) = latest_finalized_run(data).unwrap().expect("the readable ORB run resolves");
+    assert_eq!(resolved, newer);
+
+    // …and when the corrupt one is the ONLY ORB run, the lookup is empty rather than an error.
+    let dir2 = tempdir().unwrap();
+    let solo = stage_orb_run(dir2.path(), 8, 34);
+    std::fs::write(dir2.path().join("runs").join(&solo).join(MANIFEST_FILE), "{ not json").unwrap();
+    assert!(latest_finalized_run(dir2.path()).unwrap().is_none());
+}
+
+/// With only ORB runs present, every consumer resolves exactly as it did before this unit
+/// — the filters are asserted no-ops on a single-strategy registry.
+#[test]
+fn a_single_strategy_registry_resolves_exactly_as_before() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    stage_orb_run(data, 8, 34);
+    let newest = stage_orb_run(data, 9, 35);
+
+    let (resolved, m) = latest_finalized_run(data).unwrap().unwrap();
+    assert_eq!(resolved, newest, "still the newest by run-order key");
+    assert_eq!(m.strategy_version, 35);
+    // A fresh registry is still `None`, not an error.
+    let empty = tempdir().unwrap();
+    assert!(latest_finalized_run(empty.path()).unwrap().is_none());
+}
+
+/// `compare` refuses a cross-strategy pair in EVERY mode, naming the mismatch.
+///
+/// The incidental guards (code-hash equality, a wide param diff) would catch most such
+/// pairs but not reliably: a daily run records a full `OrbParams` it never ran under, so a
+/// daily run whose recorded assembly params match an ORB run's produces an *empty* param
+/// diff and reads as a clean reproduction of it.
+#[test]
+fn compare_refuses_a_cross_strategy_pair_in_every_mode() {
+    use nautilus_ls_lab::runner::research::{compare, CompareConfig, CompareMode};
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let orb = stage_orb_run(data, 9, 35);
+    let daily = stage_daily_run(data, 17);
+
+    for mode in [CompareMode::Param, CompareMode::Data, CompareMode::Code] {
+        let err = compare(&CompareConfig {
+            data_home: data.to_path_buf(),
+            run_a: Some(orb.clone()),
+            run_b: Some(daily.clone()),
+            mode,
+            explanation: Some("explained".to_string()),
+        })
+        .expect_err("a cross-strategy pair is refused, not merely failed");
+        let msg = err.to_string();
+        assert!(msg.contains("different strategies"), "{mode:?}: {msg}");
+        assert!(msg.contains(DAILY_STRATEGY_ID), "{mode:?} names the mismatch: {msg}");
+    }
+
+    // A same-strategy pair still compares (the refusal is not a blanket one).
+    let orb_b = stage_orb_run(data, 10, 36);
+    let out = compare(&CompareConfig {
+        data_home: data.to_path_buf(),
+        run_a: Some(orb),
+        run_b: Some(orb_b),
+        mode: CompareMode::Param,
+        explanation: None,
+    });
+    assert!(out.is_ok(), "two ORB runs still compare: {:?}", out.err());
+}
+
+/// The seven consumers all resolve "the current run" through the filtered lookup.
+///
+/// The partition lives in `latest_finalized_run`'s default rather than in a parameter
+/// threaded through each site — the same reasoning KTD5 applies to `strategy_code_hash()`,
+/// where a parameter every site passes `"orb"` to is just seven chances to forget. What
+/// that trades away is the compiler's help: a consumer could reintroduce a bare
+/// newest-by-id scan of its own and nothing would object. This guard is that objection.
+#[test]
+fn the_seven_consumers_all_resolve_through_the_filtered_lookup() {
+    let research = include_str!("../src/runner/research.rs");
+    let governed = include_str!("../src/runner/governed.rs");
+    let report = include_str!("../src/runner/report.rs");
+
+    // The seven consumers map onto SIX call sites, because `turn()`'s params adoption and
+    // its range inheritance share one `prior` binding. Counted exactly, so that a consumer
+    // quietly dropping the lookup — or a new one appearing that never went through it —
+    // shows up as an arithmetic mismatch rather than being absorbed.
+    //
+    //   research.rs  `:429`  turn params adoption AND range inheritance (one binding)
+    //   research.rs  `:2189` the diagnose trial anchor
+    //   governed.rs  `:196`  the KEEP/REVERT baseline
+    //   report.rs    `:328`, `:491`, `:1015`  the three reporting commands
+    //
+    // The `+ 1`s are non-call occurrences of the same token: research.rs's own `pub fn`
+    // definition, and report.rs's `absent_run_id_defaults_to_latest_finalized_run()` test
+    // name.
+    assert_eq!(
+        research.matches("latest_finalized_run(").count(),
+        2 + 1,
+        "research.rs: two call sites covering three consumers, plus the definition"
+    );
+    assert_eq!(governed.matches("latest_finalized_run(").count(), 1, "the KEEP/REVERT baseline");
+    assert_eq!(
+        report.matches("latest_finalized_run(").count(),
+        3 + 1,
+        "report.rs: the three reporting commands, plus a test name"
+    );
+
+    // No consumer resolves "the newest run" by scanning ids itself. `ordered_runs` is
+    // private to research.rs by design; the guard is that the other two files never grow
+    // their own equivalent.
+    for (name, src) in [("governed.rs", governed), ("report.rs", report)] {
+        assert!(
+            !src.contains("list_runs(") && !src.contains("ordered_runs("),
+            "{name} must resolve the current run through the filtered lookup, not by \
+             scanning run ids — an unfiltered scan is exactly the silent path R24 closes"
+        );
+    }
 }

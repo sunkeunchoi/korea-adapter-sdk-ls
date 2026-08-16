@@ -100,13 +100,50 @@ fn ordered_runs(data_home: &Path) -> Vec<String> {
     runs
 }
 
-/// The newest finalized run's id + manifest, or `None` on a fresh registry
+/// The newest finalized **ORB** run's id + manifest, or `None` on a fresh registry
 /// (KTD1: current-params authority is the latest finalized manifest).
+///
+/// # The strategy partition (P7/U8, KTD14, R24)
+///
+/// This used to be a bare newest-by-run-id lookup, which was correct while `"orb"` was the
+/// only strategy in the registry. It no longer is: the daily multi-session path writes into
+/// the same `<data>/runs` tree, and nothing structurally separates the two homes — the
+/// separation is one `LS_DATA_HOME` slip deep.
+///
+/// The filter is applied **here**, in the default, rather than threaded as an argument
+/// through the seven consumers that trust this function — `turn()`'s params adoption
+/// (`:392`), range inheritance (`:426`), `decide_keep_or_revert`
+/// (`governed.rs:196`), the diagnose trial anchor (`:2133`), and the three reporting
+/// commands (`report.rs:328`, `:491`, `:1015`). That is the same reasoning KTD5 applies to
+/// `strategy_code_hash()`: a parameter every call site passes the literal `"orb"` to is
+/// seven chances to forget, on lookups whose failure mode is *silent* — a daily run
+/// finalized after the newest ORB run would become the ORB turn's adopted params, its
+/// inherited range, its KEEP/REVERT baseline, and its trial anchor, all without an error.
+/// A caller that genuinely wants another strategy asks for it by name via
+/// [`latest_finalized_run_for`].
+///
+/// Every filter here is a **no-op** against the existing registry, where all eight
+/// committed manifests carry `strategy_id: "orb"`.
 pub fn latest_finalized_run(data_home: &Path) -> anyhow::Result<Option<(String, Manifest)>> {
-    match ordered_runs(data_home).last() {
-        None => Ok(None),
-        Some(run_id) => Ok(Some((run_id.clone(), read_manifest(data_home, run_id)?))),
-    }
+    latest_finalized_run_for(data_home, crate::params::STRATEGY_ID)
+}
+
+/// The newest finalized run of `strategy_id`, or `None` when the registry holds none.
+///
+/// Reads **every** manifest newest-first rather than only the newest run, because the
+/// newest run may now belong to the other strategy. Unreadable manifests are skipped, not
+/// fatal — the same `filter_map(.. .ok())` discipline as `ladder.rs:88`. A strict read
+/// would turn a previously-succeeding lookup into a hard error the first time an old
+/// manifest failed to parse, which is a regression the partition must not introduce.
+pub fn latest_finalized_run_for(
+    data_home: &Path,
+    strategy_id: &str,
+) -> anyhow::Result<Option<(String, Manifest)>> {
+    Ok(ordered_runs(data_home)
+        .into_iter()
+        .rev()
+        .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        .find(|(_rid, m)| m.strategy_id == strategy_id))
 }
 
 /// The checkpoint bar-series label for a bar (`1-DAY`, `n-MINUTE`), matching
@@ -889,6 +926,25 @@ fn resolve_pair(cfg: &CompareConfig) -> anyhow::Result<(String, Manifest, String
 /// equal-or-explained clause).
 pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
     let (a_id, a, b_id, b) = resolve_pair(cfg)?;
+
+    // A cross-strategy pair is refused in EVERY mode, before any comparison runs (R24).
+    // The incidental guards would catch most such pairs — the code hashes differ, and the
+    // param diff is wide — but not reliably: `Manifest.params` is a non-optional
+    // `OrbParams`, so a daily run asserts a full ORB parameter set it never ran under, and
+    // a daily run whose recorded assembly params happen to match an ORB run's would produce
+    // an *empty* param diff and read as a clean reproduction of it. Refusing on the
+    // discriminator is the only check that does not depend on the values lining up.
+    if a.strategy_id != b.strategy_id {
+        anyhow::bail!(
+            "refusing to compare runs of different strategies: {a_id} is {:?} and {b_id} is \
+             {:?}. `Manifest.params` cannot express \"this run has no OrbParams\", so a daily \
+             run carries a fictitious ORB parameter set — a param diff across the two \
+             compares values neither run was selected under (KTD14, R24)",
+            a.strategy_id,
+            b.strategy_id
+        );
+    }
+
     let mut lines = vec![format!("comparing {a_id} -> {b_id}")];
     let diff = param_diff(&a.params, &b.params);
     lines.push(format!("param diff: {diff:?}"));
