@@ -2310,6 +2310,7 @@ mod tests {
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch: None,
+            daily_params: None,
             created_utc: "2026-07-10T00:00:00+00:00".to_string(),
         };
         std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())

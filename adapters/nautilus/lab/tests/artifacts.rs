@@ -47,6 +47,7 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,
+        daily_params: None,
         created_utc: "2024-01-05T09:00:00Z".into(),
     }
 }
@@ -93,6 +94,19 @@ fn writes_four_artifacts_and_finalizes() {
     for f in [MANIFEST_FILE, PERFORMANCE_FILE, DATA_QUALITY_FILE, DECISIONS_FILE] {
         assert!(run_dir.join(f).exists(), "{f} written");
     }
+    // The set is EXACTLY four, not merely at-least-four. Without this, a path that started
+    // emitting an extra artifact on every run — rather than only on the daily path, as
+    // P7/U6's `observation.json` does — would pass unnoticed.
+    let mut written: Vec<String> = std::fs::read_dir(&run_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        vec![DATA_QUALITY_FILE, DECISIONS_FILE, MANIFEST_FILE, PERFORMANCE_FILE],
+        "a scripted run emits exactly the four base artifacts"
+    );
     // Each JSON artifact round-trips through its serde type.
     let m: Manifest = serde_json::from_str(&std::fs::read_to_string(run_dir.join(MANIFEST_FILE)).unwrap()).unwrap();
     assert_eq!(m.run_id, id);
@@ -314,4 +328,67 @@ fn pre_u5_manifest_deserializes_without_dispatch_link() {
     });
     let m: Manifest = serde_json::from_value(json).unwrap();
     assert!(m.dispatch.is_none(), "absent dispatch link -> None");
+}
+
+/// P7/U6: `write_observation` adds a **fifth** file, and only when called. The daily runner
+/// is its only caller, and it calls it only for a run whose `return_on_risk` exists (R25) —
+/// so five is a conditional maximum, never the new invariant.
+#[test]
+fn the_observation_is_a_conditional_fifth_artifact() {
+    use nautilus_ls_lab::artifacts::observation::RunObservation;
+    use nautilus_ls_lab::artifacts::OBSERVATION_FILE;
+
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let id = fixed_run_id(RunSource::Backtest, 0);
+    let writer = RunWriter::new(data, &id).unwrap();
+
+    // `RunObservation::build` and `ObservationParts` are crate-private (the placeholder
+    // marker is a governance gate), so this test constructs the artifact the only way an
+    // out-of-crate consumer legitimately can: by deserializing one. The build path itself is
+    // covered by `artifacts::observation`'s own unit tests and by `backtest_daily_run.rs`.
+    let mut t = trade("005930.XKRX", 100.0, 60_000.0);
+    t.risk_capital = Some(400.0);
+    t.realized_r = Some(0.25);
+    let perf = PerformanceReport::assemble(vec![t], 1_000_000.0);
+    let obs: RunObservation = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "run_id": id,
+        "data_range": { "start": "20240103", "end": "20240112" },
+        "catalog_fingerprint": "cafe1234",
+        "observed_net_ror": 0.25,
+        "ranking_signal": "prior_turnover_desc",
+        "ranking_signal_is_placeholder": true,
+        "censored_positions": 0,
+        "closed_positions": 1,
+        "sessions": [{
+            "session_date": "2024-01-03",
+            "realized_pnl": 100.0,
+            "risk_capital": 400.0,
+            "entries": 1,
+            "closes": 1
+        }]
+    }))
+    .expect("the artifact shape round-trips");
+
+    writer.write_manifest(&manifest(&id, RunSource::Backtest, OrbParams::default())).unwrap();
+    writer.write_performance(&perf).unwrap();
+    writer.write_data_quality(&DataQualityReport::backtest(vec![], vec![])).unwrap();
+    writer.write_decisions(&[telemetry_envelope()]).unwrap();
+    writer.write_observation(&obs).unwrap();
+    let run_dir = writer.finalize().unwrap();
+
+    let mut written: Vec<String> = std::fs::read_dir(&run_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        vec![DATA_QUALITY_FILE, DECISIONS_FILE, MANIFEST_FILE, OBSERVATION_FILE, PERFORMANCE_FILE]
+    );
+    let back: RunObservation =
+        serde_json::from_str(&std::fs::read_to_string(run_dir.join(OBSERVATION_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(back, obs);
 }

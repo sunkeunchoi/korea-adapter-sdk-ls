@@ -16,6 +16,10 @@ name = "lab-backtest"
 path = "src/bin/lab-backtest.rs"
 
 [[bin]]
+name = "lab-backtest-daily"
+path = "src/bin/lab-backtest-daily.rs"
+
+[[bin]]
 name = "lab-live"
 path = "src/bin/lab-live.rs"
 

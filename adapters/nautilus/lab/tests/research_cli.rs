@@ -19,7 +19,9 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use std::collections::BTreeMap;
 
 use nautilus_ls_lab::agent::recording::DecisionRecorder;
-use nautilus_ls_lab::artifacts::manifest::{hash_bytes, DataRange, Manifest};
+use nautilus_ls_lab::artifacts::manifest::{
+    hash_bytes, DailyManifestParts, DataRange, Manifest,
+};
 use nautilus_ls_lab::artifacts::{list_runs, MANIFEST_FILE};
 use nautilus_ls_lab::runner::backtest::{run as backtest_run, BacktestConfig};
 use nautilus_ls_lab::runner::research::{
@@ -327,6 +329,7 @@ fn report_mfe_through_the_bin_prints_the_distribution() {
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,
+        daily_params: None,
         created_utc: "2026-07-10T00:00:00+00:00".to_string(),
     };
     std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -487,6 +490,383 @@ fn a_pre_fingerprint_manifest_still_deserializes_and_round_trips() {
     with.lab_src_fingerprint = Some("deadbeef".repeat(8));
     let back: Manifest = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
     assert_eq!(back.lab_src_fingerprint, with.lab_src_fingerprint);
+}
+
+// ===========================================================================
+// U3 (plan 2026-08-15-001) — the daily parameter set, its manifest carriage,
+// the daily code hash, and the registry discriminator.
+//
+// Sited beside the legacy round-trip above because that test pins the
+// optional-field convention (`serde(default, skip_serializing_if)`) this unit
+// mirrors: `Manifest.daily_params` is the fifth such field, and the price of
+// getting it right is that no ORB identity hash moves.
+// ===========================================================================
+
+/// `strategy_code_hash()` over `strategy/orb.rs` — the head identity. U3 adds a
+/// *sibling* hash function rather than touching this one (KTD5), so the digest must
+/// be exactly what it was before the unit landed.
+const PINNED_ORB_CODE_HASH: &str =
+    "7571abefd715cfa0095ac04ba566f165b6e536cfcb7f86f4a8b88dcf2240133c";
+
+/// `governed_params_hash(&OrbParams::default())` — the head-params identity, a hash
+/// over the *serialized* `OrbParams`. U3 leaves `Manifest.params` a concrete
+/// non-optional `OrbParams` precisely so this cannot move.
+const PINNED_DEFAULT_GOVERNED_PARAMS_HASH: &str =
+    "6a09279cb3182c90b0c2ec6d2b0ff0ba69ccbb94b69f184caf70098d5ecc0f3e";
+
+/// A stand-in for the daily strategy's embedded source. U4 owns `strategy/daily.rs`
+/// and passes its `include_str!` const; the hash function is source-agnostic, which
+/// is what lets U3 land and be tested first.
+const FAKE_DAILY_SOURCE: &str = "// daily strategy source (U4 supplies the real const)\n";
+
+fn frozen_prereg() -> nautilus_ls_lab::lineage_prereg::LineagePreRegistration {
+    let path = nautilus_ls_lab::lineage_prereg::frozen_lineage_prereg_path();
+    nautilus_ls_lab::lineage_prereg::load(&path)
+        .expect("the committed frozen pre-registration loads")
+        .values
+}
+
+/// The pre-P7 `Manifest` shape, mirrored field-for-field in declaration order.
+/// `serde_json` writes struct fields in declaration order, so an ORB manifest that
+/// serializes to the same bytes as this mirror is byte-identical to its pre-change
+/// form — a real byte comparison, not a key-set assertion.
+#[derive(serde::Serialize)]
+struct PreP7Manifest {
+    run_id: String,
+    source: nautilus_ls_lab::artifacts::RunSource,
+    strategy_id: String,
+    strategy_version: u32,
+    params: nautilus_ls_lab::params::OrbParams,
+    data_range: DataRange,
+    catalog_fingerprint: String,
+    universe_hash: String,
+    strategy_code_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lab_src_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkpoint_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    universe_metadata_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dispatch: Option<nautilus_ls_lab::artifacts::manifest::DispatchLink>,
+    created_utc: String,
+}
+
+/// A representative ORB manifest (`daily_params: None`, as every committed one is).
+fn orb_manifest() -> Manifest {
+    use nautilus_ls_lab::artifacts::RunSource;
+    use nautilus_ls_lab::params::OrbParams;
+    Manifest {
+        run_id: "20260101T000000Z-backtest-orb-v35".to_string(),
+        source: RunSource::Backtest,
+        strategy_id: "orb".to_string(),
+        strategy_version: 35,
+        params: OrbParams::default(),
+        data_range: DataRange { start: "20240102".to_string(), end: "20240105".to_string() },
+        catalog_fingerprint: "fp".to_string(),
+        universe_hash: "uh".to_string(),
+        strategy_code_hash: nautilus_ls_lab::artifacts::manifest::strategy_code_hash(),
+        lab_src_fingerprint: Some("deadbeef".repeat(8)),
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+        dispatch: None,
+        daily_params: None,
+        created_utc: "2026-01-01T00:00:00+00:00".to_string(),
+    }
+}
+
+fn daily_parts(daily: nautilus_ls_lab::params_daily::DailyParams) -> DailyManifestParts<'static> {
+    DailyManifestParts {
+        daily,
+        assembly_params: nautilus_ls_lab::params::OrbParams::default(),
+        daily_source: FAKE_DAILY_SOURCE,
+        started_utc: Utc.with_ymd_and_hms(2026, 8, 15, 0, 0, 0).unwrap(),
+        data_range: DataRange { start: "20160801".to_string(), end: "20191230".to_string() },
+        catalog_fingerprint: "fp".to_string(),
+        universe_hash: "uh".to_string(),
+        lab_src_fingerprint: Some("cafebabe".repeat(8)),
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+    }
+}
+
+#[test]
+fn a_pre_daily_params_manifest_deserializes_as_none_and_round_trips_without_a_key_change() {
+    // Scenario 1: a manifest JSON literal written before the field existed parses with
+    // `daily_params: None` and re-serializes to the *same* key set — the field is
+    // skipped, so no committed manifest gains a key on read-modify-write.
+    let legacy = json!({
+        "run_id": "20260101T000000Z-backtest-orb-v0",
+        "source": "backtest",
+        "strategy_id": "orb",
+        "strategy_version": 0,
+        "params": nautilus_ls_lab::params::OrbParams::default(),
+        "data_range": { "start": "20240102", "end": "20240105" },
+        "catalog_fingerprint": "fp",
+        "universe_hash": "uh",
+        "strategy_code_hash": "ch",
+        "created_utc": "2026-01-01T00:00:00+00:00"
+    });
+    let m: Manifest = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(m.daily_params.is_none(), "an absent daily_params deserializes to None");
+
+    let round_tripped: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    let mut before: Vec<&String> = legacy.as_object().unwrap().keys().collect();
+    let mut after: Vec<&String> = round_tripped.as_object().unwrap().keys().collect();
+    before.sort();
+    after.sort();
+    assert_eq!(after, before, "the round-trip neither gains nor loses a key");
+    assert_eq!(round_tripped, legacy, "and every value survives unchanged");
+}
+
+#[test]
+fn a_manifest_carrying_daily_params_round_trips_every_field() {
+    // Scenario 2.
+    use nautilus_ls_lab::params_daily::DailyParams;
+    let daily = DailyParams {
+        strategy_version: 3,
+        target_m: 5,
+        notional_per_position: 1_234_567.0,
+        ..DailyParams::default()
+    };
+    let m = Manifest::new_daily(daily_parts(daily.clone())).expect("valid daily params");
+    let text = serde_json::to_string(&m).unwrap();
+    assert!(text.contains("daily_params"), "a daily run serializes the field: {text}");
+    let back: Manifest = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, m, "the whole manifest round-trips");
+    assert_eq!(back.daily_params.as_ref(), Some(&daily), "every daily field is preserved");
+    // And a daily manifest read back still passes the pairing check.
+    back.validate_strategy_identity().expect("a daily manifest is self-consistent");
+}
+
+#[test]
+fn an_orb_manifest_serializes_byte_identically_to_its_pre_change_form() {
+    // Scenario 3. The mirror struct is the pre-P7 `Manifest`, field-for-field in
+    // declaration order; `daily_params` is `skip_serializing_if = "Option::is_none"`,
+    // so an ORB run's bytes must be indistinguishable.
+    let m = orb_manifest();
+    let pre = PreP7Manifest {
+        run_id: m.run_id.clone(),
+        source: m.source,
+        strategy_id: m.strategy_id.clone(),
+        strategy_version: m.strategy_version,
+        params: m.params.clone(),
+        data_range: m.data_range.clone(),
+        catalog_fingerprint: m.catalog_fingerprint.clone(),
+        universe_hash: m.universe_hash.clone(),
+        strategy_code_hash: m.strategy_code_hash.clone(),
+        lab_src_fingerprint: m.lab_src_fingerprint.clone(),
+        checkpoint_hash: m.checkpoint_hash.clone(),
+        universe_metadata_hash: m.universe_metadata_hash.clone(),
+        dispatch: m.dispatch.clone(),
+        created_utc: m.created_utc.clone(),
+    };
+    let after = serde_json::to_string(&m).unwrap();
+    let before = serde_json::to_string(&pre).unwrap();
+    assert_eq!(after, before, "an ORB manifest's bytes did not move");
+    assert!(!after.contains("daily_params"), "and the key is absent entirely: {after}");
+    // The same must hold for the ladder's content hash over a manifest.
+    assert_eq!(hash_bytes(after.as_bytes()), hash_bytes(before.as_bytes()));
+}
+
+#[test]
+fn both_orb_identity_hashes_are_unmoved() {
+    // Scenario 4. `strategy_code_hash()` hashes `strategy/orb.rs` (untouched — the
+    // daily path calls the sibling instead) and `governed_params_hash` hashes the
+    // serialized `OrbParams` (untouched — `Manifest.params` stays a concrete
+    // non-optional `OrbParams` rather than becoming an enum).
+    use nautilus_ls_lab::dispatch::ladder::governed_params_hash;
+    use nautilus_ls_lab::params::OrbParams;
+    assert_eq!(
+        nautilus_ls_lab::artifacts::manifest::strategy_code_hash(),
+        PINNED_ORB_CODE_HASH,
+        "the ORB source digest is head identity — U3 must not move it"
+    );
+    assert_eq!(
+        governed_params_hash(&OrbParams::default()),
+        PINNED_DEFAULT_GOVERNED_PARAMS_HASH,
+        "the head-params digest is head identity — U3 must not move it"
+    );
+}
+
+#[test]
+fn the_daily_defaults_are_the_frozen_terms() {
+    // Scenario 5. Read from the frozen artifact, never restated: a typed constant that
+    // merely repeated the plan would agree with itself while disagreeing with the
+    // freeze. The stop multiple is prose in the artifact, so the typed constant is
+    // asserted against the *string* rather than parsed out of it.
+    use nautilus_ls_lab::params_daily::{
+        DailyParams, FROZEN_ATR_WINDOW_SESSIONS, FROZEN_DIRECTIONALITY,
+        FROZEN_HOLDING_PERIOD_SESSIONS, FROZEN_STEADY_STATE_CONCURRENCY, FROZEN_STOP_ATR_MULT,
+        FROZEN_STOP_RULE, FROZEN_TARGET_M,
+    };
+    let frozen = frozen_prereg();
+    let h = &frozen.hypothesis;
+    let defaults = DailyParams::default();
+
+    assert_eq!(defaults.holding_period_sessions, h.holding_period_sessions);
+    assert_eq!(FROZEN_HOLDING_PERIOD_SESSIONS, h.holding_period_sessions);
+    assert_eq!(defaults.target_m, h.target_m);
+    assert_eq!(FROZEN_TARGET_M, h.target_m);
+    assert_eq!(defaults.directionality, h.directionality);
+    assert_eq!(FROZEN_DIRECTIONALITY, h.directionality);
+    assert_eq!(defaults.steady_state_concurrency(), h.steady_state_concurrency);
+    assert_eq!(FROZEN_STEADY_STATE_CONCURRENCY, h.steady_state_concurrency);
+    // The runtime cap is NOT the frozen steady state — they are different quantities and
+    // equating them was a real defect. `steady_state_concurrency` is the expectation the
+    // lineage was sized against; `max_concurrent` is a per-bar assertion on `open +
+    // pending`, and within a session the expiring cohort has not exited when that
+    // session's entries are evaluated. So the cap must admit one further cohort, or it
+    // binds transiently and refuses real entries in instrument-id order (measured: 136
+    // against 128 at the frozen terms, up to `target_m` spurious refusals per session).
+    assert_eq!(defaults.max_concurrent, defaults.transient_peak_concurrency());
+    assert_eq!(defaults.transient_peak_concurrency(), h.steady_state_concurrency + h.target_m);
+    assert!(
+        defaults.max_concurrent > h.steady_state_concurrency,
+        "the cap must not bind at the frozen steady state: cap {} vs steady state {}",
+        defaults.max_concurrent,
+        h.steady_state_concurrency
+    );
+
+    // The stop rule is prose: assert the verbatim string, then that the typed multiple
+    // and ATR window are the numbers that prose names.
+    assert_eq!(FROZEN_STOP_RULE, h.stop_rule, "the verbatim frozen stop rule");
+    assert_eq!(defaults.stop_atr_mult, FROZEN_STOP_ATR_MULT);
+    assert!(
+        h.stop_rule.starts_with(&format!("{FROZEN_STOP_ATR_MULT} x ATR")),
+        "the typed stop multiple is the one the frozen prose names: {}",
+        h.stop_rule
+    );
+    assert_eq!(defaults.atr_window_sessions, FROZEN_ATR_WINDOW_SESSIONS);
+    assert!(
+        h.stop_rule.contains(&format!("ATR({} session)", FROZEN_ATR_WINDOW_SESSIONS as usize)),
+        "the typed ATR window is the one the frozen prose names: {}",
+        h.stop_rule
+    );
+    // The daily ATR window is NOT ORB's — ORB's 14 would need 15 prior bars.
+    assert_ne!(
+        defaults.atr_window_sessions,
+        nautilus_ls_lab::params::OrbParams::default().atr_window,
+        "the daily ATR window must not be inherited from ORB"
+    );
+    // And the verdict's block length is tied to the hold, so the two cannot drift.
+    assert!(frozen.verdict.bootstrap_block_length_sessions >= h.holding_period_sessions);
+}
+
+#[test]
+fn a_hold_below_the_frozen_value_is_rejected_and_the_call_site_refuses_the_run() {
+    // Scenario 6: `validate()` rejects it AND `Manifest::new_daily` — the daily path's
+    // run-construction point and the only production caller of `validate()` — refuses
+    // rather than constructing the manifest.
+    use nautilus_ls_lab::params_daily::{DailyParams, FROZEN_HOLDING_PERIOD_SESSIONS};
+    let short = DailyParams {
+        holding_period_sessions: FROZEN_HOLDING_PERIOD_SESSIONS - 1,
+        ..DailyParams::default()
+    };
+    let err = short.validate().expect_err("a short hold is rejected");
+    assert!(err.contains("holding_period_sessions"), "{err}");
+    assert!(err.contains(&FROZEN_HOLDING_PERIOD_SESSIONS.to_string()), "names the freeze: {err}");
+
+    let refused = Manifest::new_daily(daily_parts(short)).expect_err("the call site refuses");
+    assert_eq!(refused, err, "the run-construction refusal is the validate() message");
+
+    // A hold ABOVE the freeze is refused too: the frozen 16-session bootstrap block
+    // would be shorter than the hold, which understates the standard error.
+    let long = DailyParams {
+        holding_period_sessions: FROZEN_HOLDING_PERIOD_SESSIONS + 1,
+        ..DailyParams::default()
+    };
+    assert!(long.validate().is_err(), "a longer hold is refused too");
+}
+
+#[test]
+fn a_non_positive_atr_window_or_sizing_term_is_rejected() {
+    // Scenario 7. Either would produce a whole run of zero trades that reads as a real
+    // result: a non-positive ATR window makes ATR permanently unavailable and the stop
+    // fails closed (KTD9); a non-positive notional floors every entry quantity to 0.
+    use nautilus_ls_lab::params_daily::DailyParams;
+    for window in [0.0, -1.0, f64::NAN] {
+        let p = DailyParams { atr_window_sessions: window, ..DailyParams::default() };
+        let err = p.validate().expect_err("a non-positive ATR window is rejected");
+        assert!(err.contains("atr_window_sessions"), "{err}");
+        assert!(Manifest::new_daily(daily_parts(p)).is_err(), "and the call site refuses");
+    }
+    for notional in [0.0, -1.0, f64::INFINITY] {
+        let p = DailyParams { notional_per_position: notional, ..DailyParams::default() };
+        let err = p.validate().expect_err("a non-positive sizing term is rejected");
+        assert!(err.contains("notional_per_position"), "{err}");
+        assert!(Manifest::new_daily(daily_parts(p)).is_err(), "and the call site refuses");
+    }
+    // R27: ORB's sizing terms are not inherited.
+    let orb = nautilus_ls_lab::params::OrbParams::default();
+    let daily = DailyParams::default();
+    assert_ne!(daily.notional_per_position, orb.notional_per_position);
+    assert_ne!(daily.max_concurrent, orb.max_concurrent);
+}
+
+#[test]
+fn an_orb_manifest_carrying_daily_params_is_refused_not_ignored() {
+    // Scenario 8. Ignoring the extra field would let a run whose engine, OMS, and hold
+    // semantics are ORB's advertise this lineage's frozen terms.
+    use nautilus_ls_lab::params_daily::DailyParams;
+    let mut m = orb_manifest();
+    m.validate_strategy_identity().expect("a plain ORB manifest is fine");
+    m.daily_params = Some(DailyParams::default());
+    let err = m.validate_strategy_identity().expect_err("refused, not ignored");
+    assert!(err.contains("refused rather than ignored"), "{err}");
+
+    // The mirror failure: a daily-identified manifest with no daily params.
+    let mut bare = orb_manifest();
+    bare.strategy_id = nautilus_ls_lab::params_daily::DAILY_STRATEGY_ID.to_string();
+    let err = bare.validate_strategy_identity().expect_err("a bare daily manifest is refused");
+    assert!(err.contains("carries no daily params"), "{err}");
+
+    // And a manifest whose discriminator disagrees with its own params.
+    let mut mismatched =
+        Manifest::new_daily(daily_parts(DailyParams::default())).expect("valid daily manifest");
+    mismatched.strategy_id = "something-else".to_string();
+    assert!(mismatched.validate_strategy_identity().is_err(), "the two must agree");
+}
+
+#[test]
+fn a_daily_run_is_distinguishable_from_an_orb_run_in_the_registry() {
+    // Scenario 9 (KTD14). Both `strategy_id` and the run id derive from the parameter
+    // set's `strategy_id`, whose ORB default is "orb" — so a daily runner that filled
+    // the non-optional `params` with `OrbParams::default()` would emit a manifest no
+    // strategy filter could tell apart. `new_daily` derives both from the DAILY params,
+    // and the carried assembly `OrbParams` here is a bit-exact `OrbParams::default()`
+    // — i.e. it carries `strategy_id: "orb"` — which is precisely the trap.
+    use nautilus_ls_lab::params::{OrbParams, STRATEGY_ID};
+    use nautilus_ls_lab::params_daily::{DailyParams, DAILY_STRATEGY_ID};
+    let m = Manifest::new_daily(daily_parts(DailyParams::default())).expect("valid");
+
+    assert_eq!(m.params.strategy_id, STRATEGY_ID, "the carried assembly params are ORB's");
+    assert_ne!(m.strategy_id, STRATEGY_ID, "yet the manifest is NOT identified as ORB");
+    assert_eq!(m.strategy_id, DAILY_STRATEGY_ID);
+    assert!(m.run_id.contains(DAILY_STRATEGY_ID), "the run id carries it too: {}", m.run_id);
+    assert!(!m.run_id.contains("-orb-"), "and never reads as an ORB run: {}", m.run_id);
+
+    assert_ne!(
+        m.strategy_code_hash, PINNED_ORB_CODE_HASH,
+        "a daily run records the DAILY code hash, not the ORB digest"
+    );
+    assert_eq!(
+        m.strategy_code_hash,
+        nautilus_ls_lab::artifacts::manifest::daily_strategy_code_hash(FAKE_DAILY_SOURCE)
+    );
+    // The sibling hash cannot move the ORB one.
+    assert_eq!(
+        nautilus_ls_lab::artifacts::manifest::strategy_code_hash(),
+        PINNED_ORB_CODE_HASH
+    );
+    // A daily strategy_id colliding with ORB's is rejected outright.
+    let colliding = DailyParams { strategy_id: STRATEGY_ID.to_string(), ..DailyParams::default() };
+    let err = colliding.validate().expect_err("the ORB id is not available to the daily path");
+    assert!(err.contains("collides"), "{err}");
+    assert!(Manifest::new_daily(daily_parts(colliding)).is_err(), "and the call site refuses");
+    // Sanity: the ORB parameter set's own id is unchanged.
+    assert_eq!(OrbParams::default().strategy_id, STRATEGY_ID);
 }
 
 #[test]
@@ -2279,6 +2659,7 @@ mod report_tiers {
             checkpoint_hash: None,
             universe_metadata_hash: Some(hash),
             dispatch: None,
+            daily_params: None,
             created_utc: "2026-06-30T07:00:00Z".to_string(),
         };
         std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -2494,6 +2875,7 @@ mod report_sample {
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch: None,
+            daily_params: None,
             created_utc: "2026-06-01T00:00:00+00:00".to_string(),
         };
         std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())

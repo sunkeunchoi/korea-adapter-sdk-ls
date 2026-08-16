@@ -315,6 +315,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         checkpoint_hash: checkpoint_hash(&catalog_path),
         universe_metadata_hash: metadata.as_ref().map(|(hash, _)| hash.clone()),
         dispatch: None,
+        daily_params: None,
         created_utc: start.to_rfc3339(),
     };
 
@@ -954,11 +955,11 @@ fn collect_gaps(checkpoint: Option<&Checkpoint>, missing: &[String]) -> Vec<Cove
     gaps
 }
 
-fn load_checkpoint(catalog_path: &Path) -> Option<Checkpoint> {
+pub(crate) fn load_checkpoint(catalog_path: &Path) -> Option<Checkpoint> {
     Checkpoint::load(&catalog_path.join("ingest-checkpoint.json")).ok()
 }
 
-fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
+pub(crate) fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
     std::fs::read(catalog_path.join("ingest-checkpoint.json"))
         .ok()
         .map(|bytes| hash_bytes(&bytes))

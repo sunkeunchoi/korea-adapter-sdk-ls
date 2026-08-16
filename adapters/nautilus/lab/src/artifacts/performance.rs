@@ -3,9 +3,11 @@
 //! `PortfolioAnalyzer` rather than reimplementing them; the per-trade ledger and
 //! equity curve are assembled from the engine's fill/position events.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use nautilus_analysis::analyzer::PortfolioAnalyzer;
+use nautilus_model::identifiers::ClientOrderId;
 use nautilus_model::position::Position;
 use nautilus_model::types::{Currency, Money};
 use serde::{Deserialize, Serialize};
@@ -82,6 +84,113 @@ pub struct EntryRisk {
     pub risk_per_share: f64,
     /// The filled entry quantity (shares).
     pub qty: f64,
+}
+
+/// A shared, cloneable ledger of entry-fixed risk keyed by [`ClientOrderId`] (KTD3,
+/// R12) — the **daily** path's capture surface, standing beside ORB's
+/// instrument-keyed `EntryRiskLedger` rather than replacing it.
+///
+/// ORB's ledger keys by `InstrumentId` because ORB holds at most one open leg per
+/// symbol per session and its runner joins per session, so a symbol key is
+/// unambiguous. The daily path holds across sessions and re-enters the same symbol,
+/// so a symbol key **collapses** several positions onto one risk — which makes
+/// `Σ risk_capital` and therefore net RoR wrong.
+///
+/// `ClientOrderId` is the only identity the strategy holds at submit time (the
+/// `PositionId` does not exist until a fill mints one) and it is exactly the join
+/// key the read side carries as `Position.opening_order_id`. The runner clones a
+/// handle off the strategy before the engine consumes it — the same shared-handle
+/// pattern as [`crate::agent::sink::DecisionSink`] — and projects it into cache-read
+/// order after the single post-`end()` read.
+///
+/// The ledger carries two facts, not one: what was recorded **at submit**, and which
+/// of those the **stream** observed opening a position. The second is what makes the
+/// runner's `Some`-count reconciliation independent of the cache read it is checking
+/// — a cache read that has silently lost positions cannot shrink its own
+/// expectation. It is also what lets a venue or risk-engine rejection surface as a
+/// named run-level diagnostic instead of hard-failing an otherwise valid run.
+///
+/// Insertion order is preserved so the diagnostic can name the offending orders.
+#[derive(Debug, Clone, Default)]
+pub struct ClientOrderEntryRiskLedger {
+    inner: Arc<Mutex<ClientOrderRiskState>>,
+}
+
+#[derive(Debug, Default)]
+struct ClientOrderRiskState {
+    by_order: HashMap<ClientOrderId, EntryRisk>,
+    /// Every distinct client order id recorded, in record order.
+    order: Vec<ClientOrderId>,
+    /// The client order ids the **stream** observed opening a position.
+    opened: HashSet<ClientOrderId>,
+}
+
+impl ClientOrderEntryRiskLedger {
+    /// A fresh, empty ledger.
+    #[must_use]
+    pub fn new() -> Self {
+        ClientOrderEntryRiskLedger::default()
+    }
+
+    /// Record the entry-fixed risk carried by the entry order `client_order_id`.
+    /// A repeat record for the same id overwrites the risk but does **not** duplicate
+    /// the id in record order (client order ids are unique per submission, so this is
+    /// defensive).
+    pub fn record(&self, client_order_id: ClientOrderId, risk: EntryRisk) {
+        let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if st.by_order.insert(client_order_id, risk).is_none() {
+            st.order.push(client_order_id);
+        }
+    }
+
+    /// Record that the **stream** observed `client_order_id` opening a position — the
+    /// strategy calls this from its position-opened callback, where
+    /// `PositionOpened.opening_order_id` is exactly this key. Recording an id that was
+    /// never `record`ed is harmless: the reconciliation counts the intersection.
+    pub fn record_opened(&self, client_order_id: ClientOrderId) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).opened.insert(client_order_id);
+    }
+
+    /// The captured risk for `client_order_id`, if any.
+    #[must_use]
+    pub fn get(&self, client_order_id: &ClientOrderId) -> Option<EntryRisk> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).by_order.get(client_order_id).copied()
+    }
+
+    /// Every recorded entry, in record order.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<(ClientOrderId, EntryRisk)> {
+        let st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        st.order.iter().map(|id| (*id, st.by_order[id])).collect()
+    }
+
+    /// The recorded entries the stream observed opening a position, in record order —
+    /// the reconciliation basis for the runner's `Some`-count assertion.
+    #[must_use]
+    pub fn opened_entries(&self) -> Vec<ClientOrderId> {
+        let st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        st.order.iter().copied().filter(|id| st.opened.contains(id)).collect()
+    }
+
+    /// The recorded entries the stream never observed opening a position, in record
+    /// order — a venue or risk-engine rejection, or an order that never filled.
+    #[must_use]
+    pub fn unopened_entries(&self) -> Vec<ClientOrderId> {
+        let st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        st.order.iter().copied().filter(|id| !st.opened.contains(id)).collect()
+    }
+
+    /// The number of distinct entries recorded.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).order.len()
+    }
+
+    /// Whether nothing has been recorded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Join entry-time risk into a trade's ledger fields (R4): `risk_capital = qty ·

@@ -108,6 +108,7 @@ fn stage_live_run(
             lane: "cafef00d".into(),
             trading_env: "live".into(),
         }),
+        daily_params: None,
         created_utc: "2026-07-24T01:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();
@@ -149,6 +150,7 @@ fn stage_backtest_run(data: &std::path::Path, run_id: &str, params: &OrbParams) 
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,
+        daily_params: None,
         created_utc: "2026-07-24T01:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();
