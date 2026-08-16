@@ -955,11 +955,11 @@ fn collect_gaps(checkpoint: Option<&Checkpoint>, missing: &[String]) -> Vec<Cove
     gaps
 }
 
-fn load_checkpoint(catalog_path: &Path) -> Option<Checkpoint> {
+pub(crate) fn load_checkpoint(catalog_path: &Path) -> Option<Checkpoint> {
     Checkpoint::load(&catalog_path.join("ingest-checkpoint.json")).ok()
 }
 
-fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
+pub(crate) fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
     std::fs::read(catalog_path.join("ingest-checkpoint.json"))
         .ok()
         .map(|bytes| hash_bytes(&bytes))

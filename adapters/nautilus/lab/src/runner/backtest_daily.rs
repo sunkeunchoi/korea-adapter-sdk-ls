@@ -28,10 +28,10 @@
 //! unit land and be tested before the daily strategy exists.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use nautilus_backtest::config::{BacktestEngineConfig, SimulatedVenueConfig};
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_common::actor::DataActorNative;
@@ -49,10 +49,18 @@ use nautilus_trading::strategy::{Strategy, StrategyNative};
 
 use crate::agent::envelope::{Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger};
 use crate::agent::sink::DecisionSink;
-use crate::artifacts::manifest::DataRange;
-use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk};
+use crate::artifacts::data_quality::DataQualityReport;
+use crate::artifacts::manifest::{
+    range_fingerprint, universe_sequence_hash, DailyManifestParts, DataRange, Manifest,
+};
+use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk, PerformanceReport};
+use crate::artifacts::RunWriter;
 use crate::params::OrbParams;
+use crate::params_daily::DailyParams;
 use crate::runner::backtest::{build_candidates, is_daily, kst_date_of};
+use crate::strategy::daily::{
+    rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy,
+};
 use crate::strategy::orb::UniverseCandidate;
 
 // ---------------------------------------------------------------------------
@@ -722,18 +730,25 @@ pub struct DailyRunOutcome {
     pub unopened_entry_orders: Vec<ClientOrderId>,
 }
 
-/// The daily path's run configuration (U1 scope: data + selection inputs). The
-/// parameter carriage, manifest, and artifact tail are later units' work.
+/// The daily path's run configuration.
 #[derive(Debug, Clone)]
 pub struct DailyBacktestConfig {
     /// The data home (`<data>/catalog`, `<data>/runs`, …).
     pub data_home: PathBuf,
     /// The explicit pinned bar-data range.
     pub range: DataRange,
-    /// The candidate-assembly parameter set — `atr_window` and friends, read by the
-    /// shared [`build_candidates`]. The daily *selection rule* is the caller's
-    /// `rank` (KTD15), not anything in here.
+    /// The candidate-assembly parameter set — the knobs the *shared*
+    /// [`build_candidates`] reads. The daily *selection rule* is the caller's `rank`
+    /// (KTD15), not anything in here, and the sizing term is
+    /// [`DailyParams::notional_per_position`], never anything in here (R27).
+    ///
+    /// Its `atr_window` is **not** authoritative on this path: [`Self::assembly_params`]
+    /// forces it from [`DailyParams::atr_window_sessions`]. See that method for why.
     pub params: OrbParams,
+    /// The daily parameter set — the frozen terms, and the source of the manifest's
+    /// registry discriminator (KTD14). [`Self::target_m`] is kept in agreement with
+    /// its `target_m`; [`run`] refuses a config where they have drifted apart.
+    pub daily: DailyParams,
     /// Starting account balance (KRW).
     pub starting_balance: f64,
     /// The frozen concurrency target: each session takes the top `target_m` of the
@@ -742,15 +757,37 @@ pub struct DailyBacktestConfig {
 }
 
 impl DailyBacktestConfig {
-    /// A config over `data_home` for `[start, end]` (YYYYMMDD).
+    /// A config over `data_home` for `[start, end]` (YYYYMMDD), taking the frozen daily
+    /// terms with `target_m` overridden — a fixture may run *fewer* than the frozen 8,
+    /// never more, and [`DailyParams::validate`] enforces that ceiling.
     pub fn new(data_home: impl Into<PathBuf>, start: &str, end: &str, target_m: usize) -> Self {
         DailyBacktestConfig {
             data_home: data_home.into(),
             range: DataRange { start: start.to_string(), end: end.to_string() },
             params: OrbParams::default(),
+            daily: DailyParams { target_m, ..DailyParams::default() },
             starting_balance: 100_000_000.0,
             target_m,
         }
+    }
+
+    /// The candidate-assembly parameters actually handed to [`build_candidates`], with
+    /// `atr_window` **forced** from [`DailyParams::atr_window_sessions`].
+    ///
+    /// This bridge is not a convenience. `OrbParams::atr_window` defaults to 14 — ORB's
+    /// term, needing 15 prior sessions — while the frozen daily stop is `ATR(1)`. The two
+    /// live in different structs and nothing else connects them, so an unbridged config
+    /// derives a prior ATR that is absent for the first 14 in-range sessions of every
+    /// symbol. Under the fail-closed stop (KTD9) that is not a visible misconfiguration:
+    /// every entry is refused `atr_unavailable`, the run finalizes green with zero
+    /// positions, and `return_on_risk` is vacuous. Forcing it here means the value is
+    /// wrong in exactly one place or none.
+    ///
+    /// The forced value is what the manifest records as `params`, because it is what
+    /// assembly ran with.
+    #[must_use]
+    pub fn assembly_params(&self) -> OrbParams {
+        OrbParams { atr_window: self.daily.atr_window_sessions, ..self.params.clone() }
     }
 }
 
@@ -789,6 +826,35 @@ where
     let _guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
         .map_err(|e| anyhow::anyhow!("daily backtest refused — ingest/live in progress: {e}"))?;
 
+    Ok(run_daily_locked(cfg, sink, rank, make_strategy).await?.outcome)
+}
+
+/// [`run_daily`]'s body with the advisory lock **already held by the caller**, plus the
+/// range-scoped catalog fingerprint the finalize re-check compares against.
+///
+/// Split out because the lock's scope differs between the two entry points. [`run_daily`]
+/// only needs it for the engine phase, but [`run_inner`] must hold one continuous guard
+/// across the engine phase *and* the finalize re-check — re-acquiring it in a nested call
+/// would either deadlock or, worse, open a window in which the catalog can be mutated
+/// between the run and the re-check that exists to detect exactly that.
+async fn run_daily_locked<S, R, F>(
+    cfg: DailyBacktestConfig,
+    sink: DecisionSink,
+    rank: R,
+    make_strategy: F,
+) -> anyhow::Result<LockedDailyRun>
+where
+    S: DailyPathStrategy
+        + Strategy
+        + StrategyNative
+        + DataActorNative
+        + Component
+        + std::fmt::Debug
+        + 'static,
+    R: Fn(&[UniverseCandidate]) -> Vec<String> + Send + 'static,
+    F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
+{
+    let catalog_path = cfg.data_home.join("catalog");
     let start_date = parse_date(&cfg.range.start)?;
     let end_date = parse_date(&cfg.range.end)?;
     let start_ns = kst_to_unix_nanos(start_date, midnight())?.as_u64();
@@ -797,10 +863,16 @@ where
     let instruments = read_all_instruments(&catalog_path).await?;
     let all_bars = read_all_bars(&catalog_path).await?;
 
-    let params = cfg.params.clone();
+    // The range-scoped catalog fingerprint at start. Taken here, before any engine work,
+    // so the finalize re-check compares against the catalog the run actually read.
+    let fingerprint_start = range_fingerprint(&all_bars, start_ns, end_ns);
+
+    // The ATR bridge (see `DailyBacktestConfig::assembly_params`) — the frozen daily ATR
+    // window reaches the shared assembly here, and nowhere else.
+    let params = cfg.assembly_params();
     let starting_balance = cfg.starting_balance;
     let target_m = cfg.target_m;
-    tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         run_daily_blocking(
             &instruments,
             &all_bars,
@@ -814,7 +886,299 @@ where
             make_strategy,
         )
     })
-    .await?
+    .await??;
+
+    Ok(LockedDailyRun { outcome, fingerprint_start, start_ns, end_ns })
+}
+
+/// [`run_daily_locked`]'s output: the run plus the finalize re-check's inputs.
+struct LockedDailyRun {
+    outcome: DailyRunOutcome,
+    fingerprint_start: String,
+    start_ns: u64,
+    end_ns: u64,
+}
+
+// ---------------------------------------------------------------------------
+// The finalized entry point (U5)
+// ---------------------------------------------------------------------------
+
+/// A finalized daily run: the registry artifacts plus the in-memory objects they were
+/// written from, so a caller need not read the run back off disk to inspect it.
+#[derive(Debug, Clone)]
+pub struct DailyRunResult {
+    /// The finalized run directory.
+    pub run_dir: PathBuf,
+    /// The run id — derived from the *daily* discriminator, never from
+    /// `assembly_params.strategy_id` (KTD14).
+    pub run_id: String,
+    /// The manifest as written.
+    pub manifest: Manifest,
+    /// The performance report as written.
+    pub performance: PerformanceReport,
+    /// The engine phase's full outcome.
+    pub outcome: DailyRunOutcome,
+}
+
+/// Run the daily multi-session path to a **finalized registry run** (R18).
+///
+/// This is the daily sibling of [`crate::runner::backtest::run`], and it deliberately
+/// duplicates that path's preamble and tail rather than generalizing it (KTD2): the
+/// advisory lock, the range-fingerprint assert-and-re-check, and the artifact-writing
+/// tail. The shared *candidate assembly* is reused at its current signature; the
+/// selection rule, the venue, the OMS, and the hold semantics are this path's own.
+pub async fn run(cfg: DailyBacktestConfig, start: DateTime<Utc>) -> anyhow::Result<DailyRunResult> {
+    run_inner(cfg, start, std::future::ready(())).await
+}
+
+/// [`run`] with a hook awaited between the engine run and the finalize fingerprint
+/// re-check — the library seam a test uses to simulate a mid-run catalog mutation. It is
+/// deliberately **not** reachable through [`main_cli`]; the public [`run`] passes a no-op.
+pub async fn run_inner<F: std::future::Future<Output = ()>>(
+    cfg: DailyBacktestConfig,
+    start: DateTime<Utc>,
+    before_finalize: F,
+) -> anyhow::Result<DailyRunResult> {
+    // Fail fast on a parameter set off a frozen term, before any catalog or engine work.
+    //
+    // `Manifest::new_daily` is the *construction-point* gate and calls `validate()` again
+    // — that one is what makes an invalid set unable to reach the registry through any
+    // caller. This call is what keeps it from reaching the **engine**: without it a bad
+    // config burns the whole run and only errors at manifest assembly, which for the
+    // 837-session window is hours. Two named call sites, two different jobs.
+    cfg.daily
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid daily parameter set: {e}"))?;
+
+    // The engine phase's take is driven by `cfg.target_m` while the manifest records
+    // `cfg.daily.target_m`; `DailyBacktestConfig::new` sets them together, so a
+    // disagreement means a caller mutated one field and not the other. Refuse rather than
+    // finalize a run whose manifest misdescribes the concurrency it actually ran at.
+    if cfg.target_m != cfg.daily.target_m {
+        anyhow::bail!(
+            "daily config target_m disagreement: the engine would take {} per session but \
+             the manifest would record {} — set DailyBacktestConfig::daily.target_m and \
+             ::target_m together",
+            cfg.target_m,
+            cfg.daily.target_m
+        );
+    }
+
+    let catalog_path = cfg.data_home.join("catalog");
+    if !catalog_path.exists() {
+        anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());
+    }
+
+    // ONE guard spanning the engine phase and the finalize re-check (see
+    // `run_daily_locked`). Released on drop, at end of the run.
+    let _guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
+        .map_err(|e| anyhow::anyhow!("daily backtest refused — ingest/live in progress: {e}"))?;
+
+    let assembly_params = cfg.assembly_params();
+    let data_home = cfg.data_home.clone();
+    let data_range = cfg.range.clone();
+    let daily_params = cfg.daily.clone();
+    let starting_balance = cfg.starting_balance;
+    let sink = DecisionSink::new();
+
+    // The R22 gate's input. A catalog with no checkpoint genuinely has no recorded shift
+    // ledger, which `AdjustmentBasisShifts::none` states explicitly rather than implying.
+    let shifts = match crate::runner::backtest::load_checkpoint(&catalog_path) {
+        Some(cp) => AdjustmentBasisShifts::from_checkpoint(&cp),
+        None => AdjustmentBasisShifts::none(),
+    };
+    let make_strategy =
+        DailyStrategy::factory(daily_params.clone(), sink.clone(), shifts);
+
+    // The placeholder ranking signal (KTD6). It is named and marked, not scaffolding: the
+    // signal that carries the hypothesis is turn one's act, and U6's observation refuses to
+    // yield judgment arguments while the marker is set.
+    let locked =
+        run_daily_locked(cfg, sink.clone(), rank_by_placeholder_signal, make_strategy).await?;
+
+    // Test hook: simulate any mid-run catalog mutation before the finalize re-check.
+    before_finalize.await;
+
+    // Re-check the fingerprint at finalize: a mid-run catalog mutation invalidates the run
+    // and leaves NO registry residue — the `RunWriter` below has not been constructed yet,
+    // so there is nothing partial to clean up.
+    let all_bars_end = read_all_bars(&catalog_path).await?;
+    let fingerprint_end = range_fingerprint(&all_bars_end, locked.start_ns, locked.end_ns);
+    if fingerprint_end != locked.fingerprint_start {
+        anyhow::bail!(
+            "catalog changed in-range during the daily run — aborting with no registry residue"
+        );
+    }
+
+    finalize_daily_run(FinalizeDaily {
+        data_home: &data_home,
+        started_utc: start,
+        outcome: locked.outcome,
+        fingerprint_start: locked.fingerprint_start,
+        assembly_params,
+        daily_params,
+        data_range,
+        starting_balance,
+        catalog_path: &catalog_path,
+        sink: &sink,
+    })
+}
+
+/// Everything [`finalize_daily_run`] needs. A struct rather than eleven positional
+/// arguments, matching [`crate::artifacts::manifest::DailyManifestParts`]'s reasoning.
+struct FinalizeDaily<'a> {
+    data_home: &'a Path,
+    started_utc: DateTime<Utc>,
+    outcome: DailyRunOutcome,
+    fingerprint_start: String,
+    assembly_params: OrbParams,
+    daily_params: DailyParams,
+    data_range: DataRange,
+    starting_balance: f64,
+    catalog_path: &'a Path,
+    sink: &'a DecisionSink,
+}
+
+/// Assemble and write the run's artifacts, then finalize the run directory.
+fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
+    let checkpoint = crate::runner::backtest::load_checkpoint(p.catalog_path);
+
+    // Zero-rate assembly params yield `None` — the pre-model path. A daily-path
+    // transaction-cost model is not this plan's scope; an explicitly-rated config is
+    // still honoured rather than silently zeroed.
+    let cost_model = crate::strategy::orb::TransactionCostModel::from_params(&p.assembly_params);
+    let performance = PerformanceReport::from_positions_with_risk(
+        &p.outcome.positions,
+        &p.outcome.entry_risks,
+        p.starting_balance,
+        cost_model.as_ref(),
+    );
+
+    // The candidate union is this path's universe snapshot. Intersecting it with the
+    // checkpoint's unhealed shift marks is what makes an adjustment-basis rewrite inside a
+    // hold *visible* on the run — the risk R22 refuses per position, reported here per run.
+    let candidate_union = p.outcome.selection.candidate_union.clone();
+    let shift_symbols: Vec<String> = checkpoint
+        .as_ref()
+        .map(|c| {
+            c.shifted_instruments(crate::strategy::daily::DAILY_BAR_TYPE_LABEL)
+                .into_iter()
+                .filter(|s| candidate_union.contains(s))
+                .collect()
+        })
+        .unwrap_or_default();
+    let data_quality = DataQualityReport::backtest(candidate_union, shift_symbols);
+
+    // Every identity-bearing field is derived by the constructor, not passed: `strategy_id`,
+    // `strategy_version`, `run_id`, and `strategy_code_hash` all come off `daily_params` and
+    // `DAILY_SOURCE`. `assembly_params` is recorded verbatim in the non-optional
+    // `Manifest.params` because that field cannot express "this run has no OrbParams" —
+    // it is the parameter set the *shared candidate assembly* ran with, and nothing else.
+    // Its `strategy_id` still reads "orb" and is deliberately ignored here; U8's filters key
+    // on `Manifest.strategy_id`, which `new_daily` takes from the daily discriminator, so
+    // this recorded set can never be selected as an ORB baseline.
+    let manifest = Manifest::new_daily(DailyManifestParts {
+        daily: p.daily_params,
+        assembly_params: p.assembly_params,
+        daily_source: crate::strategy::DAILY_SOURCE,
+        started_utc: p.started_utc,
+        data_range: p.data_range,
+        catalog_fingerprint: p.fingerprint_start,
+        universe_hash: universe_sequence_hash(&p.outcome.selection.selection_sequence()),
+        lab_src_fingerprint: Some(crate::fingerprint::EMBEDDED.to_string()),
+        checkpoint_hash: crate::runner::backtest::checkpoint_hash(p.catalog_path),
+        universe_metadata_hash: None,
+    })
+    .map_err(|e| anyhow::anyhow!("daily manifest refused: {e}"))?;
+
+    let writer = RunWriter::new(p.data_home, &manifest.run_id)?;
+    writer.write_manifest(&manifest)?;
+    writer.write_performance(&performance)?;
+    writer.write_data_quality(&data_quality)?;
+    writer.write_decisions(&p.sink.snapshot())?;
+    let run_dir = writer.finalize()?;
+
+    Ok(DailyRunResult {
+        run_dir,
+        run_id: manifest.run_id.clone(),
+        manifest,
+        performance,
+        outcome: p.outcome,
+    })
+}
+
+/// Parse a required environment variable, naming it in both failure modes.
+///
+/// The silent-default anti-pattern this refuses is `parse().unwrap_or(1)` at
+/// `backtest.rs:1049`, pinned as an anti-pattern by `research_cli.rs:430`: a typo'd
+/// `LS_BTD_TARGET_M=8x` would there become a *valid* run at a concurrency nobody chose,
+/// and the manifest would record the substituted value as though it were intended.
+fn env_parsed<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> {
+    match std::env::var(key) {
+        Err(_) => Ok(default),
+        Ok(raw) => raw.trim().parse::<T>().map_err(|_| {
+            anyhow::anyhow!(
+                "{key} must parse as {}, got {raw:?} — refusing rather than defaulting",
+                std::any::type_name::<T>()
+            )
+        }),
+    }
+}
+
+/// CLI entry point for the `lab-backtest-daily` bin (R18). Reads config from env:
+/// `LS_DATA_HOME`, `LS_BTD_SDATE`, `LS_BTD_EDATE` (required); `LS_BTD_TARGET_M`,
+/// `LS_BTD_BALANCE`, `LS_BTD_NOTIONAL`, `LS_BTD_VERSION` (optional).
+///
+/// Every optional numeric variable hard-errors on a malformed value rather than
+/// defaulting. The frozen terms — hold, directionality, stop multiple, ATR window — take
+/// **no** environment override at all: they are frozen, and a run that could move one from
+/// the shell is a run that can drift off the pre-registration without a code change.
+///
+/// The `before_finalize` seam of [`run_inner`] is deliberately unreachable from here.
+pub fn main_cli() -> anyhow::Result<()> {
+    nautilus_ls::scrub::install();
+    let data_home =
+        std::env::var("LS_DATA_HOME").map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?;
+    let sdate =
+        std::env::var("LS_BTD_SDATE").map_err(|_| anyhow::anyhow!("LS_BTD_SDATE is required"))?;
+    let edate =
+        std::env::var("LS_BTD_EDATE").map_err(|_| anyhow::anyhow!("LS_BTD_EDATE is required"))?;
+
+    let target_m = env_parsed("LS_BTD_TARGET_M", crate::params_daily::FROZEN_TARGET_M)?;
+    let mut cfg = DailyBacktestConfig::new(&data_home, &sdate, &edate, target_m);
+    cfg.starting_balance = env_parsed("LS_BTD_BALANCE", cfg.starting_balance)?;
+    cfg.daily.notional_per_position =
+        env_parsed("LS_BTD_NOTIONAL", cfg.daily.notional_per_position)?;
+    cfg.daily.strategy_version = env_parsed("LS_BTD_VERSION", cfg.daily.strategy_version)?;
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(run(cfg, Utc::now()))?;
+    // A trailing summary printed AFTER the engine logs, so the only operator-relevant
+    // output never scrolls away under nautilus's ~8,900 INFO lines per session.
+    print!("{}", daily_summary_block(&result));
+    Ok(())
+}
+
+/// The `lab-backtest-daily` trailing summary block.
+#[must_use]
+pub fn daily_summary_block(result: &DailyRunResult) -> String {
+    let censored = result
+        .outcome
+        .positions
+        .iter()
+        .filter(|p| p.is_open())
+        .count();
+    format!(
+        "\n=== lab-backtest-daily summary ===\nrun:       {}\nstrategy:  {} v{}\nsessions:  {}\n\
+         positions: {} ({censored} open at range end)\nunopened:  {}\ndir:       {}\n",
+        result.run_id,
+        result.manifest.strategy_id,
+        result.manifest.strategy_version,
+        result.outcome.selection.sessions.len(),
+        result.outcome.positions.len(),
+        result.outcome.unopened_entry_orders.len(),
+        result.run_dir.display(),
+    )
 }
 
 /// The whole daily lifecycle on one blocking thread: index once, run the pure
