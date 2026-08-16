@@ -37,9 +37,13 @@
 //! point takes a bare number and claims the ledger *before* evaluating, against a frozen
 //! `judgments_max` of 3 at `n_max = 1` — so a placeholder-signal run judged by accident
 //! spends the holdout permanently. [`RunObservation::judgment_arguments`] is therefore the
-//! **only** path to those three arguments, and it errors while the marker is set (KTD6).
-//! The residual risk review must catch is the marker being removed rather than the signal
-//! being replaced.
+//! only path to those three arguments *for every caller that obtains an observation the
+//! normal way*, and it errors while the marker is set (KTD6). [`ObservationParts`] is
+//! crate-private so nothing outside this crate can mint an observation with the marker
+//! cleared. Two residual gaps are tracked rather than claimed closed: the artifact is
+//! deserializable with a hand-cleared marker, and review must still catch the marker being
+//! removed rather than the signal being replaced. See
+//! [`RunObservation::judgment_arguments`] for the full caveat.
 //!
 //! This artifact lands beside the run and **not** in `lineage-preregistration.json`, whose
 //! content hash is cited by its loader and by the judgment ledger (KTD8, R15).
@@ -163,8 +167,15 @@ pub struct RunObservation {
 }
 
 /// The inputs [`RunObservation::build`] cannot derive for itself.
+///
+/// **Crate-private on purpose.** The placeholder marker below is a governance gate, and a
+/// publicly constructible parts struct would let any caller mint an observation with the
+/// marker cleared while reusing a real placeholder run's statistic — which is precisely the
+/// bypass KTD6 exists to prevent. Narrowing construction to this crate does not make the
+/// marker unforgeable (see the caveat on [`RunObservation::judgment_arguments`]); it removes
+/// the accidental path, which is the part this plan can actually close.
 #[derive(Debug, Clone)]
-pub struct ObservationParts<'a> {
+pub(crate) struct ObservationParts<'a> {
     /// The run id.
     pub run_id: &'a str,
     /// The run's pinned range.
@@ -192,7 +203,7 @@ impl RunObservation {
     /// `None` (R25). A placeholder marker does **not** block construction — the run is real
     /// and its series is the re-check's input; what the marker blocks is
     /// [`Self::judgment_arguments`].
-    pub fn build(parts: ObservationParts<'_>) -> Result<RunObservation, ObservationError> {
+    pub(crate) fn build(parts: ObservationParts<'_>) -> Result<RunObservation, ObservationError> {
         let observed_net_ror = parts
             .performance
             .edge_evaluation()
@@ -256,9 +267,17 @@ impl RunObservation {
     /// # Errors
     ///
     /// [`ObservationError::PlaceholderRankingSignal`] while the placeholder marker is set.
-    /// This is the fail-closed edge: making this the sole accessor is what converts the
-    /// marker from a flag nothing reads into something a caller cannot route around
-    /// without deleting code that says why it exists.
+    /// This is the fail-closed edge for every caller that obtains an observation the normal
+    /// way — from the runner, or by deserializing the artifact the runner wrote.
+    ///
+    /// **What this does not stop.** `RunObservation` derives `Deserialize` and its fields are
+    /// public, so a caller who is willing to hand-write an artifact with
+    /// `ranking_signal_is_placeholder: false` can still obtain judgment arguments for a
+    /// placeholder run. Closing that requires binding the marker to run provenance the caller
+    /// cannot restate — the holdout is spent by exactly one judgment, so it is worth doing —
+    /// and it is deliberately out of this plan's scope, which builds the producer rather than
+    /// the judgment call site. Construction through [`ObservationParts`] is crate-private so
+    /// the *accidental* path is closed; the adversarial one is a tracked follow-up.
     pub fn judgment_arguments(&self) -> Result<JudgmentArguments, ObservationError> {
         if self.ranking_signal_is_placeholder {
             return Err(ObservationError::PlaceholderRankingSignal {

@@ -131,18 +131,45 @@ pub fn latest_finalized_run(data_home: &Path) -> anyhow::Result<Option<(String, 
 /// The newest finalized run of `strategy_id`, or `None` when the registry holds none.
 ///
 /// Reads **every** manifest newest-first rather than only the newest run, because the
-/// newest run may now belong to the other strategy. Unreadable manifests are skipped, not
-/// fatal — the same `filter_map(.. .ok())` discipline as `ladder.rs:88`. A strict read
-/// would turn a previously-succeeding lookup into a hard error the first time an old
-/// manifest failed to parse, which is a regression the partition must not introduce.
+/// newest run may now belong to the other strategy.
+///
+/// # The newest manifest is read strictly; only older ones are skipped
+///
+/// Tolerating an unreadable manifest is what lets the partition scan past legacy artifacts
+/// deeper in the registry — a strict read of all of them would turn a previously-succeeding
+/// lookup into a hard error the first time an *old* manifest failed to parse. But that
+/// justification covers exactly the manifests the pre-partition lookup never opened. The
+/// old code read `ordered_runs().last()` and propagated its parse error, so extending the
+/// same silence to the newest run would be a **new** silence, not a preserved one — and the
+/// worst one available: with a valid older ORB run present, a corrupt newest manifest would
+/// resolve the older run as the apparent head, and every consumer would adopt stale params,
+/// a stale range, and a stale KEEP/REVERT baseline with no error. With no older run it
+/// returns `None`, which `decide_keep_or_revert` cannot tell apart from a fresh registry and
+/// treats as licence to skip the comparison entirely.
+///
+/// So: the newest run is read strictly (whatever strategy it belongs to — that is what the
+/// old lookup did), and the skip-on-unreadable scan applies only to the remainder.
+///
+/// # Errors
+///
+/// Propagates the read/parse error when the **newest** finalized run's manifest is
+/// unreadable.
 pub fn latest_finalized_run_for(
     data_home: &Path,
     strategy_id: &str,
 ) -> anyhow::Result<Option<(String, Manifest)>> {
-    Ok(ordered_runs(data_home)
-        .into_iter()
+    let ordered = ordered_runs(data_home);
+    let Some((newest, older)) = ordered.split_last() else {
+        return Ok(None);
+    };
+    let newest_manifest = read_manifest(data_home, newest)?;
+    if newest_manifest.strategy_id == strategy_id {
+        return Ok(Some((newest.clone(), newest_manifest)));
+    }
+    Ok(older
+        .iter()
         .rev()
-        .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        .filter_map(|rid| read_manifest(data_home, rid).ok().map(|m| (rid.clone(), m)))
         .find(|(_rid, m)| m.strategy_id == strategy_id))
 }
 

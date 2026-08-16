@@ -1507,21 +1507,6 @@ async fn refused_while_ingest_lock_held() {
     assert!(list_runs(dir.path()).is_empty());
 }
 
-/// A config whose two `target_m` fields have drifted apart is refused rather than
-/// finalizing a run whose manifest misdescribes the concurrency it ran at.
-#[tokio::test]
-async fn a_target_m_disagreement_is_refused() {
-    let dir = tempdir().unwrap();
-    build_daily_fixture(dir.path(), &HashMap::new()).await;
-    let mut c = cfg(dir.path(), 2);
-    c.daily.target_m = 3;
-
-    let start = Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
-    let err = run(c, start).await.unwrap_err();
-    assert!(err.to_string().contains("target_m disagreement"), "err: {err}");
-    assert!(list_runs(dir.path()).is_empty());
-}
-
 /// An invalid daily parameter set is refused **before** the engine runs, not at manifest
 /// assembly hours later. `Manifest::new_daily` remains the construction-point gate; this
 /// is the fail-fast one.

@@ -283,11 +283,27 @@ impl DailyParams {
                 self.directionality
             ));
         }
+        // The stop's two terms are checked for EQUALITY with their freeze, not merely for
+        // positivity. A positive-but-off-freeze value (stop_atr_mult 2.0, atr_window 14.0)
+        // is the dangerous case: it validates, reaches the engine, and is recorded by
+        // `Manifest::new_daily` and the run observation as though it measured the frozen
+        // lineage. The sibling terms above — hold, target_m, directionality — are all bounded
+        // against their frozen values; these two were not, and the asymmetry was an
+        // oversight rather than a decision. A deliberate change to either is a re-freeze of
+        // the pre-registration, not a config edit.
         if !self.stop_atr_mult.is_finite() || self.stop_atr_mult <= 0.0 {
             return Err(format!(
                 "stop_atr_mult {} must be a finite positive multiple — a non-positive multiple \
                  collapses the stop onto the entry (an instant stop-out); the frozen value is \
                  {FROZEN_STOP_ATR_MULT} ({FROZEN_STOP_RULE})",
+                self.stop_atr_mult
+            ));
+        }
+        if self.stop_atr_mult != FROZEN_STOP_ATR_MULT {
+            return Err(format!(
+                "stop_atr_mult {} is off the frozen {FROZEN_STOP_ATR_MULT} ({FROZEN_STOP_RULE}) \
+                 — the stop rule is a pre-registered term, so a run at another multiple would \
+                 be recorded as this lineage while measuring a different hypothesis",
                 self.stop_atr_mult
             ));
         }
@@ -297,6 +313,16 @@ impl DailyParams {
                  window makes ATR permanently unavailable, and the stop fails closed on an \
                  unavailable ATR (KTD9), so every entry is rejected for the whole run; the \
                  frozen value is {FROZEN_ATR_WINDOW_SESSIONS} ({FROZEN_STOP_RULE})",
+                self.atr_window_sessions
+            ));
+        }
+        if self.atr_window_sessions != FROZEN_ATR_WINDOW_SESSIONS {
+            return Err(format!(
+                "atr_window_sessions {} is off the frozen {FROZEN_ATR_WINDOW_SESSIONS} \
+                 ({FROZEN_STOP_RULE}) — the ATR window is a pre-registered term, and it also \
+                 reaches the shared candidate assembly through \
+                 `DailyBacktestConfig::assembly_params`, so an off-freeze window silently \
+                 changes which entries are derivable at all",
                 self.atr_window_sessions
             ));
         }
@@ -393,6 +419,35 @@ mod tests {
             p.max_concurrent > FROZEN_STEADY_STATE_CONCURRENCY,
             "a cap AT the steady state is the defect fixed in 2870a78, not the intent"
         );
+    }
+
+    /// The stop's two terms are pinned to their FREEZE, not merely to positivity.
+    ///
+    /// A positive-but-off-freeze value is the dangerous case: it validates, reaches the
+    /// engine, and is recorded by `Manifest::new_daily` and the run observation as though it
+    /// had measured the frozen lineage. The three sibling terms were already bounded; these
+    /// two were not, and the asymmetry was an oversight.
+    #[test]
+    fn a_positive_but_off_freeze_stop_term_is_refused() {
+        for (label, p) in [
+            (
+                "stop_atr_mult",
+                DailyParams { stop_atr_mult: 2.0, ..DailyParams::default() },
+            ),
+            (
+                "atr_window_sessions",
+                DailyParams { atr_window_sessions: 14.0, ..DailyParams::default() },
+            ),
+        ] {
+            let err = p
+                .validate()
+                .expect_err("a positive value off its freeze must not validate");
+            assert!(err.contains(label), "the error names the offending term: {err}");
+            assert!(err.contains("frozen"), "and says it is off its freeze: {err}");
+        }
+
+        // The freeze itself still validates, so this is not a blanket refusal.
+        assert!(DailyParams::default().validate().is_ok());
     }
 
     #[test]

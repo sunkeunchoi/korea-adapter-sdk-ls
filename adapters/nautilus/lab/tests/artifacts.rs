@@ -335,8 +335,7 @@ fn pre_u5_manifest_deserializes_without_dispatch_link() {
 /// so five is a conditional maximum, never the new invariant.
 #[test]
 fn the_observation_is_a_conditional_fifth_artifact() {
-    use nautilus_ls_lab::artifacts::manifest::DataRange;
-    use nautilus_ls_lab::artifacts::observation::{ObservationParts, RunObservation};
+    use nautilus_ls_lab::artifacts::observation::RunObservation;
     use nautilus_ls_lab::artifacts::OBSERVATION_FILE;
 
     let dir = tempdir().unwrap();
@@ -344,22 +343,33 @@ fn the_observation_is_a_conditional_fifth_artifact() {
     let id = fixed_run_id(RunSource::Backtest, 0);
     let writer = RunWriter::new(data, &id).unwrap();
 
-    // A trade carrying risk, so the run has a statistic and the observation can exist.
+    // `RunObservation::build` and `ObservationParts` are crate-private (the placeholder
+    // marker is a governance gate), so this test constructs the artifact the only way an
+    // out-of-crate consumer legitimately can: by deserializing one. The build path itself is
+    // covered by `artifacts::observation`'s own unit tests and by `backtest_daily_run.rs`.
     let mut t = trade("005930.XKRX", 100.0, 60_000.0);
     t.risk_capital = Some(400.0);
     t.realized_r = Some(0.25);
     let perf = PerformanceReport::assemble(vec![t], 1_000_000.0);
-    let range = DataRange { start: "20240103".into(), end: "20240112".into() };
-    let obs = RunObservation::build(ObservationParts {
-        run_id: &id,
-        data_range: &range,
-        catalog_fingerprint: "cafe1234",
-        performance: &perf,
-        session_dates: &[chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()],
-        ranking_signal: "prior_turnover_desc",
-        ranking_signal_is_placeholder: true,
-    })
-    .expect("a run with a statistic yields an observation");
+    let obs: RunObservation = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "run_id": id,
+        "data_range": { "start": "20240103", "end": "20240112" },
+        "catalog_fingerprint": "cafe1234",
+        "observed_net_ror": 0.25,
+        "ranking_signal": "prior_turnover_desc",
+        "ranking_signal_is_placeholder": true,
+        "censored_positions": 0,
+        "closed_positions": 1,
+        "sessions": [{
+            "session_date": "2024-01-03",
+            "realized_pnl": 100.0,
+            "risk_capital": 400.0,
+            "entries": 1,
+            "closes": 1
+        }]
+    }))
+    .expect("the artifact shape round-trips");
 
     writer.write_manifest(&manifest(&id, RunSource::Backtest, OrbParams::default())).unwrap();
     writer.write_performance(&perf).unwrap();

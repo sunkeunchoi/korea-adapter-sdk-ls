@@ -574,30 +574,65 @@ fn head_selection_does_not_resolve_a_daily_run() {
     assert_eq!(head_governed_params_pinned(data, Some(35)).strategy_id, "orb");
 }
 
-/// An unreadable older manifest is skipped, not fatal.
+/// An unreadable **older** manifest is skipped, not fatal.
 ///
 /// A filtered lookup has to read *every* manifest rather than only the newest, so it now
-/// touches old runs a bare newest-by-id lookup never opened. A strict read would turn a
-/// previously-succeeding lookup into a hard error the first time one of those failed to
-/// parse — a regression introduced by the fix.
+/// touches old runs a bare newest-by-id lookup never opened. A strict read of those would
+/// turn a previously-succeeding lookup into a hard error the first time one failed to parse
+/// — a regression introduced by the fix rather than by the bug.
 #[test]
 fn an_unreadable_older_manifest_is_skipped() {
     let dir = tempdir().unwrap();
     let data = dir.path();
     let old = stage_orb_run(data, 8, 34);
     let newer = stage_orb_run(data, 9, 35);
+    // The daily run is newest, so the ORB lookup falls through to the scan over the rest.
     stage_daily_run(data, 17);
 
     std::fs::write(data.join("runs").join(&old).join(MANIFEST_FILE), "{ not json").unwrap();
 
     let (resolved, _) = latest_finalized_run(data).unwrap().expect("the readable ORB run resolves");
     assert_eq!(resolved, newer);
+}
 
-    // …and when the corrupt one is the ONLY ORB run, the lookup is empty rather than an error.
+/// An unreadable **newest** manifest is a hard error, not a silent fallback.
+///
+/// This is the boundary of the skip-on-unreadable tolerance above, and getting it wrong is
+/// the worst available failure: the pre-partition lookup read `ordered_runs().last()` and
+/// propagated its parse error, so swallowing it here would be a NEW silence. With a valid
+/// older ORB run present, a corrupt newest manifest would resolve the older run as the
+/// apparent head and every consumer would adopt stale params, a stale range, and a stale
+/// KEEP/REVERT baseline. With no older run it would return `None`, which
+/// `decide_keep_or_revert` cannot tell apart from a fresh registry.
+#[test]
+fn an_unreadable_newest_manifest_is_an_error_not_a_stale_head() {
+    // (a) A corrupt newest ORB run with a valid older one behind it must NOT resolve the
+    //     older run — that is the silent stale head.
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let older = stage_orb_run(data, 8, 34);
+    let newest = stage_orb_run(data, 9, 35);
+    std::fs::write(data.join("runs").join(&newest).join(MANIFEST_FILE), "{ not json").unwrap();
+
+    let err = latest_finalized_run(data).unwrap_err();
+    assert!(
+        !err.to_string().contains(&older),
+        "the error names the unreadable run, not the one it would have fallen back to: {err}"
+    );
+
+    // (b) A corrupt sole run errors rather than reading as a fresh registry.
     let dir2 = tempdir().unwrap();
     let solo = stage_orb_run(dir2.path(), 8, 34);
     std::fs::write(dir2.path().join("runs").join(&solo).join(MANIFEST_FILE), "{ not json").unwrap();
-    assert!(latest_finalized_run(dir2.path()).unwrap().is_none());
+    assert!(
+        latest_finalized_run(dir2.path()).is_err(),
+        "a corrupt sole manifest must not read as `None` — decide_keep_or_revert treats \
+         `None` as licence to skip the RoR comparison"
+    );
+
+    // (c) An EMPTY registry is still `None`, not an error — the distinction the fix preserves.
+    let dir3 = tempdir().unwrap();
+    assert!(latest_finalized_run(dir3.path()).unwrap().is_none());
 }
 
 /// With only ORB runs present, every consumer resolves exactly as it did before this unit

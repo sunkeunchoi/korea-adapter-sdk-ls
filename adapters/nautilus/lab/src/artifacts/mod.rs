@@ -1,7 +1,9 @@
 //! Run artifacts + the append-only run registry (U4, KTD2, R4–R9).
 //!
 //! Every run — backtest or live — emits the same four artifacts (`manifest.json`,
-//! `performance.json`, `decisions.jsonl`, `data_quality.json`) into a per-run directory
+//! `performance.json`, `decisions.jsonl`, `data_quality.json`), plus a conditional fifth
+//! (`observation.json`) written only by the daily path and only when that run carries a
+//! `return_on_risk` (P7/U6, R25) — into a per-run directory
 //! under `<data>/runs/<run_id>/`. A run writes into `<data>/runs/.tmp-<run_id>/` and
 //! finalizes by atomic rename (mirroring the ingest checkpoint's atomic-save pattern);
 //! a leftover `.tmp-` directory marks an aborted run and is reported, never silently

@@ -746,15 +746,13 @@ pub struct DailyBacktestConfig {
     /// Its `atr_window` is **not** authoritative on this path: [`Self::assembly_params`]
     /// forces it from [`DailyParams::atr_window_sessions`]. See that method for why.
     pub params: OrbParams,
-    /// The daily parameter set — the frozen terms, and the source of the manifest's
-    /// registry discriminator (KTD14). [`Self::target_m`] is kept in agreement with
-    /// its `target_m`; [`run`] refuses a config where they have drifted apart.
+    /// The daily parameter set — the frozen terms, the per-session take
+    /// ([`DailyParams::target_m`], R10), and the source of the manifest's registry
+    /// discriminator (KTD14). This is the *single* home for `target_m`: carrying a second
+    /// copy on this struct bought only a runtime check that the two agreed.
     pub daily: DailyParams,
     /// Starting account balance (KRW).
     pub starting_balance: f64,
-    /// The frozen concurrency target: each session takes the top `target_m` of the
-    /// ranked candidates from those not already held (R10).
-    pub target_m: usize,
 }
 
 impl DailyBacktestConfig {
@@ -768,7 +766,6 @@ impl DailyBacktestConfig {
             params: OrbParams::default(),
             daily: DailyParams { target_m, ..DailyParams::default() },
             starting_balance: 100_000_000.0,
-            target_m,
         }
     }
 
@@ -883,7 +880,7 @@ where
     // window reaches the shared assembly here, and nowhere else.
     let params = cfg.assembly_params();
     let starting_balance = cfg.starting_balance;
-    let target_m = cfg.target_m;
+    let target_m = cfg.daily.target_m;
     let outcome = tokio::task::spawn_blocking(move || {
         run_daily_blocking(
             &instruments,
@@ -963,20 +960,6 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     cfg.daily
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid daily parameter set: {e}"))?;
-
-    // The engine phase's take is driven by `cfg.target_m` while the manifest records
-    // `cfg.daily.target_m`; `DailyBacktestConfig::new` sets them together, so a
-    // disagreement means a caller mutated one field and not the other. Refuse rather than
-    // finalize a run whose manifest misdescribes the concurrency it actually ran at.
-    if cfg.target_m != cfg.daily.target_m {
-        anyhow::bail!(
-            "daily config target_m disagreement: the engine would take {} per session but \
-             the manifest would record {} — set DailyBacktestConfig::daily.target_m and \
-             ::target_m together",
-            cfg.target_m,
-            cfg.daily.target_m
-        );
-    }
 
     // ONE guard spanning the engine phase and the finalize re-check (see
     // `run_daily_locked`). Released on drop, at end of the run.
@@ -1080,7 +1063,39 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
                 .collect()
         })
         .unwrap_or_default();
-    let data_quality = DataQualityReport::backtest(candidate_union, shift_symbols);
+    let mut data_quality = DataQualityReport::backtest(candidate_union, shift_symbols);
+    // R23's dropped duplicates have to reach a FINALIZED artifact, not just the in-memory
+    // outcome. A value-divergent duplicate is the adjustment-basis conflict this path is
+    // most exposed to — two bars for one instrument at one `ts_event` whose OHLCV disagree,
+    // where the kept copy is simply whichever the catalog yielded first. That choice can
+    // move an entry, a stop, and therefore the run's statistic. Recorded here so a run
+    // carrying one cannot read as clean; `dedup_hits` is deliberately NOT reused, because it
+    // is documented as the live path's ORDER-dedup counter and overloading it would make two
+    // different quantities indistinguishable to a reader.
+    if !p.outcome.duplicate_drops.is_empty() {
+        let divergent: Vec<&DuplicateBarDrop> =
+            p.outcome.duplicate_drops.iter().filter(|d| d.divergent).collect();
+        data_quality.observations.push(format!(
+            "R23 duplicate daily bars dropped: {} total, {} value-divergent",
+            p.outcome.duplicate_drops.len(),
+            divergent.len()
+        ));
+        // Name the divergent ones individually — they are the ones that change prices.
+        const MAX_LISTED: usize = 20;
+        for d in divergent.iter().take(MAX_LISTED) {
+            data_quality.observations.push(format!(
+                "value-divergent duplicate bar: {} on {} (ts_event {}) — the kept copy is the \
+                 first in catalog order; re-ingest may have spliced two adjustment bases",
+                d.instrument_id, d.date, d.ts_event
+            ));
+        }
+        if divergent.len() > MAX_LISTED {
+            data_quality.observations.push(format!(
+                "... and {} further value-divergent duplicates not listed",
+                divergent.len() - MAX_LISTED
+            ));
+        }
+    }
 
     // Every identity-bearing field is derived by the constructor, not passed: `strategy_id`,
     // `strategy_version`, `run_id`, and `strategy_code_hash` all come off `daily_params` and
