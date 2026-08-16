@@ -713,7 +713,21 @@ fn the_daily_defaults_are_the_frozen_terms() {
     assert_eq!(FROZEN_DIRECTIONALITY, h.directionality);
     assert_eq!(defaults.steady_state_concurrency(), h.steady_state_concurrency);
     assert_eq!(FROZEN_STEADY_STATE_CONCURRENCY, h.steady_state_concurrency);
-    assert_eq!(defaults.max_concurrent, h.steady_state_concurrency);
+    // The runtime cap is NOT the frozen steady state — they are different quantities and
+    // equating them was a real defect. `steady_state_concurrency` is the expectation the
+    // lineage was sized against; `max_concurrent` is a per-bar assertion on `open +
+    // pending`, and within a session the expiring cohort has not exited when that
+    // session's entries are evaluated. So the cap must admit one further cohort, or it
+    // binds transiently and refuses real entries in instrument-id order (measured: 136
+    // against 128 at the frozen terms, up to `target_m` spurious refusals per session).
+    assert_eq!(defaults.max_concurrent, defaults.transient_peak_concurrency());
+    assert_eq!(defaults.transient_peak_concurrency(), h.steady_state_concurrency + h.target_m);
+    assert!(
+        defaults.max_concurrent > h.steady_state_concurrency,
+        "the cap must not bind at the frozen steady state: cap {} vs steady state {}",
+        defaults.max_concurrent,
+        h.steady_state_concurrency
+    );
 
     // The stop rule is prose: assert the verbatim string, then that the typed multiple
     // and ATR window are the numbers that prose names.

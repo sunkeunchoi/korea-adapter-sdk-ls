@@ -121,9 +121,18 @@ pub struct DailyParams {
     pub target_m: usize,
     /// The concurrency cap. This path's throttle is `target_m` × the hold, so the cap is
     /// an **assertion**, not a second selection rule: `validate()` rejects a cap below
-    /// [`DailyParams::steady_state_concurrency`], because a binding cap would silently
+    /// [`DailyParams::transient_peak_concurrency`], because a binding cap would silently
     /// truncate the frozen hold and the run would still read as a real result. ORB's
     /// `max_concurrent` (5) is emphatically not inherited (R27).
+    ///
+    /// The bound is the **transient peak**, `target_m × (hold + 1)`, not the steady state
+    /// `target_m × hold`. The strategy tests `open + pending` per bar, and within a session
+    /// the expiring cohort has not exited yet when that session's entries are evaluated —
+    /// so the committed count legitimately reaches one full cohort above the steady state
+    /// before settling back. Capping at the steady state made the cap bind *transiently*
+    /// and refuse real entries in instrument-id order (measured: up to `target_m` spurious
+    /// `concurrency_cap` refusals per session at the frozen terms, 136 against 128), under
+    /// a reason that claims the take over-issued when it did not.
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: usize,
     /// Directionality. Frozen at [`FROZEN_DIRECTIONALITY`]; recorded rather than
@@ -162,7 +171,10 @@ fn default_target_m() -> usize {
 }
 
 fn default_max_concurrent() -> usize {
-    FROZEN_STEADY_STATE_CONCURRENCY
+    // The transient peak, `target_m × (hold + 1)` = 136 at the frozen terms — NOT the
+    // frozen steady state of 128. See `DailyParams::transient_peak_concurrency`: a cap at
+    // the steady state binds within a session, before the expiring cohort's exits settle.
+    FROZEN_TARGET_M * (FROZEN_HOLDING_PERIOD_SESSIONS + 1)
 }
 
 fn default_directionality() -> String {
@@ -305,16 +317,20 @@ impl DailyParams {
                     .to_string(),
             );
         }
-        if self.max_concurrent < self.steady_state_concurrency() {
+        if self.max_concurrent < self.transient_peak_concurrency() {
             return Err(format!(
-                "max_concurrent {} is below the implied steady-state concurrency {} \
-                 (target_m {} × holding_period_sessions {}) — a binding cap silently truncates \
-                 the frozen hold, so the cap is an assertion on this path, not a second \
-                 selection rule (ORB's default of 5 must not be inherited, R27)",
+                "max_concurrent {} is below the implied transient peak concurrency {} \
+                 (target_m {} × (holding_period_sessions {} + 1)) — within a session the \
+                 expiring cohort has not exited when that session's entries are evaluated, so \
+                 a cap at the steady state {} binds transiently and refuses real entries in \
+                 instrument-id order. A binding cap silently truncates the frozen hold, so the \
+                 cap is an assertion on this path, not a second selection rule (ORB's default \
+                 of 5 must not be inherited, R27)",
                 self.max_concurrent,
-                self.steady_state_concurrency(),
+                self.transient_peak_concurrency(),
                 self.target_m,
-                self.holding_period_sessions
+                self.holding_period_sessions,
+                self.steady_state_concurrency()
             ));
         }
         Ok(())
@@ -326,6 +342,20 @@ impl DailyParams {
     #[must_use]
     pub fn steady_state_concurrency(&self) -> usize {
         self.target_m.saturating_mul(self.holding_period_sessions)
+    }
+
+    /// The highest open-position count reachable at any instant *within* a session:
+    /// `target_m × (holding_period_sessions + 1)`. At the frozen terms this is 136.
+    ///
+    /// The strategy evaluates `open + pending` per bar, and a session's expiring cohort
+    /// has not exited when that session's entries are evaluated — so one full cohort of
+    /// `target_m` sits above the steady state until the exits settle. This, not
+    /// [`Self::steady_state_concurrency`], is the correct floor for `max_concurrent`;
+    /// the frozen `steady_state_concurrency` remains the *expectation* the lineage was
+    /// sized against, which is a different quantity from a runtime cap.
+    #[must_use]
+    pub fn transient_peak_concurrency(&self) -> usize {
+        self.target_m.saturating_mul(self.holding_period_sessions.saturating_add(1))
     }
 
     /// The number of shares a `notional_per_position` budget buys at `price` (floored),
