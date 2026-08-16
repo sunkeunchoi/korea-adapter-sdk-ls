@@ -11,7 +11,8 @@
 //!   (P7), carried in the manifest as an optional sibling of [`params`] so no ORB
 //!   identity hash moves.
 //! - [`strategy`] — the ORB v0 payload: universe scan + range/entry/exit machine (R2).
-//! - [`artifacts`] — the RunWriter and the four run artifacts (KTD2, R4–R9).
+//! - [`artifacts`] — the RunWriter and the run artifacts (KTD2, R4–R9): four on every
+//!   run, plus the daily path's conditional [`artifacts::observation`] (P7).
 //! - [`runner`] — the backtest and live-paper runners (F1, F2).
 //! - [`margin`] — the frozen pre-registered sample margin (`config/sample-margin.json`).
 //! - [`lineage_prereg`] — the successor daily lineage's frozen pre-registration
@@ -25,6 +26,12 @@
 //! Every run emits the same four artifacts (performance, decisions, data-quality,
 //! manifest) into an append-only registry so an agent can analyze any run — backtest
 //! or live — and propose the next strategy change.
+//!
+//! A **daily-path** run emits a fifth, `observation.json` (P7/U6): the typed run
+//! observation the holdout judgment and the pre-turn admissibility re-check both read. It
+//! is conditional in two directions — an ORB run never writes one, and a daily run whose
+//! `return_on_risk` is `None` refuses to (R25). So "the same four" still holds as the
+//! floor; five is not the new invariant.
 
 pub mod agent;
 pub mod artifacts;

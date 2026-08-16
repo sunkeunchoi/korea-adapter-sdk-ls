@@ -53,13 +53,14 @@ use crate::artifacts::data_quality::DataQualityReport;
 use crate::artifacts::manifest::{
     range_fingerprint, universe_sequence_hash, DailyManifestParts, DataRange, Manifest,
 };
+use crate::artifacts::observation::{ObservationParts, RunObservation};
 use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk, PerformanceReport};
 use crate::artifacts::RunWriter;
 use crate::params::OrbParams;
 use crate::params_daily::DailyParams;
 use crate::runner::backtest::{build_candidates, is_daily, kst_date_of};
 use crate::strategy::daily::{
-    rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy,
+    rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy, PLACEHOLDER_RANKING_SIGNAL,
 };
 use crate::strategy::orb::UniverseCandidate;
 
@@ -916,6 +917,8 @@ pub struct DailyRunResult {
     pub manifest: Manifest,
     /// The performance report as written.
     pub performance: PerformanceReport,
+    /// The typed run observation as written (U6).
+    pub observation: RunObservation,
     /// The engine phase's full outcome.
     pub outcome: DailyRunOutcome,
 }
@@ -1058,6 +1061,11 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
     // checkpoint's unhealed shift marks is what makes an adjustment-basis rewrite inside a
     // hold *visible* on the run — the risk R22 refuses per position, reported here per run.
     let candidate_union = p.outcome.selection.candidate_union.clone();
+    // The in-range session calendar, from the selection phase rather than from the trades:
+    // a session with no activity must still appear as a zero row in the series, or a
+    // session-block bootstrap resamples a shortened series and understates the error.
+    let session_dates: Vec<chrono::NaiveDate> =
+        p.outcome.selection.sessions.iter().map(|s| s.date).collect();
     let shift_symbols: Vec<String> = checkpoint
         .as_ref()
         .map(|c| {
@@ -1091,11 +1099,26 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
     })
     .map_err(|e| anyhow::anyhow!("daily manifest refused: {e}"))?;
 
+    // The fifth artifact (U6). Built BEFORE the writer opens so an R25 refusal leaves no
+    // staging directory at all — an aborted run's `.tmp-` dir is reported by
+    // `aborted_runs`, and a refusal is not an abort.
+    let observation = RunObservation::build(ObservationParts {
+        run_id: &manifest.run_id,
+        data_range: &manifest.data_range,
+        catalog_fingerprint: &manifest.catalog_fingerprint,
+        performance: &performance,
+        session_dates: &session_dates,
+        ranking_signal: PLACEHOLDER_RANKING_SIGNAL.name,
+        ranking_signal_is_placeholder: PLACEHOLDER_RANKING_SIGNAL.placeholder,
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
     let writer = RunWriter::new(p.data_home, &manifest.run_id)?;
     writer.write_manifest(&manifest)?;
     writer.write_performance(&performance)?;
     writer.write_data_quality(&data_quality)?;
     writer.write_decisions(&p.sink.snapshot())?;
+    writer.write_observation(&observation)?;
     let run_dir = writer.finalize()?;
 
     Ok(DailyRunResult {
@@ -1103,6 +1126,7 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         run_id: manifest.run_id.clone(),
         manifest,
         performance,
+        observation,
         outcome: p.outcome,
     })
 }

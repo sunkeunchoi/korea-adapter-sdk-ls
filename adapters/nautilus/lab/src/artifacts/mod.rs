@@ -10,6 +10,7 @@
 
 pub mod data_quality;
 pub mod manifest;
+pub mod observation;
 pub mod performance;
 
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::envelope::{to_scrubbed_jsonl_line, DecisionEnvelope};
 use data_quality::DataQualityReport;
 use manifest::Manifest;
+use observation::RunObservation;
 use performance::PerformanceReport;
 
 /// Whether a run was a backtest or a live paper session (R9). Recorded in the run id
@@ -52,12 +54,16 @@ pub fn run_id(start: DateTime<Utc>, source: RunSource, strategy_id: &str, versio
     )
 }
 
-/// The four artifact file names.
+/// The four artifact file names every run emits.
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const PERFORMANCE_FILE: &str = "performance.json";
 /// The per-run decision-envelope stream (one telemetry envelope per decision, R6).
 pub const DECISIONS_FILE: &str = "decisions.jsonl";
 pub const DATA_QUALITY_FILE: &str = "data_quality.json";
+/// The typed run observation (P7/U6) — the **fifth**, conditional artifact, written only
+/// by the daily path and only when the run carries a `return_on_risk` (R25). An ORB run
+/// never writes it.
+pub const OBSERVATION_FILE: &str = "observation.json";
 /// The agent-written analysis file (co-located into a finalized run dir, R15).
 pub const ANALYSIS_FILE: &str = "analysis.md";
 
@@ -128,6 +134,13 @@ impl RunWriter {
     /// Write the performance report.
     pub fn write_performance(&self, report: &PerformanceReport) -> anyhow::Result<()> {
         self.write_json(PERFORMANCE_FILE, report)
+    }
+
+    /// Write the typed run observation (P7/U6). Only the daily path calls this, and only
+    /// for a run whose statistic exists — [`RunObservation::build`] is what refuses the
+    /// other case, before there is anything to write.
+    pub fn write_observation(&self, observation: &RunObservation) -> anyhow::Result<()> {
+        self.write_json(OBSERVATION_FILE, observation)
     }
 
     /// Write the data-quality report, scrubbing its free-text observations first.

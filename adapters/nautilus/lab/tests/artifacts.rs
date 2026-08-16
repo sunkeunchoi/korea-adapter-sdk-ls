@@ -94,6 +94,19 @@ fn writes_four_artifacts_and_finalizes() {
     for f in [MANIFEST_FILE, PERFORMANCE_FILE, DATA_QUALITY_FILE, DECISIONS_FILE] {
         assert!(run_dir.join(f).exists(), "{f} written");
     }
+    // The set is EXACTLY four, not merely at-least-four. Without this, a path that started
+    // emitting an extra artifact on every run — rather than only on the daily path, as
+    // P7/U6's `observation.json` does — would pass unnoticed.
+    let mut written: Vec<String> = std::fs::read_dir(&run_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        vec![DATA_QUALITY_FILE, DECISIONS_FILE, MANIFEST_FILE, PERFORMANCE_FILE],
+        "a scripted run emits exactly the four base artifacts"
+    );
     // Each JSON artifact round-trips through its serde type.
     let m: Manifest = serde_json::from_str(&std::fs::read_to_string(run_dir.join(MANIFEST_FILE)).unwrap()).unwrap();
     assert_eq!(m.run_id, id);
@@ -315,4 +328,57 @@ fn pre_u5_manifest_deserializes_without_dispatch_link() {
     });
     let m: Manifest = serde_json::from_value(json).unwrap();
     assert!(m.dispatch.is_none(), "absent dispatch link -> None");
+}
+
+/// P7/U6: `write_observation` adds a **fifth** file, and only when called. The daily runner
+/// is its only caller, and it calls it only for a run whose `return_on_risk` exists (R25) —
+/// so five is a conditional maximum, never the new invariant.
+#[test]
+fn the_observation_is_a_conditional_fifth_artifact() {
+    use nautilus_ls_lab::artifacts::manifest::DataRange;
+    use nautilus_ls_lab::artifacts::observation::{ObservationParts, RunObservation};
+    use nautilus_ls_lab::artifacts::OBSERVATION_FILE;
+
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let id = fixed_run_id(RunSource::Backtest, 0);
+    let writer = RunWriter::new(data, &id).unwrap();
+
+    // A trade carrying risk, so the run has a statistic and the observation can exist.
+    let mut t = trade("005930.XKRX", 100.0, 60_000.0);
+    t.risk_capital = Some(400.0);
+    t.realized_r = Some(0.25);
+    let perf = PerformanceReport::assemble(vec![t], 1_000_000.0);
+    let range = DataRange { start: "20240103".into(), end: "20240112".into() };
+    let obs = RunObservation::build(ObservationParts {
+        run_id: &id,
+        data_range: &range,
+        catalog_fingerprint: "cafe1234",
+        performance: &perf,
+        session_dates: &[chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()],
+        ranking_signal: "prior_turnover_desc",
+        ranking_signal_is_placeholder: true,
+    })
+    .expect("a run with a statistic yields an observation");
+
+    writer.write_manifest(&manifest(&id, RunSource::Backtest, OrbParams::default())).unwrap();
+    writer.write_performance(&perf).unwrap();
+    writer.write_data_quality(&DataQualityReport::backtest(vec![], vec![])).unwrap();
+    writer.write_decisions(&[telemetry_envelope()]).unwrap();
+    writer.write_observation(&obs).unwrap();
+    let run_dir = writer.finalize().unwrap();
+
+    let mut written: Vec<String> = std::fs::read_dir(&run_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        vec![DATA_QUALITY_FILE, DECISIONS_FILE, MANIFEST_FILE, OBSERVATION_FILE, PERFORMANCE_FILE]
+    );
+    let back: RunObservation =
+        serde_json::from_str(&std::fs::read_to_string(run_dir.join(OBSERVATION_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(back, obs);
 }
