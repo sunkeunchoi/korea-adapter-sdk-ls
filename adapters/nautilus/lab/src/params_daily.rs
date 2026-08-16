@@ -380,7 +380,19 @@ mod tests {
         let p = DailyParams::default();
         assert!(p.validate().is_ok(), "{:?}", p.validate());
         assert_eq!(p.steady_state_concurrency(), FROZEN_STEADY_STATE_CONCURRENCY);
-        assert_eq!(p.max_concurrent, FROZEN_STEADY_STATE_CONCURRENCY);
+        // The cap is the TRANSIENT PEAK, one full cohort above the steady state — not the
+        // steady state itself. The strategy tests `open + pending` per bar, and within a
+        // session the expiring cohort has not exited when that session's entries are
+        // evaluated, so the committed count legitimately reaches `target_m × (hold + 1)`
+        // before settling back. Capping at the steady state made the cap bind transiently
+        // and refuse real entries in instrument-id order, under a `concurrency_cap` reason
+        // claiming the take over-issued when it had not.
+        assert_eq!(p.max_concurrent, p.transient_peak_concurrency());
+        assert_eq!(p.max_concurrent, FROZEN_STEADY_STATE_CONCURRENCY + FROZEN_TARGET_M);
+        assert!(
+            p.max_concurrent > FROZEN_STEADY_STATE_CONCURRENCY,
+            "a cap AT the steady state is the defect fixed in 2870a78, not the intent"
+        );
     }
 
     #[test]

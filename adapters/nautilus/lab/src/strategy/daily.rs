@@ -870,7 +870,10 @@ mod tests {
             symbol: symbol.to_string(),
             gap_prices: SessionGapPrices::new(1_000, 1_000),
             prior_turnover,
-            meta: CandidateMeta::default(),
+            // `Untagged` — the legacy, metadata-less join state — spelled out rather than
+            // defaulted. `CandidateMeta` has no `Default` impl and cannot grow one: it
+            // lives in `orb.rs`, whose bytes are the head digest (KTD5).
+            meta: CandidateMeta::Untagged,
             prior_atr: Some(10.0),
             prior_open_vol_mean: None,
             prior_illiq: None,
