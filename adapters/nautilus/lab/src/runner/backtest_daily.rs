@@ -818,16 +818,27 @@ where
     R: Fn(&[UniverseCandidate]) -> Vec<String> + Send + 'static,
     F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
 {
-    let catalog_path = cfg.data_home.join("catalog");
+    let (_catalog_path, _guard) = acquire_catalog_guard(&cfg.data_home)?;
+    Ok(run_daily_locked(cfg, sink, rank, make_strategy).await?.outcome)
+}
+
+/// Check the catalog exists and take the ingest advisory lock over it.
+///
+/// Shared by the two entry points so they cannot drift on the refusal message, but
+/// deliberately returning the guard rather than holding it: the whole difference between
+/// [`run_daily`] and [`run_inner`] is the guard's *scope*. `run_daily` needs it for the
+/// engine phase; `run_inner` must hold one continuous guard across the engine phase and
+/// the finalize re-check, or it opens the very window that re-check exists to detect.
+fn acquire_catalog_guard(data_home: &Path) -> anyhow::Result<(PathBuf, AdvisoryLock)> {
+    let catalog_path = data_home.join("catalog");
     if !catalog_path.exists() {
         anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());
     }
     // Own-guard: refuse if ingest is running, and hold the ingest lock so the catalog
     // cannot be mutated mid-run. Released on drop / at end of the run.
-    let _guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
+    let guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
         .map_err(|e| anyhow::anyhow!("daily backtest refused — ingest/live in progress: {e}"))?;
-
-    Ok(run_daily_locked(cfg, sink, rank, make_strategy).await?.outcome)
+    Ok((catalog_path, guard))
 }
 
 /// [`run_daily`]'s body with the advisory lock **already held by the caller**, plus the
@@ -967,15 +978,9 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         );
     }
 
-    let catalog_path = cfg.data_home.join("catalog");
-    if !catalog_path.exists() {
-        anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());
-    }
-
     // ONE guard spanning the engine phase and the finalize re-check (see
     // `run_daily_locked`). Released on drop, at end of the run.
-    let _guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
-        .map_err(|e| anyhow::anyhow!("daily backtest refused — ingest/live in progress: {e}"))?;
+    let (catalog_path, _guard) = acquire_catalog_guard(&cfg.data_home)?;
 
     let assembly_params = cfg.assembly_params();
     let data_home = cfg.data_home.clone();
