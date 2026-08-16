@@ -125,6 +125,96 @@ impl OpenPositionBook {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The shared per-session signal handle (U4 — KTD9, KTD11, KTD13, R22)
+// ---------------------------------------------------------------------------
+
+/// What the loop resolved for one session, published to the strategy before that
+/// session's batch runs.
+///
+/// A daily strategy cannot derive any of this from its own bar stream. The batch
+/// carries only the session's *taken* and *held* symbols, so a freshly taken symbol
+/// arrives with no prior bars at all — and the stop's prior ATR is computed strictly
+/// **before** the session (KTD9). Re-deriving it inside the strategy would need a
+/// second full-catalog index, which R5 forbids; the ranked/taken/held triple and the
+/// ordered session calendar are likewise loop state, not stream state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DailySessionContext {
+    /// The session's ordinal in the run's in-range session list. **This** is the
+    /// clock hold elapsed is counted on (R23) — never a bar-callback counter, so a
+    /// duplicate bar cannot shorten a frozen hold.
+    pub index: usize,
+    /// The KST session date.
+    pub date: NaiveDate,
+    /// The session's ranked candidates, best first, in instrument order.
+    pub ranked: Vec<InstrumentId>,
+    /// The symbols this session's pre-batch step actually took (R10).
+    pub taken: Vec<InstrumentId>,
+    /// The symbols already holding an open position at the pre-batch step.
+    pub held: Vec<InstrumentId>,
+    /// Each candidate's prior ATR for this session. An absent key was not a
+    /// candidate; a `None` value was a candidate with no derivable prior ATR. The
+    /// stop fails closed on both (KTD9).
+    pub prior_atr: HashMap<InstrumentId, Option<f64>>,
+}
+
+/// The shared per-session signal handle: the runner publishes one
+/// [`DailySessionContext`] per session before that session's batch runs, plus the
+/// ordered in-range session calendar once before the loop.
+///
+/// Same shared-handle pattern as [`OpenPositionBook`] (KTD16) and for the same
+/// reason — the runner clones it off the strategy before `add_strategy` consumes
+/// it. The direction of travel is the opposite one: the runner *writes*, the
+/// strategy *reads*.
+#[derive(Debug, Clone, Default)]
+pub struct DailySessionSignals {
+    inner: Arc<Mutex<SignalState>>,
+}
+
+#[derive(Debug, Default)]
+struct SignalState {
+    /// Every in-range session date, in order — the calendar a prospective hold
+    /// window is measured on (R22).
+    sessions: Vec<NaiveDate>,
+    current: Option<DailySessionContext>,
+}
+
+impl DailySessionSignals {
+    /// A fresh, empty handle.
+    #[must_use]
+    pub fn new() -> Self {
+        DailySessionSignals::default()
+    }
+
+    /// Publish the ordered in-range session calendar (once, before the loop).
+    pub fn publish_sessions(&self, sessions: Vec<NaiveDate>) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions = sessions;
+    }
+
+    /// Publish one session's context (once per session, before its batch runs).
+    pub fn publish_session(&self, ctx: DailySessionContext) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).current = Some(ctx);
+    }
+
+    /// The session currently being driven, if the loop has published one.
+    #[must_use]
+    pub fn current(&self) -> Option<DailySessionContext> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).current.clone()
+    }
+
+    /// The in-range session date at `index`.
+    #[must_use]
+    pub fn session_at(&self, index: usize) -> Option<NaiveDate> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions.get(index).copied()
+    }
+
+    /// The number of in-range sessions published.
+    #[must_use]
+    pub fn session_count(&self) -> usize {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions.len()
+    }
+}
+
 /// A strategy this runner can drive: it must expose the shared open-position book
 /// so the runner can read the held set between batches (KTD16), and the shared
 /// entry-risk ledger so the runner can project it into cache-read order (KTD3).
@@ -136,6 +226,19 @@ pub trait DailyPathStrategy {
     /// The runner clones it **before** `add_strategy` consumes the strategy and
     /// projects it into the order of the single post-`end()` cache read.
     fn entry_risk_ledger(&self) -> ClientOrderEntryRiskLedger;
+
+    /// A clone of the shared per-session signal handle the runner publishes each
+    /// session's [`DailySessionContext`] into.
+    ///
+    /// Defaulted to a detached handle so a strategy that drives itself entirely off
+    /// batch membership (U1's test-only always-enter strategy) needs no wiring: the
+    /// runner still publishes, nothing reads. A strategy whose stop needs the prior
+    /// ATR, whose hold is counted in loop-supplied session ordinals, or whose entry
+    /// gate reads the prospective hold window must override it and return a clone of
+    /// its own handle.
+    fn session_signals(&self) -> DailySessionSignals {
+        DailySessionSignals::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +428,13 @@ pub struct DailySessionPlan {
     /// take-top-`target_m`-minus-held step needs the held set and therefore runs
     /// per session in the engine phase (KTD16).
     pub ranked: Vec<String>,
+    /// Each candidate's prior ATR for this session, keyed by symbol — the entry
+    /// stop's only input (KTD9), carried on the plan because it is derived in the
+    /// pure selection phase from the single catalog index (R5) and consumed in the
+    /// engine phase, where the candidates no longer exist. An absent key was not a
+    /// candidate this session; a `None` value was a candidate with no derivable
+    /// prior ATR.
+    pub prior_atr: BTreeMap<String, Option<f64>>,
     /// The session-open equity multiplier — fixed at exactly `1.0` on this path
     /// (KTD7). Compounding is on the no-build list, and preserving the ORB path's
     /// realized-P&L feedback edge would force the daily loop back into a
@@ -450,6 +560,8 @@ where
             candidate_union.insert(c.symbol.clone());
         }
         let ranked = rank(&candidates);
+        let prior_atr: BTreeMap<String, Option<f64>> =
+            candidates.iter().map(|c| (c.symbol.clone(), c.prior_atr)).collect();
         emit_universe_envelopes(sink, params, session_ts, &candidates, &ranked);
 
         // KTD7: fixed at exactly 1.0, and asserted here so a future edit that
@@ -465,6 +577,7 @@ where
             date: *date,
             session_ts,
             ranked,
+            prior_atr,
             equity_multiplier,
         });
     }
@@ -798,19 +911,44 @@ where
     // Likewise the client-order-keyed entry-risk ledger (KTD3): the runner projects
     // it into cache-read order after the single post-`end()` read.
     let risk_ledger = strategy.entry_risk_ledger();
+    // And the per-session signal handle (U4): the runner *writes* this one. The
+    // ordered session calendar is published once, before the loop — a prospective
+    // hold window is measured on it (R22).
+    let signals = strategy.session_signals();
+    signals.publish_sessions(selection.sessions.iter().map(|s| s.date).collect());
     engine.add_strategy(strategy)?;
 
     let mut batches: Vec<SessionBatch> = Vec::new();
     let mut duplicate_drops: Vec<DuplicateBarDrop> = Vec::new();
     let mut ran = 0usize;
 
-    for plan in &selection.sessions {
+    for (index, plan) in selection.sessions.iter().enumerate() {
         // The held set is engine state, read from the shared handle between batches —
         // never a per-session position-report read (R4).
         let held = book.held();
         let taken = resolve_take(&plan.ranked, &held, &by_symbol, target_m);
         let mut wanted: BTreeSet<InstrumentId> = held.clone();
         wanted.extend(taken.iter().copied());
+
+        // Publish what this session resolved BEFORE its batch runs, so the strategy's
+        // first bar callback of the session already sees the session ordinal, the
+        // take, and the prior ATRs its stop gate needs (KTD9).
+        signals.publish_session(DailySessionContext {
+            index,
+            date: plan.date,
+            ranked: plan
+                .ranked
+                .iter()
+                .filter_map(|s| by_symbol.get(s.as_str()).copied())
+                .collect(),
+            taken: taken.clone(),
+            held: held.iter().copied().collect(),
+            prior_atr: plan
+                .prior_atr
+                .iter()
+                .filter_map(|(s, a)| by_symbol.get(s.as_str()).map(|id| (*id, *a)))
+                .collect(),
+        });
 
         let batch = build_batch(
             daily_by_date.get(&plan.date).map(|v| v.as_slice()).unwrap_or_default(),
