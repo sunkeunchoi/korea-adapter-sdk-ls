@@ -1,0 +1,23 @@
+schema_version = "v0"
+repository_id = "korea-adapter-sdk-ls"
+package_id = "repository-engineering"
+activation_eligibility = "none"
+active_capability_contracts = []
+active_worker_roles = []
+
+[compatibility]
+contract_family = "repository-engineering"
+minimum_reader = "v0"
+
+[paths]
+discovery_policy = ".repository-engineering/discovery-policy.toml"
+migration_ledger = ".repository-engineering/migration-ledger.toml"
+schema_registry = ".repository-engineering/schemas/v0/registry.json"
+
+[[optional_components]]
+component = "orca_ui"
+selection = "disabled"
+
+[[optional_components]]
+component = "worker_adapter"
+selection = "disabled"

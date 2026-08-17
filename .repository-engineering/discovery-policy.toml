@@ -1,0 +1,119 @@
+schema_version = "v0"
+exact_instruction_paths = [
+  ".compound-engineering/config.local.example.yaml",
+  "AGENTS.md",
+  "ARCHITECTURE.md",
+  "CLAUDE.md",
+  "README.md",
+  "TR_LIFECYCLE.md",
+  "USER_GUIDE.md",
+  "docs/agents/domain.md",
+  "docs/agents/issue-tracker.md",
+  "docs/agents/triage-labels.md",
+  "skills-lock.json",
+]
+
+[[discoverers]]
+source_kind = "capability"
+prefix = ".agents/skills/"
+marker = "SKILL.md"
+include_descendants = true
+
+[[discoverers]]
+source_kind = "claude_alias"
+prefix = ".claude/skills/"
+include_descendants = false
+
+[[discoverers]]
+source_kind = "worker_role"
+prefix = ".claude/agents/"
+marker = ".md"
+include_descendants = false
+
+[[exclusions]]
+prefix = ".compound-engineering/"
+reason = "non_authority_tool_configuration"
+
+[[exclusions]]
+prefix = ".env.example"
+reason = "credential_template"
+
+[[exclusions]]
+prefix = ".github/"
+reason = "repository_automation"
+
+[[exclusions]]
+prefix = ".gitignore"
+reason = "version_control_configuration"
+
+[[exclusions]]
+prefix = ".repository-engineering/"
+reason = "package_internal"
+
+[[exclusions]]
+prefix = "CONCEPTS.md"
+reason = "domain_vocabulary"
+
+[[exclusions]]
+prefix = "CONTEXT-MAP.md"
+reason = "architecture_context"
+
+[[exclusions]]
+prefix = "CONTEXT.md"
+reason = "architecture_context"
+
+[[exclusions]]
+prefix = "Cargo.lock"
+reason = "build_input"
+
+[[exclusions]]
+prefix = "Cargo.toml"
+reason = "build_input"
+
+[[exclusions]]
+prefix = "Makefile"
+reason = "build_input"
+
+[[exclusions]]
+prefix = "adapters/"
+reason = "product_source"
+
+[[exclusions]]
+prefix = "crates/"
+reason = "product_source"
+
+[[exclusions]]
+prefix = "docs/"
+reason = "non_instruction_documentation"
+
+[[exclusions]]
+prefix = "metadata/"
+reason = "tr_metadata"
+
+[[exclusions]]
+prefix = "queue/"
+reason = "operational_queue"
+
+[[exclusions]]
+prefix = "scripts/"
+reason = "repository_script"
+
+[[declared_obligations]]
+logical_id = "run-state-consumer--audit-carried-rows"
+source_kind = "ignored_state_consumer"
+locator = ".compound-engineering/runs/audit-carried-rows"
+
+[[declared_obligations]]
+logical_id = "run-state-consumer--promote-trs"
+source_kind = "ignored_state_consumer"
+locator = ".compound-engineering/runs/promote-trs"
+
+[[declared_obligations]]
+logical_id = "global-cleanup--issue-281"
+source_kind = "global_cleanup_assumption"
+locator = "global-cleanup/issue-281"
+
+[[declared_obligations]]
+logical_id = "global-cleanup--issue-285"
+source_kind = "global_cleanup_assumption"
+locator = "global-cleanup/issue-285"

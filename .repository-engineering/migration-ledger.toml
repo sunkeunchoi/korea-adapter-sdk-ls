@@ -1,0 +1,777 @@
+schema_version = "v0"
+
+[[rows]]
+logical_id = "capability--ask-matt"
+source_kind = "capability"
+source_locator = ".agents/skills/ask-matt"
+source_digest = "sha256:860d8eee0069d542ea7b4f9cb08c3ef45f312d0ded0802d200ffb45537353dde"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--audit-carried-rows"
+source_kind = "capability"
+source_locator = ".agents/skills/audit-carried-rows"
+source_digest = "sha256:1dd707f6481a2cb4e71c95f12041d8b1c2c6aee38f45554ff3e5ff8a05a19949"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--audit-row"
+source_kind = "capability"
+source_locator = ".agents/skills/audit-row"
+source_digest = "sha256:00d5416f9920b8cf0eb9998e77debca0a17340c72988bee4ec8aa50c4459386f"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--code-review"
+source_kind = "capability"
+source_locator = ".agents/skills/code-review"
+source_digest = "sha256:429507f7a5bc33e1aeaa49e8ed01008f6e3e1f2754200bd13e4f00297e695d39"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--codebase-design"
+source_kind = "capability"
+source_locator = ".agents/skills/codebase-design"
+source_digest = "sha256:22060c66dd3242ae0a6f6f7ee0ba99dd081b74dc40c5646393fa609b6a5001b0"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--diagnosing-bugs"
+source_kind = "capability"
+source_locator = ".agents/skills/diagnosing-bugs"
+source_digest = "sha256:c56c0702e58c777b260cd98752fa0c27659f6d8d981546ddbd44334e12644559"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--domain-modeling"
+source_kind = "capability"
+source_locator = ".agents/skills/domain-modeling"
+source_digest = "sha256:45e33f8ca3d4b8b7e42b40d8778aa76c3b042d9262368d7f1e7d05cbc64b1c97"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--grill-me"
+source_kind = "capability"
+source_locator = ".agents/skills/grill-me"
+source_digest = "sha256:0b9134971e0fd76b0ade9d60c1e7ba80b7ffc0ecc2b803e76a1c3b68841b17ba"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--grill-with-docs"
+source_kind = "capability"
+source_locator = ".agents/skills/grill-with-docs"
+source_digest = "sha256:1a6c1b6171faadfea294d4f7638c6aab1c1d93235827955232d8b01356471e12"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--grilling"
+source_kind = "capability"
+source_locator = ".agents/skills/grilling"
+source_digest = "sha256:a5711fdafb463bcb1c630bcbccc2861894bb2ad9a5dabd3addf0f9cf9e9f80e7"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--handoff"
+source_kind = "capability"
+source_locator = ".agents/skills/handoff"
+source_digest = "sha256:3361bcdb77cb38280d14a3689eaa0bfe7932fee0fbd39308541407d7864d2c35"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--implement"
+source_kind = "capability"
+source_locator = ".agents/skills/implement"
+source_digest = "sha256:e8b1641b2f788ecd6a3fe531fb6526606e7d75c652c03d551d805d9d41bb9f61"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--implement-order-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/implement-order-tr"
+source_digest = "sha256:c0afbf019a2f74596ef31d8e75399c4be565ea29511ac4283222ce6bcbcadc9c"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--implement-realtime-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/implement-realtime-tr"
+source_digest = "sha256:d7337cefe56de6f9ae8c5fd5f03565902bce4e50cb07ad2ca3d8cf31efba19e2"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--implement-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/implement-tr"
+source_digest = "sha256:14829266666f1d613abd644c0f9e0e6c2f4879cf9b5ad5ec71123cd141520d67"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--improve-codebase-architecture"
+source_kind = "capability"
+source_locator = ".agents/skills/improve-codebase-architecture"
+source_digest = "sha256:5b78b3954fd4e9b44e6ae8d0d8fc7d9b5337b28a8c0a45adafd6441425b8c4e5"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--promote-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/promote-tr"
+source_digest = "sha256:960d8f7f436e12791d6832b868ef2031b6edc9c7f0350e33fb9ec49664a967ae"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--promote-trs"
+source_kind = "capability"
+source_locator = ".agents/skills/promote-trs"
+source_digest = "sha256:9fe73038ddb870ec72df33b5048686a3fa67613e7584d36ca35656103c38c161"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--prototype"
+source_kind = "capability"
+source_locator = ".agents/skills/prototype"
+source_digest = "sha256:e1311bf8386cf0fba0200cd36b1e1ad3c42c9d9e8f4634293a41ff005be23d24"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--research"
+source_kind = "capability"
+source_locator = ".agents/skills/research"
+source_digest = "sha256:05f8d940d848c417ef482fbe3a0c1124111b309c915ffbe3e9b6b8fe72257445"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--resolving-merge-conflicts"
+source_kind = "capability"
+source_locator = ".agents/skills/resolving-merge-conflicts"
+source_digest = "sha256:a8dea72796f5c5d4902bbbe80bf306f82652c7b05986c93792d622857b69c1b6"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--run-strategy-turn"
+source_kind = "capability"
+source_locator = ".agents/skills/run-strategy-turn"
+source_digest = "sha256:89c38a1dcf78824ca65161c216c53ed15af39840a63fec05dc5d803582038fde"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--setup-matt-pocock-skills"
+source_kind = "capability"
+source_locator = ".agents/skills/setup-matt-pocock-skills"
+source_digest = "sha256:52107ac0c83da3c3ed97f79cd786b48dca2cb8878633b24d681798df6164bea7"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--tdd"
+source_kind = "capability"
+source_locator = ".agents/skills/tdd"
+source_digest = "sha256:fd655372bde0ce529c01dd9e37ca16f09ff1199469ca7cf3cd388a20826b6476"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--teach"
+source_kind = "capability"
+source_locator = ".agents/skills/teach"
+source_digest = "sha256:fef8b6de36f5e076ebecf75544422189e5d23a21bb6cc61b9d59b1f49dfb7855"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--to-questionnaire"
+source_kind = "capability"
+source_locator = ".agents/skills/to-questionnaire"
+source_digest = "sha256:57882ea50d5f4814806e6b3bf4a8b3cb3519061728e7dafa0d5423b11993befc"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--to-spec"
+source_kind = "capability"
+source_locator = ".agents/skills/to-spec"
+source_digest = "sha256:9d3fbc6935ca73cf0c5da1ee4e744a80e2221dc1f4e5c6dea64be47a1254b30b"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--to-tickets"
+source_kind = "capability"
+source_locator = ".agents/skills/to-tickets"
+source_digest = "sha256:b4275f7423d21799c931fe3abcc906949d65f72a20b3f73f39a05513a3902c5e"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--track-realtime-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/track-realtime-tr"
+source_digest = "sha256:88e1d16e4229151aa998b375792ea8cde1dc81f54244e9fedfd067ec7e551c98"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--track-tr"
+source_kind = "capability"
+source_locator = ".agents/skills/track-tr"
+source_digest = "sha256:40f117041c69b30c3449990adfb5b7b5e1d84445763cf5453a7baba9086059dd"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--triage"
+source_kind = "capability"
+source_locator = ".agents/skills/triage"
+source_digest = "sha256:81be7a24428ce56c381d809bb3751cac0f0f7a842905d6ed460ad08e6df7d25f"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--wait-what"
+source_kind = "capability"
+source_locator = ".agents/skills/wait-what"
+source_digest = "sha256:e83a60bba21f88f110137892a9606e9888103b9a38eecd92fad3a1949acd1591"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--wayfinder"
+source_kind = "capability"
+source_locator = ".agents/skills/wayfinder"
+source_digest = "sha256:2ff1ff597a5d6d83ae7512fb28c4f3ebea6d12ae209559ae5890d474aec78815"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--wizard"
+source_kind = "capability"
+source_locator = ".agents/skills/wizard"
+source_digest = "sha256:958aa5a07bacdf2d6114a950bb8203de7eee20057e2014315ae1c31bfe70c1de"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--writing-for-agents"
+source_kind = "capability"
+source_locator = ".agents/skills/writing-for-agents"
+source_digest = "sha256:ddfe6b849373c34a5697df452306ed4b096e96e2db128fa552095b8634d4c52c"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "capability--writing-great-skills"
+source_kind = "capability"
+source_locator = ".agents/skills/writing-great-skills"
+source_digest = "sha256:4103532b1ab17dfc2ab7eca45e3140f11cd6b97695e0a0c658c2f984772c92d1"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--ask-matt"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/ask-matt"
+source_digest = "sha256:fc7b3405efde099942434818a33e18eb78690924497d6de3ab3d9cbaba1547fd"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--code-review"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/code-review"
+source_digest = "sha256:0bbcbd22a16bdb004eeeb5d386552c5428a0af1a400a49eb30a2b2c961bdd639"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--codebase-design"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/codebase-design"
+source_digest = "sha256:ec6d7c073f67bc52d6a557a9b3fc9001d9e081aa287cc655d3d89f776e62c78c"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--diagnosing-bugs"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/diagnosing-bugs"
+source_digest = "sha256:1e6355bd8ef3a35470b42ad55e494434aab0d70214549730c96c65c8c7435606"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--domain-modeling"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/domain-modeling"
+source_digest = "sha256:4961a49c84fb3d6e1767b71c3b3844aabdd46699a47f80f8f86e7bda20684196"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--grill-me"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/grill-me"
+source_digest = "sha256:50766f2f31cf867281511e892ded667af817b20d83f14eed9858e89b882dcfd0"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--grill-with-docs"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/grill-with-docs"
+source_digest = "sha256:a85cfaa951e9f67cb0b11e89617def182387259107be98177cdffe643fbecf6a"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--grilling"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/grilling"
+source_digest = "sha256:f72a5b1704bfab98af1655a75c388c9ddb942a2ce60a4f1802a9666806a45f04"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--handoff"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/handoff"
+source_digest = "sha256:17ba0d85dcf3557c60fc6a918b2801132f53b0e6748d79dd851cd2021421a7c7"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--implement"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/implement"
+source_digest = "sha256:618735dadfe65bf54502477add84db48fa89a35fa9f2ed7f0577a1bfaa85d46b"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--improve-codebase-architecture"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/improve-codebase-architecture"
+source_digest = "sha256:61c14382aafb95ce951bfa0d169dbabfb9ed917b364affc5ef1bc2f3caf1e5a2"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--prototype"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/prototype"
+source_digest = "sha256:b59cf1e8091c7958178ad3f69dbeb97067b3d35b764d4de0a5383dfd76b86604"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--research"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/research"
+source_digest = "sha256:c42c5cfb17b2642e306df8130abaa80cfea76eeedf567c89ed0ff5123ef3d891"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--resolving-merge-conflicts"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/resolving-merge-conflicts"
+source_digest = "sha256:6eb07fab4f02c5446b3986c52a15074210a360ea7c3f8ec868bb5f2102fa6c60"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--setup-matt-pocock-skills"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/setup-matt-pocock-skills"
+source_digest = "sha256:a7e02e71e1210ff3ef4cd1b71011d03361e86be455e7200a3668701293aa6d46"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--tdd"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/tdd"
+source_digest = "sha256:9aef821a37657650b1a67b96ea612e16702b5c9bf4d438e948376d97137502ad"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--teach"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/teach"
+source_digest = "sha256:2daedb58d171738021ec704c0b5e34df36caa03a3b2b682c1f0ab31397307f74"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--to-questionnaire"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/to-questionnaire"
+source_digest = "sha256:67a20d5cd6d08ea2661f8eea490bf0126671176add03f845cb3e25e9c89692d6"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--to-spec"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/to-spec"
+source_digest = "sha256:181ce84693512f505def67a50496668bf83ad1ecbbe28cf2fadf2f4479d076bb"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--to-tickets"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/to-tickets"
+source_digest = "sha256:80196265d469640b08b1cebcfa33b64b64cffd39e0ff9ab81ce935691e2f95ba"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--triage"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/triage"
+source_digest = "sha256:671a0bbc1e2d5c43e87f74b969b4a59925a32e233244df067972c107a1bc3bce"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--wait-what"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/wait-what"
+source_digest = "sha256:02903936110e3b96f103e93e07ab79eb41397c37fbd948ebf1eaae313c992cd1"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--wayfinder"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/wayfinder"
+source_digest = "sha256:37657a1b20fa0b7cc3dd28e53c8526ebd0df623a505a6f4f3e50a57df92e50b2"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--wizard"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/wizard"
+source_digest = "sha256:8c9a8a7eb1e3ea439157ab2c0e5ed251aed47b8b9a37d3b1efbf8aad8e8a2fd2"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "claude-alias--writing-for-agents"
+source_kind = "claude_alias"
+source_locator = ".claude/skills/writing-for-agents"
+source_digest = "sha256:a463f011f1c5531dfbff96837b1465bc80475ffa1d1991b4aa9292dd6ad12352"
+current_authority = "legacy"
+disposition = "REPLACE_WITH_EXECUTOR"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "global-cleanup--issue-281"
+source_kind = "global_cleanup_assumption"
+source_locator = "global-cleanup/issue-281"
+current_authority = "legacy"
+disposition = "GLOBAL_CLEANUP"
+migration_state = "unported"
+absence_reason = "cleanup_not_executed"
+
+[[rows]]
+logical_id = "global-cleanup--issue-285"
+source_kind = "global_cleanup_assumption"
+source_locator = "global-cleanup/issue-285"
+current_authority = "legacy"
+disposition = "GLOBAL_CLEANUP"
+migration_state = "unported"
+absence_reason = "cleanup_not_executed"
+
+[[rows]]
+logical_id = "instruction--agents-md"
+source_kind = "instruction_config"
+source_locator = "AGENTS.md"
+source_digest = "sha256:ff05c030fd3dff3aa480cbd29a00822311a591110555f2d149b3a39af5244622"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--architecture-md"
+source_kind = "instruction_config"
+source_locator = "ARCHITECTURE.md"
+source_digest = "sha256:0df4a7ddf9742e6c2ad3c2a3091c40262ae6e502c73e58b6b5f397c9ebb4cee3"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--claude-md"
+source_kind = "instruction_config"
+source_locator = "CLAUDE.md"
+source_digest = "sha256:da9cdf4847832c4c2fca93d9867abb65d5470b32f71da7b4b51b70b16ea269df"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--compound-engineering-config-local-example-yaml"
+source_kind = "instruction_config"
+source_locator = ".compound-engineering/config.local.example.yaml"
+source_digest = "sha256:7a51b88d3db4bc5316a96f0c78e4a907050ad4313b4928802d94c5170bf9009b"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--docs-agents-domain-md"
+source_kind = "instruction_config"
+source_locator = "docs/agents/domain.md"
+source_digest = "sha256:b83ab41191b2941668da003414d918ee81317434ce8e0b81f4c634a0e04910ce"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--docs-agents-issue-tracker-md"
+source_kind = "instruction_config"
+source_locator = "docs/agents/issue-tracker.md"
+source_digest = "sha256:c4dc655e6acc25b552f3b8564032b8f1fc4d6aaa78034c8ed100f3e7969076c2"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--docs-agents-triage-labels-md"
+source_kind = "instruction_config"
+source_locator = "docs/agents/triage-labels.md"
+source_digest = "sha256:f2e1c72e9aea2f8f104a78933e49ce0047452fd05d615cb10f28e5db866dc939"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--readme-md"
+source_kind = "instruction_config"
+source_locator = "README.md"
+source_digest = "sha256:a8a98d82b256f332c43e9087a4d32e5185336571a5f7cb0ee9bb42bad63f7405"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--skills-lock-json"
+source_kind = "instruction_config"
+source_locator = "skills-lock.json"
+source_digest = "sha256:caec056a6b889ae42ce9feb48ee40fa96de1bdac18e38d3251920cf8142e3ae2"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--tr-lifecycle-md"
+source_kind = "instruction_config"
+source_locator = "TR_LIFECYCLE.md"
+source_digest = "sha256:355db44a96d84eaf4a3c23987c3deab60b122702f319c49089b267d8348a352b"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "instruction--user-guide-md"
+source_kind = "instruction_config"
+source_locator = "USER_GUIDE.md"
+source_digest = "sha256:b75d5f71b98140e31610d4a5e2ce8e71d60c9b78f9be0000d579adff11aabb2c"
+current_authority = "legacy"
+disposition = "MERGE"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "run-state-consumer--audit-carried-rows"
+source_kind = "ignored_state_consumer"
+source_locator = ".compound-engineering/runs/audit-carried-rows"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "run-state-consumer--promote-trs"
+source_kind = "ignored_state_consumer"
+source_locator = ".compound-engineering/runs/promote-trs"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "worker-role--decommission-row-auditor"
+source_kind = "worker_role"
+source_locator = ".claude/agents/decommission-row-auditor.md"
+source_digest = "sha256:67e28c21b90e82703efbd129dda3fe10d5ecaf8ee198f2a3dcb754f518fd9f72"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
+
+[[rows]]
+logical_id = "worker-role--tr-promoter"
+source_kind = "worker_role"
+source_locator = ".claude/agents/tr-promoter.md"
+source_digest = "sha256:a288de56a139e4407b21044071e7adb14828000f4d739ed3e08b3614279ae01f"
+current_authority = "legacy"
+disposition = "PORT"
+migration_state = "unported"
+absence_reason = "successor_not_implemented"
