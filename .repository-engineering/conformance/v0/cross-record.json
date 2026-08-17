@@ -1,0 +1,10 @@
+{
+  "rules": [
+    "every_discovered_obligation_has_exactly_one_ledger_row",
+    "every_ledger_source_matches_its_discovered_source",
+    "first_slice_authority_remains_legacy",
+    "first_slice_migration_state_remains_unported",
+    "first_slice_activation_eligibility_is_none"
+  ],
+  "schema_version": "v0"
+}

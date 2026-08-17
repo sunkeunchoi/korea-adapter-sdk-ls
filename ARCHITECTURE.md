@@ -43,8 +43,8 @@ rest of this document describes the root workspace.
 
 ## The root workspace
 
-A Cargo workspace (`resolver = "2"`) of six crates. They stack from transport at
-the bottom to projected documentation at the top:
+A Cargo workspace (`resolver = "2"`) of seven crates. Six form the SDK product
+stack; one is inert repository-level projection tooling:
 
 ```
 ls-docgen        projects docs/reference/ + docs/tr-dependencies/ from metadata
@@ -53,6 +53,7 @@ ls-metadata      metadata schema + validator over metadata/trs/*.yaml, tr-index.
 ls-sdk           the public SDK: per-TR request/response structs + facade handles
 ls-core          the runtime: dispatch, endpoint policies, auth, dedup, rate limiting
 ls-sdk-test-support   wiremock helpers for offline SDK tests
+ls-repository-engineering   validates and projects the inert engineering package
 ```
 
 Each crate depends only on other crates in this workspace — the repository is
@@ -154,6 +155,15 @@ restate live counts.
 Wiremock helpers that let SDK tests run offline against a mocked gateway,
 separating the fast offline suite from the credential-gated live smokes.
 
+### `ls-repository-engineering` — inert repository tooling
+
+Validates the human-authored `.repository-engineering/` package, reconciles its
+Migration Ledger against the tracked tree, and deterministically projects its
+schemas, conformance corpus, exact lock, and reference page. The crate exposes
+only `generate` and non-writing `check` commands. It installs no runtime, holds
+no operational state, and grants no execution, publication, or migration
+authority.
+
 ---
 
 ## Data flow
@@ -185,6 +195,18 @@ ls-docgen projects  ──►  docs/reference/ + docs/tr-dependencies/
    │  make docs-check asserts committed == projected
    ▼
 generated pages are the authoritative per-TR contract
+```
+
+**Repository-engineering projection flow (authored package → reviewed closure).**
+
+```
+.repository-engineering/{package,discovery-policy,migration-ledger}.toml
+   │  exact tracked-tree reconciliation + closed Rust schemas
+   ▼
+ls-repository-engineering projects ──► schemas + conformance + exact lock + reference
+   │  make repository-engineering-check asserts committed == projected
+   ▼
+package remains inert; legacy sources keep authority
 ```
 
 A TR climbs the support ladder (Raw → Tracked → Implemented → Recommended)

@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AttemptCheckpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sequence": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AttemptState"
+        }
+      },
+      "required": [
+        "schema_version",
+        "sequence",
+        "state",
+        "artifact"
+      ],
+      "type": "object"
+    },
+    "AttemptEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "occurred_at_utc": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sequence": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AttemptState"
+        }
+      },
+      "required": [
+        "schema_version",
+        "sequence",
+        "occurred_at_utc",
+        "state"
+      ],
+      "type": "object"
+    },
+    "AttemptState": {
+      "enum": [
+        "not_evaluated",
+        "running",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required",
+        "succeeded"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:attempt-record",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "type": "string"
+    },
+    "capability_id": {
+      "type": "string"
+    },
+    "checkpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AttemptCheckpoint"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/AttemptEvent"
+      },
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "outcome": {
+      "$ref": "#/$defs/AttemptState"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "capability_id",
+    "events",
+    "outcome",
+    "evidence"
+  ],
+  "title": "AttemptRecord",
+  "type": "object"
+}

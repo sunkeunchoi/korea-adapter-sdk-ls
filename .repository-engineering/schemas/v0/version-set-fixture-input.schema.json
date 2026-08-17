@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "VersionSetComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "component_id": {
+          "type": "string"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "component_id",
+        "required",
+        "disabled"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:version-set-fixture-input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "components": {
+      "items": {
+        "$ref": "#/$defs/VersionSetComponent"
+      },
+      "type": "array"
+    },
+    "fixture_only": {
+      "type": "boolean"
+    },
+    "package": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "package_lock_id": {
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "fixture_only",
+    "package_lock_id",
+    "package",
+    "components"
+  ],
+  "title": "VersionSetFixtureInput",
+  "type": "object"
+}

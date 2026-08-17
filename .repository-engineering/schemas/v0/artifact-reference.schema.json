@@ -1,0 +1,35 @@
+{
+  "$defs": {
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:artifact-reference",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "media_type": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "sha256": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "path",
+    "sha256",
+    "media_type"
+  ],
+  "title": "ArtifactReference",
+  "type": "object"
+}

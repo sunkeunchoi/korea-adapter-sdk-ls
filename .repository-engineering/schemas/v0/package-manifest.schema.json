@@ -1,0 +1,181 @@
+{
+  "$defs": {
+    "ActivationEligibility": {
+      "enum": [
+        "none",
+        "shadow",
+        "active"
+      ],
+      "type": "string"
+    },
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "Compatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_family": {
+          "type": "string"
+        },
+        "minimum_reader": {
+          "$ref": "#/$defs/SchemaVersion"
+        }
+      },
+      "required": [
+        "contract_family",
+        "minimum_reader"
+      ],
+      "type": "object"
+    },
+    "OptionalComponent": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "$ref": "#/$defs/OptionalComponentKind"
+            },
+            "selection": {
+              "const": "disabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "component"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/ArtifactReference"
+            },
+            "component": {
+              "$ref": "#/$defs/OptionalComponentKind"
+            },
+            "selection": {
+              "const": "selected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "component",
+            "artifact"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OptionalComponentKind": {
+      "enum": [
+        "orca_ui",
+        "worker_adapter"
+      ],
+      "type": "string"
+    },
+    "PackagePaths": {
+      "additionalProperties": false,
+      "properties": {
+        "discovery_policy": {
+          "type": "string"
+        },
+        "migration_ledger": {
+          "type": "string"
+        },
+        "schema_registry": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "discovery_policy",
+        "migration_ledger",
+        "schema_registry"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:package-manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "activation_eligibility": {
+      "$ref": "#/$defs/ActivationEligibility"
+    },
+    "active_capability_contracts": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "active_worker_roles": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/Compatibility"
+    },
+    "optional_components": {
+      "items": {
+        "$ref": "#/$defs/OptionalComponent"
+      },
+      "type": "array"
+    },
+    "package_id": {
+      "type": "string"
+    },
+    "paths": {
+      "$ref": "#/$defs/PackagePaths"
+    },
+    "repository_id": {
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repository_id",
+    "package_id",
+    "compatibility",
+    "activation_eligibility",
+    "paths",
+    "active_capability_contracts",
+    "active_worker_roles",
+    "optional_components"
+  ],
+  "title": "PackageManifest",
+  "type": "object"
+}

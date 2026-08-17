@@ -2,6 +2,29 @@
 
 Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
 
+## Repository engineering
+
+### Repository Engineering Package
+The reviewed, repository-resident declaration of the engineering capabilities associated with this project: its identity, compatibility bounds, contract schemas, exact generated lock, and migration inventory. It is configuration and evidence, not an installed runtime; merely committing a valid package grants no execution or publication authority.
+
+### Runtime Installation
+One externally managed installation of the future Runtime Bundle for a repository clone. It, not the Repository Engineering Package, owns mutable lifecycle state (`DISABLED`, `SHADOW`, `ACTIVE`, `DRAINING`, or `QUARANTINED`), leases, attempts, and operational evidence; no Runtime Installation exists in the repository foundation slice.
+
+### Capability Contract
+The versioned, machine-readable envelope that describes one engineering capability's typed inputs and outcomes, autonomy class, safety overlays, evidence obligations, and references to its implementation or knowledge. Declaration, implementation, certification, and authority are separate states, so a schema-valid contract is not proof that the capability can run.
+
+### Worker Role Contract
+The versioned envelope for a fresh-context worker role: its typed assignment and result, concurrency class, cancellation behavior, idempotency expectations, and result-validation rules. It describes a portable role rather than selecting a particular agent protocol or runtime.
+
+### Migration Ledger
+The exhaustive disposition record for the repository's existing capabilities, aliases, workers, state consumers, instruction references, and cleanup assumptions. Every discovered source has exactly one reviewed disposition and keeps its legacy authority explicit until a later parity and cutover gate transfers or retires it.
+
+### Attempt Record
+The credential-free provenance record for one governed capability attempt, including immutable package/runtime identity, lifecycle outcome, recovery state, and digest-bound evidence references. An Attempt Checkpoint is its resumable state snapshot; neither belongs in the repository once the external runtime becomes authoritative for operational state.
+
+### Version Set
+The complete immutable execution identity formed from the resolved Repository Engineering Package together with every selected runtime binary, schema, sandbox, policy, workflow, and adapter input. A repository-only package lock may have its own identity, but it is not a Version Set until that full closure exists.
+
 ## TR & dispatch
 
 ### TR

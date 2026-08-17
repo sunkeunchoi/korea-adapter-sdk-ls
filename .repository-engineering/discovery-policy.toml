@@ -75,6 +75,10 @@ prefix = "Makefile"
 reason = "build_input"
 
 [[exclusions]]
+prefix = "rust-toolchain.toml"
+reason = "build_input"
+
+[[exclusions]]
 prefix = "adapters/"
 reason = "product_source"
 

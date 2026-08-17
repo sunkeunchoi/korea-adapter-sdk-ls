@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::validator::Finding;
 
-pub const SET_MANIFEST: &str = ".generated-set.json";
+pub const SET_MANIFEST: &str = ".repository-engineering/generated-set.json";
 const MAX_PATH_BYTES: usize = 1_024;
 const MAX_ARTIFACT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SET_BYTES: usize = 64 * 1024 * 1024;

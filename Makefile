@@ -1268,15 +1268,21 @@ merge-block-check:
 # (`set -a; . ./.env.domestic; set +a`) — never via make `include` (see the
 # header note and
 # docs/solutions/integration-issues/makefile-include-env-quotes-gateway-403.md).
-.PHONY: docs docs-check
+.PHONY: docs docs-check repository-engineering-check
 
 ## Regenerate TR Dependency Docs and SDK Reference Docs from ls-metadata.
 docs:
 	cargo run -q -p ls-docgen
+	cargo run -q -p ls-repository-engineering -- generate
 
 ## Drift gate: fail (non-zero) if committed docs no longer match ls-metadata.
 docs-check:
 	cargo run -q -p ls-docgen -- --check
+	cargo run -q -p ls-repository-engineering -- check
+
+## Validate authored repository-engineering inputs and assert projected artifacts are exact.
+repository-engineering-check:
+	cargo run -q -p ls-repository-engineering -- check
 
 # ---------------------------------------------------------------------------
 # API Drift Tracker — opt-in, and deliberately EXCLUDED from default gates
