@@ -31,11 +31,7 @@ fn workflow_is_pull_request_only_read_only_and_immutable() {
         check.get(&string("runs-on")),
         Some(&string("ubuntu-latest"))
     );
-    let steps = check
-        .get(&string("steps"))
-        .unwrap()
-        .as_sequence()
-        .unwrap();
+    let steps = check.get(&string("steps")).unwrap().as_sequence().unwrap();
     assert!(!steps.is_empty());
     for step in steps {
         let step = step.as_mapping().unwrap();

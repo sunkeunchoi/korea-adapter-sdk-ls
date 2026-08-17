@@ -192,10 +192,10 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
 
 fn workflow_pins(root: &Path) -> Result<Vec<ArtifactReference>, RepositoryError> {
     let path = ".github/workflows/repository-engineering-check.yml";
-    if root.join(path).exists() {
-        Ok(vec![file_reference(root, path, "application/yaml")?])
-    } else {
-        Ok(Vec::new())
+    match fs::read(root.join(path)) {
+        Ok(bytes) => Ok(vec![bytes_reference(path, &bytes, "application/yaml")]),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(_) => Err(RepositoryError::new("repository.provenance.read_failed")),
     }
 }
 
