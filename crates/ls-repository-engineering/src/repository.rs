@@ -16,7 +16,7 @@ use crate::schema::{
     schema_catalog, ArtifactReference, BuildProvenance, NormativeLockClosure, RepositoryPath,
     SchemaVersion, Sha256Digest,
 };
-use crate::validator::{validate_first_slice_package, Finding};
+use crate::validator::{validate_semantic_package, Finding};
 
 const PACKAGE_PATH: &str = ".repository-engineering/package.toml";
 const DISCOVERY_PATH: &str = ".repository-engineering/discovery-policy.toml";
@@ -78,7 +78,7 @@ struct ConformanceManifest {
 
 pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError> {
     let authored = load_authored_package(root).map_err(|error| RepositoryError::new(error.code))?;
-    let mut findings = validate_first_slice_package(&authored.package);
+    let mut findings = validate_semantic_package(root, &authored);
     let inventory = discover_inventory(root, &authored.discovery_policy)
         .map_err(|error| RepositoryError::new(error.code))?;
     findings.extend(reconcile_inventory(&authored.ledger, &inventory));

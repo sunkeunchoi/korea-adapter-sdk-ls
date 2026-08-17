@@ -1,12 +1,16 @@
 //! Value-free semantic diagnostics for the provisional contract vocabulary.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 
+use crate::inventory::AuthoredPackage;
 use crate::schema::{
     ActivationEligibility, AttemptRecord, AttemptState, AuthorityState, CapabilityContract,
-    CertificationState, DeclaredContractRegistration, DispatchConcurrency, FieldType,
-    ImplementationState, OutcomeKind, PackageManifest, RetirementState, TypedField,
-    WorkerRoleContract,
+    CertificationState, DeclaredContractRegistration, DispatchConcurrency, EvidenceAvailability,
+    FieldType, ImplementationState, MigrationState, OutcomeKind, PackageManifest, ParityStatus,
+    RepositoryPath, RetirementState, SemanticClaim, SemanticClaimSource, SemanticClaimStatus,
+    TypedField, WorkerRoleContract,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -285,6 +289,465 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
     findings.sort();
     findings.dedup();
     findings
+}
+
+pub fn validate_semantic_package(root: &Path, authored: &AuthoredPackage) -> Vec<Finding> {
+    let mut findings = validate_first_slice_package(&authored.package);
+    let capabilities: BTreeMap<_, _> = authored
+        .capability_contracts
+        .iter()
+        .map(|contract| (contract.capability_id.0.as_str(), contract))
+        .collect();
+    let workers: BTreeMap<_, _> = authored
+        .worker_role_contracts
+        .iter()
+        .map(|contract| (contract.role_id.0.as_str(), contract))
+        .collect();
+    let ledger: BTreeMap<_, _> = authored
+        .ledger
+        .rows
+        .iter()
+        .map(|row| (row.logical_id.0.as_str(), row))
+        .collect();
+
+    for contract in &authored.capability_contracts {
+        findings.extend(validate_capability_contract_vocabulary(contract));
+        validate_capability_links(root, contract, &workers, &ledger, &mut findings);
+    }
+    for contract in &authored.worker_role_contracts {
+        findings.extend(validate_worker_role_contract_vocabulary(contract));
+        validate_worker_links(contract, &ledger, &mut findings);
+    }
+
+    for row in authored
+        .ledger
+        .rows
+        .iter()
+        .filter(|row| row.migration_state == MigrationState::Planned)
+    {
+        let replacement = row.replacement_contract.as_ref().map(|id| id.0.as_str());
+        let type_matches = match row.source_kind.0.as_str() {
+            "capability" => replacement.is_some_and(|id| capabilities.contains_key(id)),
+            "worker_role" => replacement.is_some_and(|id| workers.contains_key(id)),
+            _ => false,
+        };
+        if !type_matches {
+            findings.push(semantic_finding(
+                &row.logical_id.0,
+                "replacement_contract",
+                "semantic.replacement.type_mismatch",
+                "bind_type_correct_declared_replacement",
+            ));
+        }
+    }
+
+    findings.sort();
+    findings.dedup();
+    findings.truncate(256);
+    findings
+}
+
+fn validate_capability_links<'a>(
+    root: &Path,
+    contract: &CapabilityContract,
+    workers: &BTreeMap<&'a str, &'a WorkerRoleContract>,
+    ledger: &BTreeMap<&'a str, &'a crate::schema::MigrationRow>,
+    findings: &mut Vec<Finding>,
+) {
+    let id = &contract.capability_id.0;
+    validate_declared_contract_row(
+        id,
+        "capability",
+        &format!("capability--{id}"),
+        ledger,
+        findings,
+    );
+    if contract.executor.is_some() {
+        findings.push(semantic_finding(
+            id,
+            "executor",
+            "semantic.executor.forbidden",
+            "remove_executor",
+        ));
+    }
+    if !contract.scenario_references.is_empty() {
+        findings.push(semantic_finding(
+            id,
+            "scenario_references",
+            "semantic.scenario_reference.forbidden",
+            "remove_scenario_references",
+        ));
+    }
+    if contract
+        .credential_boundary
+        .as_ref()
+        .is_none_or(|boundary| {
+            boundary.credential_free_scopes.is_empty()
+                || boundary.future_executor.review_requirements.is_empty()
+        })
+    {
+        findings.push(semantic_finding(
+            id,
+            "credential_boundary",
+            "semantic.credential_boundary.incomplete",
+            "complete_credential_boundary",
+        ));
+    }
+    if contract
+        .coordination_semantics
+        .as_ref()
+        .is_none_or(|coordination| {
+            coordination.dispatch_cohorts.is_empty()
+                || coordination.phases.is_empty()
+                || coordination.terminal_conditions.is_empty()
+        })
+    {
+        findings.push(semantic_finding(
+            id,
+            "coordination_semantics",
+            "semantic.coordination.incomplete",
+            "complete_coordination_semantics",
+        ));
+    }
+    if contract.evidence_status.as_ref().is_none_or(|evidence| {
+        evidence.successor_implementation != EvidenceAvailability::Absent
+            || evidence.parity != ParityStatus::Unproved
+            || evidence.certification != CertificationState::Uncertified
+            || evidence.legacy_evidence_satisfies_successor
+    }) {
+        findings.push(semantic_finding(
+            id,
+            "evidence_status",
+            "semantic.evidence.successor_claim_forbidden",
+            "restore_separated_evidence_state",
+        ));
+    }
+    for path in &contract.touched_paths {
+        validate_touched_path(root, id, path, findings);
+    }
+    for role_id in &contract.worker_roles {
+        let logical_id = format!("worker-role--{}", role_id.0);
+        if !workers.contains_key(role_id.0.as_str())
+            || ledger.get(logical_id.as_str()).is_none_or(|row| {
+                row.migration_state != MigrationState::Planned
+                    || row.current_authority != AuthorityState::Legacy
+                    || row.replacement_contract.as_ref() != Some(role_id)
+            })
+        {
+            findings.push(semantic_finding(
+                id,
+                "worker_roles",
+                "semantic.worker_role.unresolved",
+                "declare_and_plan_worker_role",
+            ));
+        }
+    }
+    for dependency in &contract.legacy_authority_dependencies {
+        if ledger.get(dependency.0.as_str()).is_none_or(|row| {
+            row.current_authority != AuthorityState::Legacy
+                || !matches!(
+                    row.migration_state,
+                    MigrationState::Unported | MigrationState::Planned
+                )
+        }) {
+            findings.push(semantic_finding(
+                id,
+                "legacy_authority_dependencies",
+                "semantic.legacy_dependency.unresolved",
+                "restore_legacy_dependency",
+            ));
+        }
+    }
+    for requirement in &contract.external_source_requirements {
+        if requirement.locator.is_some()
+            || requirement.digest.is_some()
+            || requirement.unavailable_capability_outcome != OutcomeKind::Held
+            || requirement.unavailable_worker_verdict.0 != "unverifiable"
+        {
+            findings.push(semantic_finding(
+                id,
+                "external_source_requirements",
+                "semantic.external_source.invalid",
+                "restore_unavailable_unproved_source",
+            ));
+        }
+    }
+    validate_claim_sources(
+        id,
+        &contract.semantic_claims,
+        &contract.knowledge_references,
+        contract
+            .evidence_status
+            .as_ref()
+            .map(|evidence| evidence.legacy_artifact_sets.as_slice())
+            .unwrap_or_default(),
+        &contract.external_source_requirements,
+        workers,
+        ledger,
+        findings,
+    );
+}
+
+fn validate_worker_links(
+    contract: &WorkerRoleContract,
+    ledger: &BTreeMap<&str, &crate::schema::MigrationRow>,
+    findings: &mut Vec<Finding>,
+) {
+    let id = &contract.role_id.0;
+    validate_declared_contract_row(
+        id,
+        "worker_role",
+        &format!("worker-role--{id}"),
+        ledger,
+        findings,
+    );
+    let correlation_valid =
+        contract
+            .terminal_result_correlation
+            .as_ref()
+            .is_some_and(|correlation| {
+                correlation.envelope_field.0 == "assignment_id"
+                    && correlation.assignment_field == correlation.success_payload_field
+                    && contract.assignment_fields.iter().any(|field| {
+                        field.name == correlation.assignment_field
+                            && field.field_type == FieldType::StableId
+                            && field.required
+                    })
+                    && contract.result_fields.iter().any(|field| {
+                        field.name == correlation.success_payload_field
+                            && field.field_type == FieldType::StableId
+                            && field.required
+                    })
+            });
+    if !correlation_valid {
+        findings.push(semantic_finding(
+            id,
+            "terminal_result_correlation",
+            "semantic.worker.correlation_invalid",
+            "bind_terminal_results_to_assignment",
+        ));
+    }
+    validate_claim_sources(
+        id,
+        &contract.semantic_claims,
+        &contract.knowledge_references,
+        &[],
+        &[],
+        &BTreeMap::new(),
+        ledger,
+        findings,
+    );
+}
+
+fn validate_declared_contract_row(
+    contract_id: &str,
+    source_kind: &str,
+    logical_id: &str,
+    ledger: &BTreeMap<&str, &crate::schema::MigrationRow>,
+    findings: &mut Vec<Finding>,
+) {
+    if ledger.get(logical_id).is_none_or(|row| {
+        row.source_kind.0 != source_kind
+            || row.migration_state != MigrationState::Planned
+            || row.current_authority != AuthorityState::Legacy
+            || row
+                .replacement_contract
+                .as_ref()
+                .is_none_or(|id| id.0 != contract_id)
+            || row.parity_reference.is_some()
+            || row
+                .absence_reason
+                .as_ref()
+                .is_none_or(|reason| reason.0 != "parity_not_proven")
+    }) {
+        findings.push(semantic_finding(
+            contract_id,
+            "migration_ledger",
+            "semantic.declared_contract.ledger_mismatch",
+            "restore_planned_ledger_link",
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_claim_sources<'a>(
+    logical_id: &str,
+    claims: &[SemanticClaim],
+    knowledge_references: &[crate::schema::ArtifactReference],
+    artifact_set_references: &[crate::schema::ArtifactSetReference],
+    external_source_requirements: &[crate::schema::ExternalSourceRequirement],
+    workers: &BTreeMap<&'a str, &'a WorkerRoleContract>,
+    ledger: &BTreeMap<&'a str, &'a crate::schema::MigrationRow>,
+    findings: &mut Vec<Finding>,
+) {
+    let knowledge: BTreeSet<_> = knowledge_references
+        .iter()
+        .map(|reference| reference.path.0.as_str())
+        .collect();
+    let artifact_sets: BTreeSet<_> = artifact_set_references
+        .iter()
+        .map(|artifact_set| artifact_set.artifact_set_id.0.as_str())
+        .collect();
+    let external_sources: BTreeSet<_> = external_source_requirements
+        .iter()
+        .map(|requirement| requirement.requirement_id.0.as_str())
+        .collect();
+    let mut field_groups = BTreeSet::new();
+    for claim in claims {
+        for field_group in &claim.field_groups {
+            if !field_groups.insert(field_group.0.to_ascii_lowercase()) {
+                findings.push(semantic_finding(
+                    logical_id,
+                    "semantic_claims.field_groups",
+                    "semantic.claim.duplicate_field_group",
+                    "assign_each_field_group_once",
+                ));
+            }
+        }
+        for source in &claim.sources {
+            let resolved = match source {
+                SemanticClaimSource::KnowledgeReference { path } => {
+                    knowledge.contains(path.0.as_str())
+                }
+                SemanticClaimSource::WorkerKnowledgeReference { role_id, path } => {
+                    workers.get(role_id.0.as_str()).is_some_and(|worker| {
+                        worker
+                            .knowledge_references
+                            .iter()
+                            .any(|reference| reference.path == *path)
+                    })
+                }
+                SemanticClaimSource::MigrationLedgerRows { logical_ids } => logical_ids
+                    .iter()
+                    .all(|logical_id| ledger.contains_key(logical_id.0.as_str())),
+                SemanticClaimSource::LegacyArtifactSet { artifact_set_id } => {
+                    artifact_sets.contains(artifact_set_id.0.as_str())
+                }
+                SemanticClaimSource::SuccessorDecision { .. } => true,
+                SemanticClaimSource::ExternalSourceRequirement { requirement_id } => {
+                    external_sources.contains(requirement_id.0.as_str())
+                }
+            };
+            if !resolved {
+                findings.push(semantic_finding(
+                    logical_id,
+                    "semantic_claims.sources",
+                    "semantic.claim.source_unresolved",
+                    "bind_claim_source",
+                ));
+            }
+            let source_matches_status = matches!(
+                (&claim.status, source),
+                (
+                    SemanticClaimStatus::LegacyObserved,
+                    SemanticClaimSource::KnowledgeReference { .. }
+                        | SemanticClaimSource::WorkerKnowledgeReference { .. }
+                        | SemanticClaimSource::MigrationLedgerRows { .. }
+                        | SemanticClaimSource::LegacyArtifactSet { .. }
+                ) | (
+                    SemanticClaimStatus::SuccessorRequirement,
+                    SemanticClaimSource::SuccessorDecision { .. }
+                ) | (
+                    SemanticClaimStatus::UnavailableUnproved,
+                    SemanticClaimSource::ExternalSourceRequirement { .. }
+                )
+            );
+            if !source_matches_status {
+                findings.push(semantic_finding(
+                    logical_id,
+                    "semantic_claims.status",
+                    "semantic.claim.status_source_mismatch",
+                    "restore_claim_status_source_pair",
+                ));
+            }
+        }
+    }
+}
+
+fn validate_touched_path(
+    root: &Path,
+    logical_id: &str,
+    path: &RepositoryPath,
+    findings: &mut Vec<Finding>,
+) {
+    if serde_json::from_value::<RepositoryPath>(serde_json::Value::String(path.0.clone())).is_err()
+    {
+        findings.push(semantic_finding(
+            logical_id,
+            "touched_paths",
+            "semantic.touched_path.invalid",
+            "use_confined_repository_path",
+        ));
+        return;
+    }
+    if path.0.starts_with(".compound-engineering/runs/") {
+        return;
+    }
+    let mut current = root.to_path_buf();
+    let mut components = path.0.split('/').peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => {
+                findings.push(semantic_finding(
+                    logical_id,
+                    "touched_paths",
+                    "semantic.touched_path.unreadable",
+                    "repair_touched_path",
+                ));
+                return;
+            }
+        };
+        if is_link_or_reparse_point(&metadata) {
+            findings.push(semantic_finding(
+                logical_id,
+                "touched_paths",
+                "semantic.touched_path.symlink",
+                "remove_touched_path_symlink",
+            ));
+            return;
+        }
+        if components.peek().is_some() && !metadata.is_dir() {
+            findings.push(semantic_finding(
+                logical_id,
+                "touched_paths",
+                "semantic.touched_path.invalid",
+                "use_confined_repository_path",
+            ));
+            return;
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+fn semantic_finding(
+    logical_id: &str,
+    field: &'static str,
+    code: &'static str,
+    remediation: &'static str,
+) -> Finding {
+    finding(
+        "contract",
+        Some(logical_id.to_owned()),
+        field,
+        code,
+        remediation,
+    )
 }
 
 fn validate_declared_registrations(

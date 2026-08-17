@@ -3,6 +3,10 @@ use std::path::Path;
 use ls_repository_engineering::generate::{check_projection_set, generate_projection_set};
 use ls_repository_engineering::inventory::load_authored_package;
 use ls_repository_engineering::repository::compose_repository;
+use ls_repository_engineering::schema::{
+    ArtifactReference, AuthorityState, EvidenceAvailability, RepositoryPath,
+};
+use ls_repository_engineering::validator::validate_semantic_package;
 use sha2::{Digest, Sha256};
 
 fn repository_root() -> &'static Path {
@@ -187,6 +191,182 @@ fn exactly_two_planned_rows_changed_and_every_other_row_matches_the_pre_wave_has
     assert_eq!(
         format!("{:x}", Sha256::digest(canonical)),
         "1c23da96f17416abfa8c78f4ae2155108ef2d68d4cacdcc970e1526d5e4279ed"
+    );
+}
+
+#[test]
+fn semantic_cross_record_validation_rejects_false_readiness_and_broken_links() {
+    let root = repository_root();
+    let authored = load_authored_package(root).unwrap();
+    assert!(validate_semantic_package(root, &authored).is_empty());
+
+    let mut wrong_replacement = authored.clone();
+    wrong_replacement
+        .ledger
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-carried-rows")
+        .unwrap()
+        .replacement_contract = Some(ls_repository_engineering::schema::StableId(
+        "decommission-row-auditor".to_owned(),
+    ));
+    assert_semantic_code(&wrong_replacement, "semantic.replacement.type_mismatch");
+
+    let mut unresolved_dependency = authored.clone();
+    unresolved_dependency
+        .ledger
+        .rows
+        .retain(|row| row.logical_id.0 != "capability--audit-row");
+    assert_semantic_code(
+        &unresolved_dependency,
+        "semantic.legacy_dependency.unresolved",
+    );
+
+    let mut transferred_dependency = authored.clone();
+    transferred_dependency
+        .ledger
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-row")
+        .unwrap()
+        .current_authority = AuthorityState::Successor;
+    assert_semantic_code(
+        &transferred_dependency,
+        "semantic.legacy_dependency.unresolved",
+    );
+
+    let artifact: ArtifactReference =
+        authored.capability_contracts[0].knowledge_references[0].clone();
+    let mut executor = authored.clone();
+    executor.capability_contracts[0].executor = Some(artifact.clone());
+    assert_semantic_code(&executor, "semantic.executor.forbidden");
+
+    let mut scenario = authored.clone();
+    scenario.capability_contracts[0]
+        .scenario_references
+        .push(artifact);
+    assert_semantic_code(&scenario, "semantic.scenario_reference.forbidden");
+
+    let mut successor_evidence = authored.clone();
+    successor_evidence.capability_contracts[0]
+        .evidence_status
+        .as_mut()
+        .unwrap()
+        .successor_implementation = EvidenceAvailability::AvailableValidated;
+    assert_semantic_code(
+        &successor_evidence,
+        "semantic.evidence.successor_claim_forbidden",
+    );
+
+    let mut duplicate_claim = authored.clone();
+    let duplicate = duplicate_claim.capability_contracts[0].semantic_claims[0].clone();
+    duplicate_claim.capability_contracts[0]
+        .semantic_claims
+        .push(duplicate);
+    assert_semantic_code(&duplicate_claim, "semantic.claim.duplicate_field_group");
+
+    let mut correlation = authored.clone();
+    correlation.worker_role_contracts[0]
+        .terminal_result_correlation
+        .as_mut()
+        .unwrap()
+        .assignment_field
+        .0 = "other-row".to_owned();
+    assert_semantic_code(&correlation, "semantic.worker.correlation_invalid");
+
+    let mut coordination = authored.clone();
+    coordination.capability_contracts[0]
+        .coordination_semantics
+        .as_mut()
+        .unwrap()
+        .phases
+        .clear();
+    assert_semantic_code(&coordination, "semantic.coordination.incomplete");
+
+    let mut contradictory_description = authored.clone();
+    contradictory_description.capability_contracts[0].public_description =
+        Some("This text says legacy, but typed state is authoritative.".to_owned());
+    contradictory_description.capability_contracts[0]
+        .state
+        .authority = AuthorityState::Successor;
+    assert_semantic_code(&contradictory_description, "authority.transfer.forbidden");
+
+    let mut unresolved_claim_source = authored.clone();
+    unresolved_claim_source.worker_role_contracts[0]
+        .knowledge_references
+        .remove(0);
+    assert_semantic_code(&unresolved_claim_source, "semantic.claim.source_unresolved");
+
+    let mut escaping_path = authored.clone();
+    escaping_path.capability_contracts[0].touched_paths[0] = RepositoryPath("../escape".to_owned());
+    assert_semantic_code(&escaping_path, "semantic.touched_path.invalid");
+}
+
+#[test]
+fn successor_operational_fields_are_host_neutral_outside_legacy_only_fields() {
+    let authored = load_authored_package(repository_root()).unwrap();
+    let mut capability = serde_json::to_value(&authored.capability_contracts[0]).unwrap();
+    let object = capability.as_object_mut().unwrap();
+    for permitted_legacy_only in [
+        "knowledge_references",
+        "semantic_claims",
+        "touched_paths",
+        "external_source_requirements",
+    ] {
+        object.remove(permitted_legacy_only);
+    }
+    let mut worker = serde_json::to_value(&authored.worker_role_contracts[0]).unwrap();
+    let object = worker.as_object_mut().unwrap();
+    object.remove("knowledge_references");
+    object.remove("semantic_claims");
+
+    let operational = format!("{capability}{worker}").to_ascii_lowercase();
+    for host_token in ["claude", "codex", "orca", "subagent", "bash", "/goal"] {
+        assert!(!operational.contains(host_token), "{host_token}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn touched_path_symlink_components_fail_without_opening_the_target() {
+    use std::os::unix::fs::symlink;
+
+    let mut authored = load_authored_package(repository_root()).unwrap();
+    let root = std::env::temp_dir().join(format!(
+        "ls-repository-engineering-touched-path-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let outside = root.join("outside");
+    std::fs::create_dir_all(root.join("safe")).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("sentinel"), "do not open").unwrap();
+    symlink(&outside, root.join("safe/link")).unwrap();
+    authored.capability_contracts[0].touched_paths =
+        vec![RepositoryPath("safe/link/sentinel".to_owned())];
+
+    let findings = validate_semantic_package(&root, &authored);
+    assert!(findings
+        .iter()
+        .any(|finding| finding.code == "semantic.touched_path.symlink"));
+    assert_eq!(
+        std::fs::read_to_string(outside.join("sentinel")).unwrap(),
+        "do not open"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn assert_semantic_code(
+    authored: &ls_repository_engineering::inventory::AuthoredPackage,
+    code: &str,
+) {
+    let findings = validate_semantic_package(repository_root(), authored);
+    assert!(
+        findings.iter().any(|finding| finding.code == code),
+        "missing {code}: {findings:?}"
     );
 }
 

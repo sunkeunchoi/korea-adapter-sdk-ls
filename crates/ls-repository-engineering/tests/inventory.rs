@@ -74,6 +74,61 @@ fn omission_reports_a_stable_candidate_without_inventing_a_disposition() {
 }
 
 #[test]
+fn planned_and_unported_rows_follow_the_closed_pre_parity_state_table() {
+    let root = repository_root();
+    let authored = load_authored_package(&root).unwrap();
+    let inventory = discover_inventory(&root, &authored.discovery_policy).unwrap();
+
+    let mut missing_replacement = authored.ledger.clone();
+    missing_replacement
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-carried-rows")
+        .unwrap()
+        .replacement_contract = None;
+    assert!(reconcile_inventory(&missing_replacement, &inventory)
+        .iter()
+        .any(|finding| finding.code == "inventory.planned_state.invalid"));
+
+    let mut wrong_absence = authored.ledger.clone();
+    wrong_absence
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-carried-rows")
+        .unwrap()
+        .absence_reason = Some(ls_repository_engineering::schema::StableId(
+        "successor_not_implemented".to_owned(),
+    ));
+    assert!(reconcile_inventory(&wrong_absence, &inventory)
+        .iter()
+        .any(|finding| finding.code == "inventory.planned_state.invalid"));
+
+    let mut false_parity = authored.ledger.clone();
+    false_parity
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-carried-rows")
+        .unwrap()
+        .parity_reference = Some(authored.capability_contracts[0].knowledge_references[0].clone());
+    assert!(reconcile_inventory(&false_parity, &inventory)
+        .iter()
+        .any(|finding| finding.code == "inventory.planned_state.invalid"));
+
+    let mut false_unported_successor = authored.ledger.clone();
+    let audit_row = false_unported_successor
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "capability--audit-row")
+        .unwrap();
+    audit_row.replacement_contract = Some(ls_repository_engineering::schema::StableId(
+        "audit-row".to_owned(),
+    ));
+    assert!(reconcile_inventory(&false_unported_successor, &inventory)
+        .iter()
+        .any(|finding| finding.code == "inventory.unported_state.invalid"));
+}
+
+#[test]
 fn every_claude_alias_targets_the_same_named_legacy_capability() {
     let root = repository_root();
     let authored = load_authored_package(&root).unwrap();
