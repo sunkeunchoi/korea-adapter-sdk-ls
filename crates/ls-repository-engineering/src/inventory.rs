@@ -506,7 +506,7 @@ fn finding(
     remediation: &'static str,
 ) -> Finding {
     Finding {
-        path: ".repository-engineering/migration-ledger.toml",
+        path: ".repository-engineering/migration-ledger.toml".to_owned(),
         logical_id,
         field,
         code,

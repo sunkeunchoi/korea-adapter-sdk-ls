@@ -9,7 +9,7 @@ use crate::schema::{
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Finding {
-    pub path: &'static str,
+    pub path: String,
     pub logical_id: Option<String>,
     pub field: &'static str,
     pub code: &'static str,
@@ -167,14 +167,14 @@ fn contract_finding(logical_id: &str, field: &'static str, code: &'static str) -
 }
 
 fn finding(
-    path: &'static str,
+    path: impl Into<String>,
     logical_id: Option<String>,
     field: &'static str,
     code: &'static str,
     remediation: &'static str,
 ) -> Finding {
     Finding {
-        path,
+        path: path.into(),
         logical_id,
         field,
         code,
