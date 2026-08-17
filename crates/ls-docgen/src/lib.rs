@@ -574,8 +574,7 @@ fn render_errors_and_validation(
                     // out-of-order range, so the SDK's rule is a caller contract
                     // preflight enforces locally, not a gateway-enforced bound.
                     if *gateway_tolerant {
-                        suffix
-                            .push_str("; gateway-tolerant (preflight enforces; gateway does not)");
+                        suffix.push_str("; gateway-tolerant (preflight enforces; gateway does not)");
                     }
                     out.push_str(&format!(
                         "- cross-field: `{start}` must not be after `{end}` ({suffix})\n"
@@ -1323,278 +1322,90 @@ mod tests {
     #[test]
     fn reference_covers_implemented_with_banner_and_omits_unimplemented() {
         let report = authored_report();
-        let reference = render_reference_docs(
-            &report.trs,
-            &report.evidence,
-            &report.constraints,
-            &report.error_coverage,
-            &report.error_catalog,
-        );
+        let reference = render_reference_docs(&report.trs, &report.evidence, &report.constraints, &report.error_coverage, &report.error_catalog);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
-            "CFOAQ10100",
-            "CFOBQ10500",
-            "CSPAQ12300",
-            "CSPAQ22200",
-            "revoke",
-            "t1403",
-            "t1441",
-            "t1452",
-            "t1463",
-            "t1466",
-            "t1481",
-            "t1482",
-            "t1485",
-            "t1489",
-            "t1492",
-            "t1511",
-            "t1514",
-            "t1516",
-            "t1531",
-            "t1537",
-            "t1601",
-            "t1615",
-            "t1640",
-            "t1662",
-            "t1664",
-            "t1825",
-            "t1826",
-            "t1859",
-            "t1866",
-            "t1958",
-            "t2301",
-            "t2522",
-            "t3341",
-            "t8401",
-            "t8424",
-            "t8425",
-            "t8426",
-            "t8433",
-            "t8435",
+            "CFOAQ10100", "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441",
+            "t1452", "t1463",
+            "t1466", "t1481", "t1482", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531",
+            "t1537", "t1601",
+            "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
+            "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
             // t8430 promoted to Recommended (2026-08-12, queue item
             // promote-universe-skeleton-trs, P2b of the next-lineage ladder) on a
             // CLEAN in-window differential — moved to the recommended-no-banner
             // loop below.
-            "t8467",
-            "t9943",
-            "t9944",
-            "t8431",
-            "t8436",
-            "t9905",
-            "t9907",
-            "t9942",
-            "t2111",
-            "t2112",
-            "t8402",
-            "t8403",
-            "t8434",
-            "t1988",
-            "t3320",
+            "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "t2111", "t2112", "t8402", "t8403", "t8434",
+            "t1988", "t3320",
             // t8410 promoted to Recommended (2026-08-11, queue item
             // promote-t8410-recommended, P2 of the next-lineage ladder) on a CLEAN
             // in-window differential — moved to the recommended-no-banner loop below.
-            "t9945",
-            "t3202",
-            "t3401",
-            "t8451",
-            "t8419",
-            "t4203",
+            "t9945", "t3202", "t3401", "t8451", "t8419", "t4203",
             // All-lane closed-window flip wave (plan -003) — domestic REST lane
             // (overseas-index reads via /stock/investinfo, populated under closure).
-            "t3518",
-            "t3521",
+            "t3518", "t3521",
             // All-lane closed-window flip wave (plan -003) — overseas-futures(-option)
             // chart/market-data reads (front-month CUSN26 persists under closure) +
             // KRX night-derivatives investor table. o3107/o3127 stayed PENDING
             // (account-state watchlist boards return empty/zero rows).
-            "o3103",
-            "o3104",
-            "o3108",
-            "o3116",
-            "o3117",
-            "o3123",
-            "o3128",
-            "o3136",
-            "o3137",
-            "o3139",
+            "o3103", "o3104", "o3108", "o3116", "o3117", "o3123", "o3128", "o3136", "o3137", "o3139",
             "t8462",
-            "t1901",
-            "t1906",
-            "t8450",
-            "t1638",
-            "t1308",
-            "t1449",
-            "t1621",
-            "t2545",
-            "t8406",
-            "t8407",
-            "t1959",
-            "t1950",
-            "t1971",
-            "t1972",
-            "t1974",
-            "t1956",
-            "t1969",
-            "t1105",
-            "t1104",
-            "t1305",
+            "t1901", "t1906", "t8450", "t1638", "t1308", "t1449", "t1621", "t2545", "t8406", "t8407", "t1959", "t1950", "t1971", "t1972", "t1974", "t1956", "t1969", "t1105", "t1104", "t1305",
             // Open-window flip wave (plan -001, 2026-06-30): ELW daily-price read.
             "t1954",
-            "t1310",
-            "t1404",
-            "t1410",
-            "t1411",
-            "t1488",
-            "t1636",
-            "t1809",
-            "t8417",
-            "t8418",
-            "t8411",
-            "t8452",
-            "t8453",
-            "t1302",
-            "t8464",
-            "t8465",
-            "t8466",
-            "t2216",
-            "t8405",
+            "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
+            "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
+            "t8464", "t8465", "t8466", "t2216", "t8405",
             // t1444 promoted to Recommended (2026-08-14, queue item
             // promote-t1444-recommended, the P2b residual of the next-lineage ladder)
             // on a CLEAN differential — moved to the recommended-no-banner loop below.
-            "t1422",
-            "t1427",
-            "t1442",
-            "t1405",
-            "t1960",
-            "t1961",
-            "t1966",
-            "t1921",
-            "t1532",
-            "t1533",
-            "t1926",
-            "t1764",
-            "t1903",
+            "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
             // CSPAT00601/00701/00801 + t0425 promoted to Recommended (plan
             // 2026-06-30-002) — moved to the recommended-no-banner loop below.
             // Closed-window account-lane flip wave (plan -001).
-            "t0424",
-            "t0167",
-            "CLNAQ00100",
+            "t0424", "t0167", "CLNAQ00100",
             // Paper account credential lanes (plan -002): F/O + overseas-F/O account
             // reads that flipped once authenticated as their own account's lane.
-            "CFOEQ11100",
-            "CIDBQ01400",
-            "CIDBQ03000",
-            "CIDBQ05300",
-            "o3101",
-            "o3121",
+            "CFOEQ11100", "CIDBQ01400", "CIDBQ03000", "CIDBQ05300",
+            "o3101", "o3121",
             "K3_",
-            "H1_",
-            "HA_",
-            "S2_",
-            "US3",
-            "UH1",
-            "US2",
-            "GSC",
-            "GSH",
-            "OVC",
-            "OVH",
-            "OC0",
-            "OH0",
-            "FC9",
-            "FH9",
-            "SC0",
-            "SC1",
-            "SC2",
-            "SC3",
-            "SC4",
-            "C01",
-            "O01",
-            "H01",
-            "AS0",
-            "AS1",
-            "AS2",
-            "AS3",
-            "AS4",
-            "TC1",
-            "TC2",
-            "TC3",
+            "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
+            "FC9", "FH9",
+            "SC0", "SC1", "SC2", "SC3", "SC4", "C01", "O01", "H01", "AS0", "AS1", "AS2", "AS3",
+            "AS4", "TC1", "TC2", "TC3",
             // Closure flip WS batch (plan -004): 31 connection-reachable-only realtime
             // channels flipped on a clean paper lifecycle sweep (make live-smoke-ws-p3).
-            "NS3",
-            "NH1",
-            "NS2",
-            "NK1",
-            "NBT",
-            "KS_",
-            "OK_",
-            "KH_",
-            "KM_",
-            "PH_",
-            "K1_",
-            "IJ_",
-            "YS3",
-            "YK3",
-            "VI_",
-            "JC0",
-            "JH0",
-            "JD0",
-            "FD0",
-            "OD0",
-            "OMG",
-            "YF9",
-            "YOC",
-            "BM_",
-            "WOC",
-            "WOH",
-            "JIF",
-            "NWS",
-            "BMT",
-            "CUR",
-            "MK2",
+            "NS3", "NH1", "NS2", "NK1", "NBT", "KS_", "OK_", "KH_", "KM_", "PH_", "K1_", "IJ_",
+            "YS3", "YK3", "VI_", "JC0", "JH0", "JD0", "FD0", "OD0", "OMG", "YF9", "YOC", "BM_",
+            "WOC", "WOH", "JIF", "NWS", "BMT", "CUR", "MK2",
             // Open-window domestic program-trade reads: intraday-trend t1632 +
             // daily-trend t1633 certified non-empty (t1631 PENDING — gateway IGW40014).
-            "t1632",
-            "t1633",
+            "t1632", "t1633",
             // Open-window domestic reads: foreign/institution by-issue trend t1702 +
             // net-buy trend t1717, investor-by-sector chart t1665, intraday
             // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
             // non-empty on in-window paper smokes (KRX open 2026-06-29).
-            "t1702",
-            "t1717",
-            "t1665",
-            "t1471",
-            "t1475",
+            "t1702", "t1717", "t1665", "t1471", "t1475",
             // Open-window domestic reads: foreign/institution by-issue trend t1716,
             // ETF intraday-trend t1902 + constituents t1904, short-sale daily trend
             // t1927, stock-loan/대차 daily trend t1941 — all certified non-empty on
             // in-window paper smokes (KRX open 2026-06-29).
-            "t1716",
-            "t1902",
-            "t1904",
-            "t1927",
-            "t1941",
+            "t1716", "t1902", "t1904", "t1927", "t1941",
             // Open-window domestic paginated reads (plan -001): time-band tick
             // conclusion t1301 + t8454, expected-conclusion t1486, per-stock
             // program-trade flow t1637 — all certified non-empty on in-window paper
             // smokes (KRX open 2026-06-29). t1109 (시간외체결량) PENDS: empty 00707
             // in the regular continuous session (after-hours data does not populate).
-            "t1301",
-            "t1486",
-            "t8454",
-            "t1637",
+            "t1301", "t1486", "t8454", "t1637",
             // Open-window domestic paginated reads (plan -001): investor-flow reads
             // t1602 (time-band by sector) + t1603 (detail by issue) + t1617
             // (time/daily) and exchange-broker reads t1752 (broker-by-issue) +
             // t1771 (broker time-series) — all certified non-empty on in-window
             // paper smokes (KRX open 2026-06-29).
-            "t1602",
-            "t1603",
-            "t1617",
-            "t1752",
-            "t1771",
+            "t1602", "t1603", "t1617", "t1752", "t1771",
             // Open-window F-O + domestic reads (plan -001): F/O investor-by-time
             // t2541, F/O daily OHLCV t2214, F/O N-minute bars t2424, F/O unusual-
             // volume conclusion counts t2210 (front-month code self-sourced from
@@ -1604,61 +1415,19 @@ mod tests {
             // 2026-06-29). t8455/g3190 stayed PENDING (night-master/overseas-stock
             // carry no day-session/paper feed, flags kept); t8427 PENDS (empty
             // chart); o3127 PENDS (zero price/empty symbolname).
-            "t2541",
-            "t2214",
-            "t2424",
-            "t2210",
-            "t8428",
-            "t8463",
+            "t2541", "t2214", "t2424", "t2210", "t8428", "t8463",
             // Open-window WS track/flip wave (plan 2026-06-29-001): 39
             // connection-reachable-only realtime channels flipped on a clean paper
             // lifecycle sweep (make live-smoke-ws-p4; KTD6 NOT-OBSERVABLE, so the
             // claim is connection reachability only). All 39 connected cleanly.
-            "AFR",
-            "B7_",
-            "C02",
-            "CD0",
-            "DBM",
-            "DBT",
-            "DC0",
-            "DD0",
-            "DH0",
-            "DH1",
-            "DHA",
-            "DK3",
-            "DS3",
-            "DVI",
-            "ESN",
-            "FX9",
-            "H02",
-            "H2_",
-            "HB_",
-            "I5_",
-            "JX0",
-            "NBM",
-            "NPM",
-            "NVI",
-            "O02",
-            "OX0",
-            "SHC",
-            "SHD",
-            "SHI",
-            "SHO",
-            "UBM",
-            "UBT",
-            "UK1",
-            "UVI",
-            "UYS",
-            "YC3",
-            "YJC",
-            "YJ_",
-            "h3_",
+            "AFR", "B7_", "C02", "CD0", "DBM", "DBT", "DC0", "DD0", "DH0", "DH1", "DHA", "DK3",
+            "DS3", "DVI", "ESN", "FX9", "H02", "H2_", "HB_", "I5_", "JX0", "NBM", "NPM", "NVI",
+            "O02", "OX0", "SHC", "SHD", "SHI", "SHO", "UBM", "UBT", "UK1", "UVI", "UYS", "YC3",
+            "YJC", "YJ_", "h3_",
             // KRX-open domestic F/O order certify-flip (plan 2026-07-01-001): the domestic
             // F/O order chain certified in-window (submit 00040 / modify 00462 / cancel
             // 00463, flat confirmed; make live-smoke-fo-order). Implemented-not-recommended.
-            "CFOAT00100",
-            "CFOAT00200",
-            "CFOAT00300",
+            "CFOAT00100", "CFOAT00200", "CFOAT00300",
             // Error-resilience gate (plan 2026-07-01-004, R12): the 10 TRs promoted
             // under the old happy-path gate demoted to Implemented so the badge means
             // "fails gracefully". Each carries the not-recommended banner until
@@ -1726,19 +1495,8 @@ mod tests {
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
         let recommended_no_banner: [&str; 13] = [
-            "token",
-            "t1101",
-            "S3_",
-            "CSPAQ12200",
-            "t1102",
-            "t0425",
-            "CSPAT00801",
-            "t8412",
-            "CSPAT00701",
-            "CSPAT00601",
-            "t8410",
-            "t8430",
-            "t1444",
+            "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
+            "CSPAT00701", "CSPAT00601", "t8410", "t8430", "t1444",
         ];
         for rec in recommended_no_banner {
             let page = reference
