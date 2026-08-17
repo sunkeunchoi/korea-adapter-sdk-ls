@@ -330,8 +330,5 @@ fn enum_token<T: Serialize>(value: &T) -> String {
 }
 
 fn escape_markdown(value: &str) -> String {
-    value
-        .replace('|', "\\|")
-        .replace('\r', " ")
-        .replace('\n', " ")
+    value.replace('|', "\\|").replace(['\r', '\n'], " ")
 }

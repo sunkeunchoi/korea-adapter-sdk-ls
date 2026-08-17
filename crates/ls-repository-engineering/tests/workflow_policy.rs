@@ -19,23 +19,20 @@ fn workflow_is_pull_request_only_read_only_and_immutable() {
 
     let triggers = mapping(root, "on");
     assert_eq!(triggers.len(), 1);
-    assert!(triggers.contains_key(&string("pull_request")));
+    assert!(triggers.contains_key(string("pull_request")));
 
     let permissions = mapping(root, "permissions");
     assert_eq!(permissions.len(), 1);
-    assert_eq!(permissions.get(&string("contents")), Some(&string("read")));
+    assert_eq!(permissions.get(string("contents")), Some(&string("read")));
 
     let jobs = mapping(root, "jobs");
     let check = mapping(jobs, "check");
-    assert_eq!(
-        check.get(&string("runs-on")),
-        Some(&string("ubuntu-latest"))
-    );
-    let steps = check.get(&string("steps")).unwrap().as_sequence().unwrap();
+    assert_eq!(check.get(string("runs-on")), Some(&string("ubuntu-latest")));
+    let steps = check.get(string("steps")).unwrap().as_sequence().unwrap();
     assert!(!steps.is_empty());
     for step in steps {
         let step = step.as_mapping().unwrap();
-        if let Some(action) = step.get(&string("uses")).and_then(Value::as_str) {
+        if let Some(action) = step.get(string("uses")).and_then(Value::as_str) {
             let (_, revision) = action.rsplit_once('@').unwrap();
             assert_eq!(revision.len(), 40);
             assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
@@ -44,13 +41,13 @@ fn workflow_is_pull_request_only_read_only_and_immutable() {
 
     let checkout = steps[0].as_mapping().unwrap();
     assert_eq!(
-        checkout.get(&string("uses")),
+        checkout.get(string("uses")),
         Some(&string(
             "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
         ))
     );
     assert_eq!(
-        mapping(checkout, "with").get(&string("persist-credentials")),
+        mapping(checkout, "with").get(string("persist-credentials")),
         Some(&Value::Bool(false))
     );
     assert!(text.contains("cargo +1.96.0 test --locked"));
@@ -64,7 +61,7 @@ fn workflow_is_pull_request_only_read_only_and_immutable() {
 }
 
 fn mapping<'a>(mapping: &'a Mapping, key: &str) -> &'a Mapping {
-    mapping.get(&string(key)).unwrap().as_mapping().unwrap()
+    mapping.get(string(key)).unwrap().as_mapping().unwrap()
 }
 
 fn string(value: &str) -> Value {

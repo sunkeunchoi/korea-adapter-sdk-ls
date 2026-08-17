@@ -47,7 +47,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:2db92817682e552ecd62e7c9669cdcbb2c0265d52346524cbcae0b5260d5cc5a",
+      "sha256": "sha256:247cd29974a915608d87b59f9fb0d73e6e1ace62fcf694e1c7eb5f7f80820f14",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {
