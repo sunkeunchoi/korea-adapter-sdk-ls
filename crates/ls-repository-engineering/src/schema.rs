@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
+use serde::de;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,17 +16,95 @@ pub enum SchemaVersion {
     V0,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct StableId(pub String);
+pub struct StableId(#[schemars(regex(pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))] pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct RepositoryPath(pub String);
+pub struct RepositoryPath(#[schemars(regex(pattern = r"^[A-Za-z0-9._/-]{1,1024}$"))] pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct Sha256Digest(pub String);
+pub struct Sha256Digest(#[schemars(regex(pattern = r"^sha256:[0-9a-f]{64}$"))] pub String);
+
+impl<'de> Deserialize<'de> for StableId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        is_stable_id(&value)
+            .then_some(Self(value))
+            .ok_or_else(|| de::Error::custom("invalid stable identifier"))
+    }
+}
+
+impl<'de> Deserialize<'de> for RepositoryPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        is_repository_path(&value)
+            .then_some(Self(value))
+            .ok_or_else(|| de::Error::custom("invalid repository path"))
+    }
+}
+
+impl<'de> Deserialize<'de> for Sha256Digest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        is_sha256_digest(&value)
+            .then_some(Self(value))
+            .ok_or_else(|| de::Error::custom("invalid sha256 digest"))
+    }
+}
+
+fn is_stable_id(value: &str) -> bool {
+    (1..=128).contains(&value.len())
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn is_repository_path(value: &str) -> bool {
+    if value.is_empty()
+        || value.len() > 1_024
+        || value.starts_with('/')
+        || value.contains('\\')
+        || !value.is_ascii()
+    {
+        return false;
+    }
+    let trimmed = value.strip_suffix('/').unwrap_or(value);
+    !trimmed.is_empty()
+        && trimmed.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && !segment.ends_with('.')
+                && !segment.ends_with(' ')
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

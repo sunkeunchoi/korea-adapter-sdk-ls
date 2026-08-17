@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::validator::Finding;
@@ -105,6 +105,8 @@ pub fn generate_projection_set_with_stop(
     validate_output_root(output_root, expected)?;
     let manifest = manifest_bytes(expected)?;
 
+    remove_obsolete_artifacts(output_root, expected)?;
+
     for (index, artifact) in expected.artifacts.iter().enumerate() {
         if index == stop_after {
             return Err(PipelineError::new("generated.replacement_interrupted"));
@@ -134,7 +136,7 @@ pub fn check_projection_set(output_root: &Path, expected: &ProjectionSet) -> Vec
 
     for artifact in &expected.artifacts {
         let path = output_root.join(&artifact.relative_path);
-        match fs::read(path) {
+        match read_regular_file(&path) {
             Ok(actual) if actual == artifact.bytes => {}
             Ok(_) => findings.push(generated_finding(
                 &artifact.relative_path,
@@ -149,7 +151,8 @@ pub fn check_projection_set(output_root: &Path, expected: &ProjectionSet) -> Vec
         }
     }
 
-    match fs::read(output_root.join(SET_MANIFEST)) {
+    let manifest_path = output_root.join(SET_MANIFEST);
+    match read_regular_file(&manifest_path) {
         Ok(actual) if actual == expected_manifest => {}
         _ => findings.push(generated_finding(
             SET_MANIFEST,
@@ -157,20 +160,40 @@ pub fn check_projection_set(output_root: &Path, expected: &ProjectionSet) -> Vec
             "run_generate",
         )),
     }
+    if let Ok(actual) = read_regular_file(&manifest_path) {
+        if let Ok(previous) = serde_json::from_slice::<GeneratedSetManifest>(&actual) {
+            let expected_paths: BTreeSet<_> = expected
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.relative_path.as_str())
+                .collect();
+            for artifact in previous.artifacts {
+                if !expected_paths.contains(artifact.path.as_str()) {
+                    findings.push(generated_finding(
+                        &artifact.path,
+                        "generated.artifact.extra",
+                        "run_generate",
+                    ));
+                }
+            }
+        }
+    }
     findings.sort();
     findings.truncate(256);
     findings
 }
 
-#[derive(Serialize)]
-struct GeneratedSetManifest<'a> {
-    schema_version: &'static str,
-    artifacts: Vec<GeneratedArtifact<'a>>,
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedSetManifest {
+    schema_version: String,
+    artifacts: Vec<GeneratedArtifact>,
 }
 
-#[derive(Serialize)]
-struct GeneratedArtifact<'a> {
-    path: &'a str,
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedArtifact {
+    path: String,
     sha256: String,
     byte_length: String,
 }
@@ -180,18 +203,71 @@ fn manifest_bytes(expected: &ProjectionSet) -> Result<Vec<u8>, PipelineError> {
         .artifacts
         .iter()
         .map(|artifact| GeneratedArtifact {
-            path: &artifact.relative_path,
+            path: artifact.relative_path.clone(),
             sha256: format!("sha256:{:x}", Sha256::digest(&artifact.bytes)),
             byte_length: artifact.bytes.len().to_string(),
         })
         .collect();
     let mut bytes = serde_json::to_vec_pretty(&GeneratedSetManifest {
-        schema_version: "v0",
+        schema_version: "v0".to_owned(),
         artifacts,
     })
     .map_err(|_| PipelineError::new("generated.set_manifest.serialize_failed"))?;
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+fn remove_obsolete_artifacts(
+    output_root: &Path,
+    expected: &ProjectionSet,
+) -> Result<(), PipelineError> {
+    let manifest_path = output_root.join(SET_MANIFEST);
+    let Ok(bytes) = read_regular_file(&manifest_path) else {
+        return Ok(());
+    };
+    if bytes.len() > MAX_ARTIFACT_BYTES {
+        return Err(PipelineError::new("generated.set_manifest.invalid"));
+    }
+    let previous: GeneratedSetManifest = serde_json::from_slice(&bytes)
+        .map_err(|_| PipelineError::new("generated.set_manifest.invalid"))?;
+    if previous.schema_version != "v0" || previous.artifacts.len() > MAX_ARTIFACTS {
+        return Err(PipelineError::new("generated.set_manifest.invalid"));
+    }
+
+    let expected_paths: BTreeSet<_> = expected
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.relative_path.as_str())
+        .collect();
+    let managed_parents: BTreeSet<_> = expected
+        .artifacts
+        .iter()
+        .filter_map(|artifact| Path::new(&artifact.relative_path).parent())
+        .collect();
+    for artifact in previous.artifacts {
+        validate_relative_path(&artifact.path)?;
+        if expected_paths.contains(artifact.path.as_str()) {
+            continue;
+        }
+        let path = Path::new(artifact.path.as_str());
+        let parent = path
+            .parent()
+            .ok_or_else(|| PipelineError::new("generated.obsolete_path_unsafe"))?;
+        if !managed_parents.contains(parent) {
+            return Err(PipelineError::new("generated.obsolete_path_unsafe"));
+        }
+        let destination = output_root.join(path);
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(PipelineError::new("generated.output_leaf_unsafe"));
+            }
+            Ok(_) => fs::remove_file(&destination)
+                .map_err(|_| PipelineError::new("generated.obsolete_remove_failed"))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(PipelineError::new("generated.obsolete_read_failed")),
+        }
+    }
+    Ok(())
 }
 
 fn validate_output_root(output_root: &Path, expected: &ProjectionSet) -> Result<(), PipelineError> {
@@ -213,6 +289,12 @@ fn validate_output_root(output_root: &Path, expected: &ProjectionSet) -> Result<
                         }
                     }
                 }
+            }
+        }
+        let destination = output_root.join(&artifact.relative_path);
+        if let Ok(metadata) = fs::symlink_metadata(destination) {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(PipelineError::new("generated.output_leaf_unsafe"));
             }
         }
     }
@@ -238,7 +320,10 @@ fn replace_file(output_root: &Path, relative: &str, bytes: &[u8]) -> Result<(), 
         .and_then(|name| name.to_str())
         .ok_or_else(|| PipelineError::new("generated.output_name_invalid"))?;
     let temporary = parent.join(format!(".{file_name}.repository-engineering.tmp"));
-    if temporary.exists() {
+    if let Ok(metadata) = fs::symlink_metadata(&temporary) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(PipelineError::new("generated.temporary_unsafe"));
+        }
         fs::remove_file(&temporary)
             .map_err(|_| PipelineError::new("generated.temporary_remove_failed"))?;
     }
@@ -247,6 +332,17 @@ fn replace_file(output_root: &Path, relative: &str, bytes: &[u8]) -> Result<(), 
     fs::rename(&temporary, &destination)
         .map_err(|_| PipelineError::new("generated.replace_failed"))?;
     Ok(())
+}
+
+fn read_regular_file(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "not a regular file",
+        ));
+    }
+    fs::read(path)
 }
 
 fn validate_relative_path(path: &str) -> Result<(), PipelineError> {

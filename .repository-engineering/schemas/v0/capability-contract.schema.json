@@ -7,13 +7,13 @@
           "type": "string"
         },
         "path": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
         },
         "sha256": {
-          "type": "string"
+          "$ref": "#/$defs/Sha256Digest"
         }
       },
       "required": [
@@ -112,6 +112,10 @@
       ],
       "type": "string"
     },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
     "RetirementState": {
       "enum": [
         "not_started",
@@ -135,6 +139,14 @@
       ],
       "type": "string"
     },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
     "TypedField": {
       "additionalProperties": false,
       "properties": {
@@ -142,7 +154,7 @@
           "$ref": "#/$defs/FieldType"
         },
         "name": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         },
         "required": {
           "type": "boolean"
@@ -164,11 +176,11 @@
       "$ref": "#/$defs/AutonomyClass"
     },
     "capability_id": {
-      "type": "string"
+      "$ref": "#/$defs/StableId"
     },
     "evidence_obligations": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/StableId"
       },
       "type": "array"
     },
@@ -184,7 +196,7 @@
     },
     "human_gates": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/StableId"
       },
       "type": "array"
     },
@@ -232,13 +244,13 @@
     },
     "touched_paths": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/RepositoryPath"
       },
       "type": "array"
     },
     "worker_roles": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/StableId"
       },
       "type": "array"
     }

@@ -15,6 +15,14 @@
         "v0"
       ],
       "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
     }
   },
   "$id": "urn:ls:repository-engineering:schema:v0:runtime-installation-state",
@@ -22,10 +30,10 @@
   "additionalProperties": false,
   "properties": {
     "installation_id": {
-      "type": "string"
+      "$ref": "#/$defs/StableId"
     },
     "package_lock_id": {
-      "type": "string"
+      "$ref": "#/$defs/Sha256Digest"
     },
     "schema_version": {
       "$ref": "#/$defs/SchemaVersion"

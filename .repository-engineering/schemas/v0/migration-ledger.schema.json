@@ -7,13 +7,13 @@
           "type": "string"
         },
         "path": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
         },
         "sha256": {
-          "type": "string"
+          "$ref": "#/$defs/Sha256Digest"
         }
       },
       "required": [
@@ -45,9 +45,13 @@
       "additionalProperties": false,
       "properties": {
         "absence_reason": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StableId"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "current_authority": {
@@ -57,7 +61,7 @@
           "$ref": "#/$defs/MigrationDisposition"
         },
         "logical_id": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         },
         "migration_state": {
           "$ref": "#/$defs/MigrationState"
@@ -73,22 +77,30 @@
           ]
         },
         "replacement_contract": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StableId"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "source_digest": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "source_kind": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         },
         "source_locator": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         }
       },
       "required": [
@@ -111,10 +123,22 @@
       ],
       "type": "string"
     },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
     "SchemaVersion": {
       "enum": [
         "v0"
       ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
       "type": "string"
     }
   },

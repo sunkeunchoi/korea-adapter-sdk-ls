@@ -19,10 +19,16 @@ fn main() {
     let projections = match compose_repository(root) {
         Ok(projections) => projections,
         Err(error) => {
-            eprintln!(
-                "path=.repository-engineering code={} remediation=repair_authored_package",
-                error.code
-            );
+            if error.findings.is_empty() {
+                eprintln!(
+                    "path=.repository-engineering field=package code={} remediation=repair_authored_package",
+                    error.code
+                );
+            } else {
+                for finding in &error.findings {
+                    print_finding(finding, true);
+                }
+            }
             std::process::exit(2);
         }
     };
@@ -40,14 +46,24 @@ fn main() {
         Command::Check => {
             let findings = check_projection_set(root, &projections);
             for finding in &findings {
-                println!(
-                    "path={} code={} remediation={}",
-                    finding.path, finding.code, finding.remediation
-                );
+                print_finding(finding, false);
             }
             if !findings.is_empty() {
                 std::process::exit(1);
             }
         }
+    }
+}
+
+fn print_finding(finding: &ls_repository_engineering::validator::Finding, stderr: bool) {
+    let logical_id = finding.logical_id.as_deref().unwrap_or("-");
+    let message = format!(
+        "path={} logical_id={} field={} code={} remediation={}",
+        finding.path, logical_id, finding.field, finding.code, finding.remediation
+    );
+    if stderr {
+        eprintln!("{message}");
+    } else {
+        println!("{message}");
     }
 }

@@ -86,6 +86,10 @@
       ],
       "type": "string"
     },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
     "TypedField": {
       "additionalProperties": false,
       "properties": {
@@ -93,7 +97,7 @@
           "$ref": "#/$defs/FieldType"
         },
         "name": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         },
         "required": {
           "type": "boolean"
@@ -145,7 +149,7 @@
       "type": "boolean"
     },
     "role_id": {
-      "type": "string"
+      "$ref": "#/$defs/StableId"
     },
     "schema_version": {
       "$ref": "#/$defs/SchemaVersion"

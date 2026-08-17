@@ -165,6 +165,7 @@ pub fn discover_inventory(
 pub fn reconcile_inventory(ledger: &MigrationLedger, inventory: &Inventory) -> Vec<Finding> {
     let mut discovered = BTreeMap::new();
     let mut ledger_ids = BTreeSet::new();
+    let mut folded_ledger_ids = BTreeSet::new();
     let mut findings = Vec::new();
 
     for obligation in &inventory.obligations {
@@ -190,6 +191,14 @@ pub fn reconcile_inventory(ledger: &MigrationLedger, inventory: &Inventory) -> V
                 "remove_duplicate_row",
             ));
             continue;
+        }
+        if !folded_ledger_ids.insert(row.logical_id.0.to_ascii_lowercase()) {
+            findings.push(finding(
+                Some(row.logical_id.0.clone()),
+                "logical_id",
+                "inventory.ledger.case_collision",
+                "rename_colliding_row",
+            ));
         }
         match discovered.get(row.logical_id.0.as_str()) {
             None => findings.push(finding(
@@ -236,6 +245,14 @@ pub fn reconcile_inventory(ledger: &MigrationLedger, inventory: &Inventory) -> V
                 "record_absence_reason",
             ));
         }
+        if row.replacement_contract.is_some() || row.parity_reference.is_some() {
+            findings.push(finding(
+                Some(row.logical_id.0.clone()),
+                "successor",
+                "inventory.successor_reference.forbidden",
+                "remove_unported_successor_reference",
+            ));
+        }
     }
 
     for logical_id in discovered.keys() {
@@ -266,10 +283,16 @@ pub fn reconcile_inventory(ledger: &MigrationLedger, inventory: &Inventory) -> V
 }
 
 fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, AuthoredError> {
-    let metadata = fs::metadata(path).map_err(|_| AuthoredError {
+    let metadata = fs::symlink_metadata(path).map_err(|_| AuthoredError {
         path: path.to_path_buf(),
         code: "authored.read_failed",
     })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(AuthoredError {
+            path: path.to_path_buf(),
+            code: "authored.input_unsafe",
+        });
+    }
     if metadata.len() > MAX_AUTHORED_FILE_BYTES {
         return Err(AuthoredError {
             path: path.to_path_buf(),
@@ -342,12 +365,31 @@ fn validate_discoverer_ownership(policy: &DiscoveryPolicy) -> Result<(), Authore
     if policy
         .discoverers
         .iter()
-        .any(|discoverer| !kinds.insert(&discoverer.source_kind.0))
+        .any(|discoverer| !kinds.insert(discoverer.source_kind.0.to_ascii_lowercase()))
     {
         return Err(AuthoredError {
             path: PathBuf::from(PACKAGE_ROOT).join("discovery-policy.toml"),
             code: "discovery.duplicate_source_kind",
         });
+    }
+    for discoverer in &policy.discoverers {
+        let marker_valid = discoverer.marker.as_ref().is_none_or(|marker| {
+            !marker.is_empty()
+                && marker.len() <= 128
+                && !marker.contains(['/', '\\'])
+                && marker.is_ascii()
+        });
+        let shape_valid = match discoverer.source_kind.0.as_str() {
+            "capability" => discoverer.include_descendants && discoverer.marker.is_some(),
+            "claude_alias" | "worker_role" => !discoverer.include_descendants,
+            _ => true,
+        };
+        if !marker_valid || !shape_valid {
+            return Err(AuthoredError {
+                path: PathBuf::from(PACKAGE_ROOT).join("discovery-policy.toml"),
+                code: "discovery.discoverer_invalid",
+            });
+        }
     }
     Ok(())
 }

@@ -84,3 +84,47 @@ fn validation_failure_writes_nothing_and_interruption_is_repairable() {
     generate_projection_set(&root.0, &expected).unwrap();
     assert!(check_projection_set(&root.0, &expected).is_empty());
 }
+
+#[test]
+fn generate_removes_obsolete_manifest_owned_artifacts() {
+    let root = TestDirectory::new("obsolete");
+    let first = ProjectionSet::new(vec![
+        Projection::new("schemas/v0/alpha.json", b"alpha\n".to_vec()),
+        Projection::new("schemas/v0/obsolete.json", b"obsolete\n".to_vec()),
+    ])
+    .unwrap();
+    generate_projection_set(&root.0, &first).unwrap();
+
+    let second = ProjectionSet::new(vec![Projection::new(
+        "schemas/v0/alpha.json",
+        b"alpha\n".to_vec(),
+    )])
+    .unwrap();
+    assert!(check_projection_set(&root.0, &second)
+        .iter()
+        .any(|finding| finding.code == "generated.artifact.extra"));
+    generate_projection_set(&root.0, &second).unwrap();
+
+    assert!(!root.0.join("schemas/v0/obsolete.json").exists());
+    assert!(check_projection_set(&root.0, &second).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_leaf_symlinks_fail_closed() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDirectory::new("leaf-symlink");
+    std::fs::create_dir_all(root.0.join("schemas/v0")).unwrap();
+    std::fs::write(root.0.join("outside"), b"alpha\n").unwrap();
+    symlink(root.0.join("outside"), root.0.join("schemas/v0/alpha.json")).unwrap();
+    let expected = ProjectionSet::new(vec![Projection::new(
+        "schemas/v0/alpha.json",
+        b"alpha\n".to_vec(),
+    )])
+    .unwrap();
+
+    assert!(generate_projection_set(&root.0, &expected).is_err());
+    assert!(!check_projection_set(&root.0, &expected).is_empty());
+    assert_eq!(std::fs::read(root.0.join("outside")).unwrap(), b"alpha\n");
+}

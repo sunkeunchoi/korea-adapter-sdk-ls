@@ -89,6 +89,44 @@ fn package_manifest_rejects_unknown_fields_and_versions() {
 
     let newer = PACKAGE.replace("\"schema_version\": \"v0\"", "\"schema_version\": \"v1\"");
     assert!(serde_json::from_str::<PackageManifest>(&newer).is_err());
+
+    let escaping = PACKAGE.replace(
+        ".repository-engineering/discovery-policy.toml",
+        "../discovery-policy.toml",
+    );
+    assert!(serde_json::from_str::<PackageManifest>(&escaping).is_err());
+
+    let wrong_path = PACKAGE.replace(
+        ".repository-engineering/discovery-policy.toml",
+        ".repository-engineering/other-policy.toml",
+    );
+    let wrong_path: PackageManifest = serde_json::from_str(&wrong_path).unwrap();
+    assert!(validate_first_slice_package(&wrong_path)
+        .iter()
+        .any(|finding| finding.code == "package.declaration.mismatch"));
+
+    let mut omitted_component: serde_json::Value = serde_json::from_str(PACKAGE).unwrap();
+    omitted_component["optional_components"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let omitted_component: PackageManifest = serde_json::from_value(omitted_component).unwrap();
+    assert!(validate_first_slice_package(&omitted_component)
+        .iter()
+        .any(|finding| finding.code == "package.optional_component.incomplete"));
+}
+
+#[test]
+fn lexical_contracts_reject_unsafe_ids_paths_and_digests() {
+    use ls_repository_engineering::schema::{ArtifactReference, RepositoryPath, StableId};
+
+    assert!(serde_json::from_str::<StableId>(r#""contains space""#).is_err());
+    assert!(serde_json::from_str::<RepositoryPath>(r#""/absolute""#).is_err());
+    assert!(serde_json::from_str::<RepositoryPath>(r#""safe/../escape""#).is_err());
+    assert!(serde_json::from_str::<ArtifactReference>(
+        r#"{"schema_version":"v0","path":"safe.json","sha256":"sha256:ABC","media_type":"application/json"}"#,
+    )
+    .is_err());
 }
 
 #[test]
@@ -119,6 +157,27 @@ fn attempt_record_rejects_success_by_omission_and_invalid_transitions() {
     assert!(findings
         .iter()
         .any(|finding| finding.code == "attempt.transition.invalid"));
+    assert!(findings
+        .iter()
+        .any(|finding| finding.code == "attempt.initial_state.invalid"));
+
+    let non_monotonic = r#"{
+      "schema_version":"v0",
+      "attempt_id":"attempt-fixture-2",
+      "capability_id":"implement-tr",
+      "events":[
+        {"schema_version":"v0","sequence":"2","occurred_at_utc":"2026-08-17T00:00:00Z","state":"not_evaluated"},
+        {"schema_version":"v0","sequence":"1","occurred_at_utc":"2026-08-17T00:00:01Z","state":"running"},
+        {"schema_version":"v0","sequence":"3","occurred_at_utc":"2026-08-17T00:00:02Z","state":"succeeded"}
+      ],
+      "checkpoint":null,
+      "outcome":"succeeded",
+      "evidence":[]
+    }"#;
+    let non_monotonic: AttemptRecord = serde_json::from_str(non_monotonic).unwrap();
+    assert!(validate_attempt_record(&non_monotonic)
+        .iter()
+        .any(|finding| finding.code == "attempt.sequence.not_monotonic"));
 }
 
 #[test]

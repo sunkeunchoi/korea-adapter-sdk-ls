@@ -1,6 +1,6 @@
 {
   "schema_version": "v0",
-  "package_lock_id": "sha256:873d6b2c5a2acdd39b238c2a223bd7fe5bf529e8b13b7366526b1c2a21789fd9",
+  "package_lock_id": "sha256:7f197e8d475a8c73905e7e5074e834ba506946264cc1a19e2e2027fbb11b3e34",
   "normative": {
     "package": {
       "schema_version": "v0",
@@ -23,7 +23,7 @@
     "schema_registry": {
       "schema_version": "v0",
       "path": ".repository-engineering/schema-registry.json",
-      "sha256": "sha256:a36e01bd35f277cb770dfba8cf1ce49571022cc6562dfcd2d75c72f8e809263f",
+      "sha256": "sha256:fb76e32d57c56f0905ed5e1beafde6698c3375e9ea7b6c7322837091f25799cd",
       "media_type": "application/json"
     },
     "conformance_corpus": {
@@ -47,7 +47,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:247cd29974a915608d87b59f9fb0d73e6e1ace62fcf694e1c7eb5f7f80820f14",
+      "sha256": "sha256:1ee75bb6347468b47d58a779362ae7fe7968a6a4f2b28c6936a4e3a48db5c36b",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {

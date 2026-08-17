@@ -16,7 +16,7 @@ use crate::schema::{
     schema_catalog, ArtifactReference, BuildProvenance, NormativeLockClosure, RepositoryPath,
     SchemaVersion, Sha256Digest,
 };
-use crate::validator::validate_first_slice_package;
+use crate::validator::{validate_first_slice_package, Finding};
 
 const PACKAGE_PATH: &str = ".repository-engineering/package.toml";
 const DISCOVERY_PATH: &str = ".repository-engineering/discovery-policy.toml";
@@ -29,11 +29,21 @@ const REFERENCE_PATH: &str = "docs/reference/repository-engineering-package.md";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryError {
     pub code: &'static str,
+    pub findings: Vec<Finding>,
 }
 
 impl RepositoryError {
     fn new(code: &'static str) -> Self {
-        Self { code }
+        Self {
+            code,
+            findings: Vec::new(),
+        }
+    }
+
+    fn from_findings(code: &'static str, mut findings: Vec<Finding>) -> Self {
+        findings.sort();
+        findings.truncate(256);
+        Self { code, findings }
     }
 }
 
@@ -68,13 +78,15 @@ struct ConformanceManifest {
 
 pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError> {
     let authored = load_authored_package(root).map_err(|error| RepositoryError::new(error.code))?;
-    if !validate_first_slice_package(&authored.package).is_empty() {
-        return Err(RepositoryError::new("repository.package.invalid"));
-    }
+    let mut findings = validate_first_slice_package(&authored.package);
     let inventory = discover_inventory(root, &authored.discovery_policy)
         .map_err(|error| RepositoryError::new(error.code))?;
-    if !reconcile_inventory(&authored.ledger, &inventory).is_empty() {
-        return Err(RepositoryError::new("repository.inventory.invalid"));
+    findings.extend(reconcile_inventory(&authored.ledger, &inventory));
+    if !findings.is_empty() {
+        return Err(RepositoryError::from_findings(
+            "repository.validation.failed",
+            findings,
+        ));
     }
 
     let mut projections = Vec::new();

@@ -3,7 +3,7 @@
 This page is generated from the inert, reviewed package declaration. It grants no runtime or publication authority.
 
 - Schema version: `v0`
-- Package lock identity: `sha256:873d6b2c5a2acdd39b238c2a223bd7fe5bf529e8b13b7366526b1c2a21789fd9`
+- Package lock identity: `sha256:7f197e8d475a8c73905e7e5074e834ba506946264cc1a19e2e2027fbb11b3e34`
 - Activation eligibility: `none`
 - Reviewed migration rows: `78`
 

@@ -10,7 +10,7 @@
   "paths": {
     "discovery_policy": ".repository-engineering/discovery-policy.toml",
     "migration_ledger": ".repository-engineering/migration-ledger.toml",
-    "schema_registry": ".repository-engineering/schemas/v0/registry.json"
+    "schema_registry": ".repository-engineering/schema-registry.json"
   },
   "active_capability_contracts": [],
   "active_worker_roles": [],

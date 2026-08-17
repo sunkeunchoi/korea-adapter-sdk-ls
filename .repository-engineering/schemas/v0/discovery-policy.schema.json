@@ -4,13 +4,13 @@
       "additionalProperties": false,
       "properties": {
         "locator": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         },
         "logical_id": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         },
         "source_kind": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         }
       },
       "required": [
@@ -33,10 +33,10 @@
           ]
         },
         "prefix": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         },
         "source_kind": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         }
       },
       "required": [
@@ -46,14 +46,18 @@
       ],
       "type": "object"
     },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
     "ReviewedExclusion": {
       "additionalProperties": false,
       "properties": {
         "prefix": {
-          "type": "string"
+          "$ref": "#/$defs/RepositoryPath"
         },
         "reason": {
-          "type": "string"
+          "$ref": "#/$defs/StableId"
         }
       },
       "required": [
@@ -66,6 +70,10 @@
       "enum": [
         "v0"
       ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
       "type": "string"
     }
   },
@@ -87,7 +95,7 @@
     },
     "exact_instruction_paths": {
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/RepositoryPath"
       },
       "type": "array"
     },

@@ -77,3 +77,35 @@ fn every_claude_alias_targets_the_same_named_legacy_capability() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn authored_manifest_symlinks_fail_closed() {
+    use std::os::unix::fs::symlink;
+
+    let source_root = repository_root();
+    let root = std::env::temp_dir().join(format!(
+        "ls-repository-engineering-authored-symlink-{}",
+        std::process::id()
+    ));
+    let package_root = root.join(".repository-engineering");
+    std::fs::create_dir_all(&package_root).unwrap();
+    for name in ["discovery-policy.toml", "migration-ledger.toml"] {
+        std::fs::copy(
+            source_root.join(".repository-engineering").join(name),
+            package_root.join(name),
+        )
+        .unwrap();
+    }
+    let outside = root.join("outside-package.toml");
+    std::fs::copy(
+        source_root.join(".repository-engineering/package.toml"),
+        &outside,
+    )
+    .unwrap();
+    symlink(&outside, package_root.join("package.toml")).unwrap();
+
+    let error = load_authored_package(&root).unwrap_err();
+    assert_eq!(error.code, "authored.input_unsafe");
+    std::fs::remove_dir_all(root).unwrap();
+}
