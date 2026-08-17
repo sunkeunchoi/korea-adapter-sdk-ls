@@ -1,0 +1,25 @@
+{
+  "schema_version": "v0",
+  "capability_id": "implement-tr",
+  "public_description": "Non-authoritative fidelity fixture derived from the current implement-tr capability envelope.",
+  "state": {
+    "declaration": "declared",
+    "implementation": "unported",
+    "certification": "uncertified",
+    "authority": "legacy",
+    "retirement": "not_started"
+  },
+  "autonomy": "A3",
+  "safety_overlays": ["credential_free", "human_gate", "redacted_diagnostics"],
+  "inputs": [
+    { "name": "tr_code", "field_type": "stable_id", "required": true }
+  ],
+  "outcomes": ["succeeded", "held", "failed"],
+  "touched_paths": ["crates/ls-sdk"],
+  "evidence_obligations": ["paper-live-smoke"],
+  "human_gates": ["paper-live-smoke"],
+  "executor": null,
+  "knowledge_references": [],
+  "worker_roles": [],
+  "scenario_references": []
+}

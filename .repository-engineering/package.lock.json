@@ -1,0 +1,68 @@
+{
+  "schema_version": "v0",
+  "package_lock_id": "sha256:7f197e8d475a8c73905e7e5074e834ba506946264cc1a19e2e2027fbb11b3e34",
+  "normative": {
+    "package": {
+      "schema_version": "v0",
+      "path": ".repository-engineering/package.toml",
+      "sha256": "sha256:bba80c9dbbfa4b50f2f3c245495e853fd4cdfdbf3c3ec457ed49c7a7c9494f82",
+      "media_type": "application/toml"
+    },
+    "discovery_policy": {
+      "schema_version": "v0",
+      "path": ".repository-engineering/discovery-policy.toml",
+      "sha256": "sha256:b49058d032da57a7e5edf51ba68da06275406df36f5dfa3e6460695dc0216951",
+      "media_type": "application/toml"
+    },
+    "migration_ledger": {
+      "schema_version": "v0",
+      "path": ".repository-engineering/migration-ledger.toml",
+      "sha256": "sha256:5288c90e5c76506ecda3e3756cdb1dd0fb5f9d998ba1d444bbe1828d284073ef",
+      "media_type": "application/toml"
+    },
+    "schema_registry": {
+      "schema_version": "v0",
+      "path": ".repository-engineering/schema-registry.json",
+      "sha256": "sha256:fb76e32d57c56f0905ed5e1beafde6698c3375e9ea7b6c7322837091f25799cd",
+      "media_type": "application/json"
+    },
+    "conformance_corpus": {
+      "schema_version": "v0",
+      "path": ".repository-engineering/conformance/v0/manifest.json",
+      "sha256": "sha256:620e519fa2d39cbc8bbb1996c9a1e21b579751ba3c8f17e893ab820affb0859d",
+      "media_type": "application/json"
+    },
+    "optional_components": [
+      {
+        "selection": "disabled",
+        "component": "orca_ui"
+      },
+      {
+        "selection": "disabled",
+        "component": "worker_adapter"
+      }
+    ]
+  },
+  "build_provenance": {
+    "generator": {
+      "schema_version": "v0",
+      "path": "crates/ls-repository-engineering",
+      "sha256": "sha256:1ee75bb6347468b47d58a779362ae7fe7968a6a4f2b28c6936a4e3a48db5c36b",
+      "media_type": "application/vnd.rust.crate"
+    },
+    "dependency_lock": {
+      "schema_version": "v0",
+      "path": "Cargo.lock",
+      "sha256": "sha256:906e2d0ea2adbd8018f87bd3cedd9bdfa375a94c870757fdcd19b061edb40139",
+      "media_type": "application/toml"
+    },
+    "workflow_pins": [
+      {
+        "schema_version": "v0",
+        "path": ".github/workflows/repository-engineering-check.yml",
+        "sha256": "sha256:6f2d6164bf8dfae1dce339e5ef742f772b525f29badc107b6b7c7ee295f6856e",
+        "media_type": "application/yaml"
+      }
+    ]
+  }
+}

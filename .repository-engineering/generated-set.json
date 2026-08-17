@@ -1,0 +1,110 @@
+{
+  "schema_version": "v0",
+  "artifacts": [
+    {
+      "path": ".repository-engineering/conformance/v0/cross-record.json",
+      "sha256": "sha256:f0573af5003f2f3417aa1b5070fa8e0067888d72c9f3b77a4cdb2158a551fc03",
+      "byte_length": "311"
+    },
+    {
+      "path": ".repository-engineering/conformance/v0/manifest.json",
+      "sha256": "sha256:620e519fa2d39cbc8bbb1996c9a1e21b579751ba3c8f17e893ab820affb0859d",
+      "byte_length": "795"
+    },
+    {
+      "path": ".repository-engineering/conformance/v0/structural.json",
+      "sha256": "sha256:c71987c48bdccd9d3944a4f1a456c1b33f3fbd7592cdd3c3a890d11818cc351c",
+      "byte_length": "325"
+    },
+    {
+      "path": ".repository-engineering/conformance/v0/version-set-vector.json",
+      "sha256": "sha256:66610b5c1430fa494a45c17297bb81e3fe85b452dc56b87e26cbeb62d435674e",
+      "byte_length": "1071"
+    },
+    {
+      "path": ".repository-engineering/package.lock.json",
+      "sha256": "sha256:ee5124169dea80fc72dc3210aa1a424da59fb01da62d54e3606b8efaac597b81",
+      "byte_length": "2395"
+    },
+    {
+      "path": ".repository-engineering/schema-registry.json",
+      "sha256": "sha256:fb76e32d57c56f0905ed5e1beafde6698c3375e9ea7b6c7322837091f25799cd",
+      "byte_length": "5358"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/artifact-reference.schema.json",
+      "sha256": "sha256:6475a88e803a41fc7649429c99ba5645d8df4dd8051eedcf320bfb000de04bdd",
+      "byte_length": "869"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/attempt-checkpoint.schema.json",
+      "sha256": "sha256:315b6e4dad217ae1ed4a3504b3605a6895ea3650264ca27d64c3fec64c3f455d",
+      "byte_length": "1647"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/attempt-event.schema.json",
+      "sha256": "sha256:715f5405c1f1046734ef01f7840df97de55629ad512453f634a1accdb8ba6a42",
+      "byte_length": "917"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/attempt-record.schema.json",
+      "sha256": "sha256:ffb238ca19a504a3c29558bcb5c862d4e8f9e3dff12c079b0f70c9ae6bf1053e",
+      "byte_length": "3224"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/capability-contract.schema.json",
+      "sha256": "sha256:ef6ee1932d340d816e3e207e0a2bcd2c6651784bb5a50a40cc0b5f18edda0614",
+      "byte_length": "5481"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/discovery-policy.schema.json",
+      "sha256": "sha256:efed8e6f7e7b688a102dc4d07d84b162d300f08d86c3e92509f8ca7f1280dc97",
+      "byte_length": "2566"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/exact-lock.schema.json",
+      "sha256": "sha256:cd7428d5b18c915e44f5e22ab2ad17dfcdeac6f78e28daa15e7c74f90a4b53c3",
+      "byte_length": "4006"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/migration-ledger.schema.json",
+      "sha256": "sha256:5edfc0b88b89310564c2fe03344f5022eb02fe065b13b22438b02ef3b2ec0d08",
+      "byte_length": "3505"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/package-manifest.schema.json",
+      "sha256": "sha256:c76b4f1d95359d1c28351ca4627f47872e7990ed5e95e63f83e562d4e8af0ea2",
+      "byte_length": "4290"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/runtime-installation-state.schema.json",
+      "sha256": "sha256:993043386a4d4ed7334db8a6d48a60c7ca1de695ccd883738c41605f01c5dee3",
+      "byte_length": "1118"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/state-migration-handoff.schema.json",
+      "sha256": "sha256:bc93d5d3bf39f43a7b16917b7eecded7fd777d70295db60c8da8b9f26e033277",
+      "byte_length": "1645"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/version-set-fixture-input.schema.json",
+      "sha256": "sha256:09654cb72096be4e4d8ed82ebf01ac82b3f49dda7c9d0e060f7d7f3fe2305606",
+      "byte_length": "2292"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/worker-result.schema.json",
+      "sha256": "sha256:a483b253778f7d577e1d102bed621136fd296db58a6f5c36e534dffa3c6f7d35",
+      "byte_length": "3806"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/worker-role-contract.schema.json",
+      "sha256": "sha256:52f55c66f5394bfb62aac975edf9efd967c3f63632b473ba55dc0bc76d3d1406",
+      "byte_length": "3555"
+    },
+    {
+      "path": "docs/reference/repository-engineering-package.md",
+      "sha256": "sha256:1e5aecd28f8e958d24526a6d8c3a3dad19f7ac52fa7d1b6fe9037a997b3bd02a",
+      "byte_length": "13145"
+    }
+  ]
+}

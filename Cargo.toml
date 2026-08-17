@@ -6,12 +6,13 @@ members = [
     "crates/ls-sdk-test-support",
     "crates/ls-docgen",
     "crates/ls-trackers",
+    "crates/ls-repository-engineering",
 ]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.96"
 license = "MIT"
 repository = "https://github.com/sunkeunchoi/korea-adapter-sdk-ls"
 homepage = "https://github.com/sunkeunchoi/korea-adapter-sdk-ls"
@@ -24,6 +25,9 @@ reqwest      = { version = "0.13", features = ["rustls", "json", "form"] }
 serde        = { version = "1",    features = ["derive"] }
 serde_json   = "1"
 serde_yaml   = "0.9"
+toml         = { version = "=0.8.23", default-features = false, features = ["parse"] }
+schemars     = "=1.2.2"
+serde_json_canonicalizer = "=0.3.2"
 thiserror    = "2"
 # `serde` feature intentionally omitted: no DateTime field is serialized
 # (token expiry is arithmetic-only). Re-add if a public API exposes DateTime.

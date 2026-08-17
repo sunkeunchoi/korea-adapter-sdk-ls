@@ -1,0 +1,22 @@
+{
+  "schema_version": "v0",
+  "attempt_id": "attempt-fixture-1",
+  "capability_id": "implement-tr",
+  "events": [
+    {
+      "schema_version": "v0",
+      "sequence": "1",
+      "occurred_at_utc": "2026-08-17T00:00:00Z",
+      "state": "succeeded"
+    },
+    {
+      "schema_version": "v0",
+      "sequence": "2",
+      "occurred_at_utc": "2026-08-17T00:00:01Z",
+      "state": "running"
+    }
+  ],
+  "checkpoint": null,
+  "outcome": "failed",
+  "evidence": []
+}

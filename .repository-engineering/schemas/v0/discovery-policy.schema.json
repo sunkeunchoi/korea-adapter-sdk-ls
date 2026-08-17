@@ -1,0 +1,121 @@
+{
+  "$defs": {
+    "DeclaredObligation": {
+      "additionalProperties": false,
+      "properties": {
+        "locator": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "logical_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "logical_id",
+        "source_kind",
+        "locator"
+      ],
+      "type": "object"
+    },
+    "DiscovererPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "include_descendants": {
+          "type": "boolean"
+        },
+        "marker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prefix": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "source_kind",
+        "prefix",
+        "include_descendants"
+      ],
+      "type": "object"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "ReviewedExclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "prefix": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "reason": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "prefix",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:discovery-policy",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "declared_obligations": {
+      "items": {
+        "$ref": "#/$defs/DeclaredObligation"
+      },
+      "type": "array"
+    },
+    "discoverers": {
+      "items": {
+        "$ref": "#/$defs/DiscovererPolicy"
+      },
+      "type": "array"
+    },
+    "exact_instruction_paths": {
+      "items": {
+        "$ref": "#/$defs/RepositoryPath"
+      },
+      "type": "array"
+    },
+    "exclusions": {
+      "items": {
+        "$ref": "#/$defs/ReviewedExclusion"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "discoverers",
+    "exact_instruction_paths",
+    "exclusions",
+    "declared_obligations"
+  ],
+  "title": "DiscoveryPolicy",
+  "type": "object"
+}

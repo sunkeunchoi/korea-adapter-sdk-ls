@@ -1,0 +1,35 @@
+{
+  "expected_version_set_id": "sha256:62f46a2922164720d01b3b75f9cc06fcbd14735d99af2ea44a3abd7bd4ae9208",
+  "fixture_only": true,
+  "input": {
+    "components": [
+      {
+        "artifact": {
+          "media_type": "application/octet-stream",
+          "path": "fixture/runtime",
+          "schema_version": "v0",
+          "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "component_id": "runtime",
+        "disabled": false,
+        "required": true
+      },
+      {
+        "artifact": null,
+        "component_id": "orca-ui",
+        "disabled": true,
+        "required": false
+      }
+    ],
+    "fixture_only": true,
+    "package": {
+      "media_type": "application/octet-stream",
+      "path": "fixture/package.lock.json",
+      "schema_version": "v0",
+      "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "package_lock_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "schema_version": "v0"
+  },
+  "schema_version": "v0"
+}

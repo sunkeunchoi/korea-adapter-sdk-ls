@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:state-migration-handoff",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "from": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "handoff_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "to": {
+      "$ref": "#/$defs/ArtifactReference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "from",
+    "to",
+    "evidence"
+  ],
+  "title": "StateMigrationHandoff",
+  "type": "object"
+}

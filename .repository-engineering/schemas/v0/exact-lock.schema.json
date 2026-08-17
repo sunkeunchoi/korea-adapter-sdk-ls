@@ -1,0 +1,174 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "BuildProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "dependency_lock": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "generator": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "workflow_pins": {
+          "items": {
+            "$ref": "#/$defs/ArtifactReference"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "generator",
+        "dependency_lock",
+        "workflow_pins"
+      ],
+      "type": "object"
+    },
+    "NormativeLockClosure": {
+      "additionalProperties": false,
+      "properties": {
+        "conformance_corpus": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "discovery_policy": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "migration_ledger": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "optional_components": {
+          "items": {
+            "$ref": "#/$defs/OptionalComponent"
+          },
+          "type": "array"
+        },
+        "package": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "schema_registry": {
+          "$ref": "#/$defs/ArtifactReference"
+        }
+      },
+      "required": [
+        "package",
+        "discovery_policy",
+        "migration_ledger",
+        "schema_registry",
+        "conformance_corpus",
+        "optional_components"
+      ],
+      "type": "object"
+    },
+    "OptionalComponent": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "$ref": "#/$defs/OptionalComponentKind"
+            },
+            "selection": {
+              "const": "disabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "component"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/ArtifactReference"
+            },
+            "component": {
+              "$ref": "#/$defs/OptionalComponentKind"
+            },
+            "selection": {
+              "const": "selected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "component",
+            "artifact"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OptionalComponentKind": {
+      "enum": [
+        "orca_ui",
+        "worker_adapter"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:exact-lock",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "build_provenance": {
+      "$ref": "#/$defs/BuildProvenance"
+    },
+    "normative": {
+      "$ref": "#/$defs/NormativeLockClosure"
+    },
+    "package_lock_id": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "package_lock_id",
+    "normative",
+    "build_provenance"
+  ],
+  "title": "ExactLock",
+  "type": "object"
+}

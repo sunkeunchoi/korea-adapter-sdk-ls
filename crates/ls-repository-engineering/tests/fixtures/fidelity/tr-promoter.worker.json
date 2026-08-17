@@ -1,0 +1,23 @@
+{
+  "schema_version": "v0",
+  "role_id": "tr-promoter",
+  "public_description": "Non-authoritative fidelity fixture derived from the current TR promotion worker role.",
+  "state": {
+    "declaration": "declared",
+    "implementation": "unported",
+    "certification": "uncertified",
+    "authority": "legacy",
+    "retirement": "not_started"
+  },
+  "assignment_fields": [
+    { "name": "tr_code", "field_type": "stable_id", "required": true }
+  ],
+  "result_fields": [
+    { "name": "outcome", "field_type": "stable_id", "required": true }
+  ],
+  "fresh_context_required": true,
+  "concurrency": "serial",
+  "cancellation_supported": true,
+  "idempotency_key_required": true,
+  "result_validation_required": true
+}

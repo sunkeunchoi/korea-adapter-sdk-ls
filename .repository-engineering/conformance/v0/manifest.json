@@ -1,0 +1,23 @@
+{
+  "schema_version": "v0",
+  "artifacts": [
+    {
+      "schema_version": "v0",
+      "path": ".repository-engineering/conformance/v0/structural.json",
+      "sha256": "sha256:c71987c48bdccd9d3944a4f1a456c1b33f3fbd7592cdd3c3a890d11818cc351c",
+      "media_type": "application/json"
+    },
+    {
+      "schema_version": "v0",
+      "path": ".repository-engineering/conformance/v0/cross-record.json",
+      "sha256": "sha256:f0573af5003f2f3417aa1b5070fa8e0067888d72c9f3b77a4cdb2158a551fc03",
+      "media_type": "application/json"
+    },
+    {
+      "schema_version": "v0",
+      "path": ".repository-engineering/conformance/v0/version-set-vector.json",
+      "sha256": "sha256:66610b5c1430fa494a45c17297bb81e3fe85b452dc56b87e26cbeb62d435674e",
+      "media_type": "application/json"
+    }
+  ]
+}

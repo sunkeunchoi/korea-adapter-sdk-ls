@@ -29,6 +29,9 @@ use ls_metadata::{
 pub const DEPENDENCY_DOCS_DIR: &str = "docs/tr-dependencies";
 /// Generated SDK Reference Docs live here, relative to the repo root.
 pub const REFERENCE_DOCS_DIR: &str = "docs/reference";
+/// Files colocated under the reference directory but projected by another
+/// deterministic generator with its own drift gate.
+const EXTERNALLY_MANAGED_REFERENCE_DOCS: &[&str] = &["repository-engineering-package.md"];
 
 /// CLI mode: write the docs (default) or check committed docs against metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,6 +781,13 @@ pub fn check_docs(root: &Path, files: &BTreeMap<PathBuf, String>) -> Vec<PathBuf
                 continue;
             }
             if let Some(name) = path.file_name() {
+                if managed == Path::new(REFERENCE_DOCS_DIR)
+                    && name
+                        .to_str()
+                        .is_some_and(|name| EXTERNALLY_MANAGED_REFERENCE_DOCS.contains(&name))
+                {
+                    continue;
+                }
                 let rel = managed.join(name);
                 if !files.contains_key(&rel) {
                     drifted.push(rel);
@@ -1877,6 +1887,13 @@ mod tests {
             "stale",
         )
         .expect("orphan");
+        std::fs::create_dir_all(root.join(REFERENCE_DOCS_DIR)).expect("reference dir");
+        std::fs::write(
+            root.join(REFERENCE_DOCS_DIR)
+                .join("repository-engineering-package.md"),
+            "owned by ls-repository-engineering",
+        )
+        .expect("external projection");
 
         let drifted = check_docs(&root, &files);
         assert_eq!(

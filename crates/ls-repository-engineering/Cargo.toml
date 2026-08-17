@@ -1,0 +1,27 @@
+[package]
+name = "ls-repository-engineering"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Deterministic validation and projection tooling for the repository engineering package."
+
+[[bin]]
+name = "ls-repository-engineering"
+path = "src/main.rs"
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+jsonschema = { version = "=0.33.0", default-features = false }

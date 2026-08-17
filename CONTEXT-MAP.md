@@ -14,6 +14,10 @@ System-wide decisions live in [`docs/adr/`](docs/adr/). The SDK Project's own
 context file sits at the repository root rather than under `crates/` because the
 root Cargo workspace *is* that context.
 
+The `.repository-engineering/` package and its `ls-repository-engineering` leaf
+crate are repository-level governance tooling shared across this layout. They do
+not introduce a third product context or change the one-way product dependency.
+
 ## Where definitions live
 
 [`CONCEPTS.md`](CONCEPTS.md) is the **single authoritative glossary** for both

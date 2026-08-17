@@ -1,0 +1,275 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AuthorityState": {
+      "enum": [
+        "legacy",
+        "successor"
+      ],
+      "type": "string"
+    },
+    "AutonomyClass": {
+      "enum": [
+        "A0",
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "AX"
+      ],
+      "type": "string"
+    },
+    "CertificationState": {
+      "enum": [
+        "uncertified",
+        "certified"
+      ],
+      "type": "string"
+    },
+    "ContractState": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AuthorityState"
+        },
+        "certification": {
+          "$ref": "#/$defs/CertificationState"
+        },
+        "declaration": {
+          "$ref": "#/$defs/DeclarationState"
+        },
+        "implementation": {
+          "$ref": "#/$defs/ImplementationState"
+        },
+        "retirement": {
+          "$ref": "#/$defs/RetirementState"
+        }
+      },
+      "required": [
+        "declaration",
+        "implementation",
+        "certification",
+        "authority",
+        "retirement"
+      ],
+      "type": "object"
+    },
+    "DeclarationState": {
+      "enum": [
+        "declared",
+        "absent"
+      ],
+      "type": "string"
+    },
+    "FieldType": {
+      "enum": [
+        "string",
+        "boolean",
+        "integer_string",
+        "artifact_reference",
+        "stable_id"
+      ],
+      "type": "string"
+    },
+    "ImplementationState": {
+      "enum": [
+        "unported",
+        "implemented"
+      ],
+      "type": "string"
+    },
+    "OutcomeKind": {
+      "enum": [
+        "succeeded",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "RetirementState": {
+      "enum": [
+        "not_started",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "SafetyOverlay": {
+      "enum": [
+        "credential_free",
+        "no_external_mutation",
+        "human_gate",
+        "path_confined",
+        "redacted_diagnostics"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "TypedField": {
+      "additionalProperties": false,
+      "properties": {
+        "field_type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "name": {
+          "$ref": "#/$defs/StableId"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "field_type",
+        "required"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:capability-contract",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "autonomy": {
+      "$ref": "#/$defs/AutonomyClass"
+    },
+    "capability_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "evidence_obligations": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "executor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "human_gates": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/TypedField"
+      },
+      "type": "array"
+    },
+    "knowledge_references": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "outcomes": {
+      "items": {
+        "$ref": "#/$defs/OutcomeKind"
+      },
+      "type": "array"
+    },
+    "public_description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "safety_overlays": {
+      "items": {
+        "$ref": "#/$defs/SafetyOverlay"
+      },
+      "type": "array"
+    },
+    "scenario_references": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/ContractState"
+    },
+    "touched_paths": {
+      "items": {
+        "$ref": "#/$defs/RepositoryPath"
+      },
+      "type": "array"
+    },
+    "worker_roles": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "capability_id",
+    "state",
+    "autonomy",
+    "safety_overlays",
+    "inputs",
+    "outcomes",
+    "touched_paths",
+    "evidence_obligations",
+    "human_gates",
+    "knowledge_references",
+    "worker_roles",
+    "scenario_references"
+  ],
+  "title": "CapabilityContract",
+  "type": "object"
+}

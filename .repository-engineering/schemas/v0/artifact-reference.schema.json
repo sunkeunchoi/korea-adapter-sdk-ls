@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:artifact-reference",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "media_type": {
+      "type": "string"
+    },
+    "path": {
+      "$ref": "#/$defs/RepositoryPath"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "sha256": {
+      "$ref": "#/$defs/Sha256Digest"
+    }
+  },
+  "required": [
+    "schema_version",
+    "path",
+    "sha256",
+    "media_type"
+  ],
+  "title": "ArtifactReference",
+  "type": "object"
+}

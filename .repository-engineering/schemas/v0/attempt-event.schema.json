@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "AttemptState": {
+      "enum": [
+        "not_evaluated",
+        "running",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required",
+        "succeeded"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:attempt-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "occurred_at_utc": {
+      "type": "string"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "sequence": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/AttemptState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sequence",
+    "occurred_at_utc",
+    "state"
+  ],
+  "title": "AttemptEvent",
+  "type": "object"
+}

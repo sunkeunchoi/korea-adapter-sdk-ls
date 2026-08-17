@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "AuthorityState": {
+      "enum": [
+        "legacy",
+        "successor"
+      ],
+      "type": "string"
+    },
+    "CertificationState": {
+      "enum": [
+        "uncertified",
+        "certified"
+      ],
+      "type": "string"
+    },
+    "ConcurrencyClass": {
+      "enum": [
+        "serial",
+        "bounded_parallel"
+      ],
+      "type": "string"
+    },
+    "ContractState": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AuthorityState"
+        },
+        "certification": {
+          "$ref": "#/$defs/CertificationState"
+        },
+        "declaration": {
+          "$ref": "#/$defs/DeclarationState"
+        },
+        "implementation": {
+          "$ref": "#/$defs/ImplementationState"
+        },
+        "retirement": {
+          "$ref": "#/$defs/RetirementState"
+        }
+      },
+      "required": [
+        "declaration",
+        "implementation",
+        "certification",
+        "authority",
+        "retirement"
+      ],
+      "type": "object"
+    },
+    "DeclarationState": {
+      "enum": [
+        "declared",
+        "absent"
+      ],
+      "type": "string"
+    },
+    "FieldType": {
+      "enum": [
+        "string",
+        "boolean",
+        "integer_string",
+        "artifact_reference",
+        "stable_id"
+      ],
+      "type": "string"
+    },
+    "ImplementationState": {
+      "enum": [
+        "unported",
+        "implemented"
+      ],
+      "type": "string"
+    },
+    "RetirementState": {
+      "enum": [
+        "not_started",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "TypedField": {
+      "additionalProperties": false,
+      "properties": {
+        "field_type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "name": {
+          "$ref": "#/$defs/StableId"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "field_type",
+        "required"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:worker-role-contract",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assignment_fields": {
+      "items": {
+        "$ref": "#/$defs/TypedField"
+      },
+      "type": "array"
+    },
+    "cancellation_supported": {
+      "type": "boolean"
+    },
+    "concurrency": {
+      "$ref": "#/$defs/ConcurrencyClass"
+    },
+    "fresh_context_required": {
+      "type": "boolean"
+    },
+    "idempotency_key_required": {
+      "type": "boolean"
+    },
+    "public_description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "result_fields": {
+      "items": {
+        "$ref": "#/$defs/TypedField"
+      },
+      "type": "array"
+    },
+    "result_validation_required": {
+      "type": "boolean"
+    },
+    "role_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/ContractState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "role_id",
+    "state",
+    "assignment_fields",
+    "result_fields",
+    "fresh_context_required",
+    "concurrency",
+    "cancellation_supported",
+    "idempotency_key_required",
+    "result_validation_required"
+  ],
+  "title": "WorkerRoleContract",
+  "type": "object"
+}

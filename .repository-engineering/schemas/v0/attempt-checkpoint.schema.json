@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AttemptState": {
+      "enum": [
+        "not_evaluated",
+        "running",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required",
+        "succeeded"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:attempt-checkpoint",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "sequence": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/AttemptState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sequence",
+    "state",
+    "artifact"
+  ],
+  "title": "AttemptCheckpoint",
+  "type": "object"
+}

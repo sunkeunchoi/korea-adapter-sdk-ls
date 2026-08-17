@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "RuntimeLifecycleState": {
+      "enum": [
+        "DISABLED",
+        "SHADOW",
+        "ACTIVE",
+        "DRAINING",
+        "QUARANTINED"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:runtime-installation-state",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "installation_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "package_lock_id": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "state": {
+      "$ref": "#/$defs/RuntimeLifecycleState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "installation_id",
+    "state",
+    "package_lock_id"
+  ],
+  "title": "RuntimeInstallationState",
+  "type": "object"
+}

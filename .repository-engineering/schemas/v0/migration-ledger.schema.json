@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AuthorityState": {
+      "enum": [
+        "legacy",
+        "successor"
+      ],
+      "type": "string"
+    },
+    "MigrationDisposition": {
+      "enum": [
+        "PORT",
+        "MERGE",
+        "REPLACE_WITH_EXECUTOR",
+        "RETIRE",
+        "GLOBAL_CLEANUP"
+      ],
+      "type": "string"
+    },
+    "MigrationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "absence_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StableId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_authority": {
+          "$ref": "#/$defs/AuthorityState"
+        },
+        "disposition": {
+          "$ref": "#/$defs/MigrationDisposition"
+        },
+        "logical_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "migration_state": {
+          "$ref": "#/$defs/MigrationState"
+        },
+        "parity_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replacement_contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StableId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_kind": {
+          "$ref": "#/$defs/StableId"
+        },
+        "source_locator": {
+          "$ref": "#/$defs/RepositoryPath"
+        }
+      },
+      "required": [
+        "logical_id",
+        "source_kind",
+        "source_locator",
+        "current_authority",
+        "disposition",
+        "migration_state"
+      ],
+      "type": "object"
+    },
+    "MigrationState": {
+      "enum": [
+        "unported",
+        "planned",
+        "parity_proven",
+        "authority_transferred",
+        "retirement_complete"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:migration-ledger",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/MigrationRow"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "rows"
+  ],
+  "title": "MigrationLedger",
+  "type": "object"
+}

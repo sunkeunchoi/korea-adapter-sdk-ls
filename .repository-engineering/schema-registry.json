@@ -1,0 +1,131 @@
+{
+  "schema_version": "v0",
+  "entries": [
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:artifact-reference",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/artifact-reference.schema.json",
+        "sha256": "sha256:6475a88e803a41fc7649429c99ba5645d8df4dd8051eedcf320bfb000de04bdd",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:attempt-checkpoint",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/attempt-checkpoint.schema.json",
+        "sha256": "sha256:315b6e4dad217ae1ed4a3504b3605a6895ea3650264ca27d64c3fec64c3f455d",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:attempt-event",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/attempt-event.schema.json",
+        "sha256": "sha256:715f5405c1f1046734ef01f7840df97de55629ad512453f634a1accdb8ba6a42",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:attempt-record",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/attempt-record.schema.json",
+        "sha256": "sha256:ffb238ca19a504a3c29558bcb5c862d4e8f9e3dff12c079b0f70c9ae6bf1053e",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:capability-contract",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/capability-contract.schema.json",
+        "sha256": "sha256:ef6ee1932d340d816e3e207e0a2bcd2c6651784bb5a50a40cc0b5f18edda0614",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:discovery-policy",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/discovery-policy.schema.json",
+        "sha256": "sha256:efed8e6f7e7b688a102dc4d07d84b162d300f08d86c3e92509f8ca7f1280dc97",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:exact-lock",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/exact-lock.schema.json",
+        "sha256": "sha256:cd7428d5b18c915e44f5e22ab2ad17dfcdeac6f78e28daa15e7c74f90a4b53c3",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:migration-ledger",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/migration-ledger.schema.json",
+        "sha256": "sha256:5edfc0b88b89310564c2fe03344f5022eb02fe065b13b22438b02ef3b2ec0d08",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:package-manifest",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/package-manifest.schema.json",
+        "sha256": "sha256:c76b4f1d95359d1c28351ca4627f47872e7990ed5e95e63f83e562d4e8af0ea2",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:runtime-installation-state",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/runtime-installation-state.schema.json",
+        "sha256": "sha256:993043386a4d4ed7334db8a6d48a60c7ca1de695ccd883738c41605f01c5dee3",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:state-migration-handoff",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/state-migration-handoff.schema.json",
+        "sha256": "sha256:bc93d5d3bf39f43a7b16917b7eecded7fd777d70295db60c8da8b9f26e033277",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:version-set-fixture-input",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/version-set-fixture-input.schema.json",
+        "sha256": "sha256:09654cb72096be4e4d8ed82ebf01ac82b3f49dda7c9d0e060f7d7f3fe2305606",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:worker-result",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/worker-result.schema.json",
+        "sha256": "sha256:a483b253778f7d577e1d102bed621136fd296db58a6f5c36e534dffa3c6f7d35",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:worker-role-contract",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/worker-role-contract.schema.json",
+        "sha256": "sha256:52f55c66f5394bfb62aac975edf9efd967c3f63632b473ba55dc0bc76d3d1406",
+        "media_type": "application/schema+json"
+      }
+    }
+  ]
+}
