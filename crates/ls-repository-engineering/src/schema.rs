@@ -183,6 +183,13 @@ pub struct PackagePaths {
     pub schema_registry: RepositoryPath,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredContractRegistration {
+    pub id: StableId,
+    pub path: RepositoryPath,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OptionalComponentKind {
@@ -211,6 +218,10 @@ pub struct PackageManifest {
     pub compatibility: Compatibility,
     pub activation_eligibility: ActivationEligibility,
     pub paths: PackagePaths,
+    #[serde(default)]
+    pub declared_capability_contracts: Vec<DeclaredContractRegistration>,
+    #[serde(default)]
+    pub declared_worker_roles: Vec<DeclaredContractRegistration>,
     pub active_capability_contracts: Vec<StableId>,
     pub active_worker_roles: Vec<StableId>,
     pub optional_components: Vec<OptionalComponent>,
@@ -286,9 +297,13 @@ pub struct TypedField {
     pub name: StableId,
     pub field_type: FieldType,
     pub required: bool,
+    #[serde(default)]
+    pub allowed_values: Vec<StableId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeKind {
     Succeeded,
@@ -297,6 +312,200 @@ pub enum OutcomeKind {
     PolicyViolated,
     Failed,
     RecoveryRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchConcurrency {
+    Serial,
+    Parallel,
+    BoundedParallel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchCohort {
+    pub cohort_id: StableId,
+    pub candidate_classes: Vec<StableId>,
+    pub concurrency: DispatchConcurrency,
+    pub max_concurrency: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResumeSemantics {
+    pub completed_assignment_policy: StableId,
+    pub orphan_record_policy: StableId,
+    pub mismatch_outcome: OutcomeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalCondition {
+    pub outcome: OutcomeKind,
+    pub condition: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinationSemantics {
+    pub coverage: StableId,
+    pub assignment: StableId,
+    pub dispatch_cohorts: Vec<DispatchCohort>,
+    pub checkpoint_owner: StableId,
+    pub phases: Vec<StableId>,
+    pub resume: ResumeSemantics,
+    pub roll_up: StableId,
+    pub terminal_conditions: Vec<TerminalCondition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FutureExecutorBoundary {
+    pub attendance: StableId,
+    pub credential_scope: StableId,
+    pub environment: StableId,
+    pub review_requirements: Vec<StableId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialBoundary {
+    pub credential_free_scopes: Vec<StableId>,
+    pub future_executor: FutureExecutorBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceAvailability {
+    Absent,
+    AvailableValidated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ParityStatus {
+    Unproved,
+    Proved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactSetReference {
+    pub artifact_set_id: StableId,
+    pub members: Vec<RepositoryPath>,
+    pub aggregate_digest: Sha256Digest,
+    pub validation_basis: ArtifactReference,
+}
+
+impl ArtifactSetReference {
+    pub fn normalized_members(&self) -> Vec<RepositoryPath> {
+        let mut members = self.members.clone();
+        members.sort();
+        members
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceStatus {
+    pub legacy_status: EvidenceAvailability,
+    pub legacy_artifacts: Vec<ArtifactReference>,
+    pub legacy_artifact_sets: Vec<ArtifactSetReference>,
+    pub successor_implementation: EvidenceAvailability,
+    pub parity: ParityStatus,
+    pub certification: CertificationState,
+    pub legacy_evidence_satisfies_successor: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalSourceStatus {
+    UnavailableUnproved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalSourceRequirement {
+    pub requirement_id: StableId,
+    pub purpose: StableId,
+    pub required_phase: StableId,
+    pub status: ExternalSourceStatus,
+    pub locator: Option<RepositoryPath>,
+    pub digest: Option<Sha256Digest>,
+    pub unavailable_capability_outcome: OutcomeKind,
+    pub unavailable_worker_verdict: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct SemanticFieldPath(
+    #[schemars(regex(pattern = r"^[a-z][a-z0-9_.*\[\]]{0,255}$"))] pub String,
+);
+
+impl<'de> Deserialize<'de> for SemanticFieldPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        is_semantic_field_path(&value)
+            .then_some(Self(value))
+            .ok_or_else(|| de::Error::custom("invalid semantic field path"))
+    }
+}
+
+fn is_semantic_field_path(value: &str) -> bool {
+    (1..=256).contains(&value.len())
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'_' | b'.' | b'[' | b']' | b'*')
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticClaimStatus {
+    LegacyObserved,
+    SuccessorRequirement,
+    UnavailableUnproved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "source_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SemanticClaimSource {
+    KnowledgeReference {
+        path: RepositoryPath,
+    },
+    WorkerKnowledgeReference {
+        role_id: StableId,
+        path: RepositoryPath,
+    },
+    MigrationLedgerRows {
+        logical_ids: Vec<StableId>,
+    },
+    LegacyArtifactSet {
+        artifact_set_id: StableId,
+    },
+    SuccessorDecision {
+        decision_id: StableId,
+    },
+    ExternalSourceRequirement {
+        requirement_id: StableId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticClaim {
+    pub field_groups: Vec<SemanticFieldPath>,
+    pub status: SemanticClaimStatus,
+    pub sources: Vec<SemanticClaimSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -308,15 +517,24 @@ pub struct CapabilityContract {
     pub state: ContractState,
     pub autonomy: AutonomyClass,
     pub safety_overlays: Vec<SafetyOverlay>,
+    pub credential_boundary: Option<CredentialBoundary>,
     pub inputs: Vec<TypedField>,
     pub outcomes: Vec<OutcomeKind>,
+    pub coordination_semantics: Option<CoordinationSemantics>,
     pub touched_paths: Vec<RepositoryPath>,
     pub evidence_obligations: Vec<StableId>,
+    pub evidence_status: Option<EvidenceStatus>,
     pub human_gates: Vec<StableId>,
     pub executor: Option<ArtifactReference>,
     pub knowledge_references: Vec<ArtifactReference>,
+    #[serde(default)]
+    pub external_source_requirements: Vec<ExternalSourceRequirement>,
+    #[serde(default)]
+    pub legacy_authority_dependencies: Vec<StableId>,
     pub worker_roles: Vec<StableId>,
     pub scenario_references: Vec<ArtifactReference>,
+    #[serde(default)]
+    pub semantic_claims: Vec<SemanticClaim>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -324,6 +542,22 @@ pub struct CapabilityContract {
 pub enum ConcurrencyClass {
     Serial,
     BoundedParallel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationRule {
+    AllEqual,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalResultCorrelation {
+    pub assignment_field: StableId,
+    pub envelope_field: StableId,
+    pub success_payload_field: StableId,
+    pub required_variants: Vec<OutcomeKind>,
+    pub correlation: CorrelationRule,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -340,6 +574,11 @@ pub struct WorkerRoleContract {
     pub cancellation_supported: bool,
     pub idempotency_key_required: bool,
     pub result_validation_required: bool,
+    pub terminal_result_correlation: Option<TerminalResultCorrelation>,
+    #[serde(default)]
+    pub knowledge_references: Vec<ArtifactReference>,
+    #[serde(default)]
+    pub semantic_claims: Vec<SemanticClaim>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -347,26 +586,32 @@ pub struct WorkerRoleContract {
 pub enum WorkerResult {
     Succeeded {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         artifacts: Vec<ArtifactReference>,
     },
     Held {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         reason: StableId,
     },
     Cancelled {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         reason: StableId,
     },
     PolicyViolated {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         policy_id: StableId,
     },
     Failed {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         error_code: StableId,
     },
     RecoveryRequired {
         schema_version: SchemaVersion,
+        assignment_id: StableId,
         checkpoint: ArtifactReference,
     },
 }

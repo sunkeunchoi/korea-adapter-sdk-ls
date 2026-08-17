@@ -1,0 +1,186 @@
+{
+  "schema_version": "v0",
+  "capability_id": "audit-carried-rows",
+  "public_description": "Audits every carried or discard row and produces credential-free per-row records plus a roll-up gate.",
+  "state": {
+    "declaration": "declared",
+    "implementation": "unported",
+    "certification": "uncertified",
+    "authority": "legacy",
+    "retirement": "not_started"
+  },
+  "autonomy": "A3",
+  "safety_overlays": ["no_external_mutation", "human_gate", "path_confined", "redacted_diagnostics"],
+  "credential_boundary": {
+    "credential_free_scopes": ["package-authored-state", "checkpoints", "committed-records", "diagnostics"],
+    "future_executor": {
+      "attendance": "required",
+      "credential_scope": "minimum",
+      "environment": "paper-readonly",
+      "review_requirements": ["credential-sourcing", "process-environment-isolation", "redaction", "trading-environment-selection"]
+    }
+  },
+  "inputs": [],
+  "outcomes": ["succeeded", "held", "cancelled", "policy_violated", "failed", "recovery_required"],
+  "coordination_semantics": {
+    "coverage": "complete-manifest-reconciliation",
+    "assignment": "fresh-worker-per-row",
+    "dispatch_cohorts": [
+      {
+        "cohort_id": "knowledge-discard",
+        "candidate_classes": ["knowledge", "discard"],
+        "concurrency": "parallel",
+        "max_concurrency": null
+      },
+      {
+        "cohort_id": "behavioral",
+        "candidate_classes": ["behavioral"],
+        "concurrency": "bounded_parallel",
+        "max_concurrency": 2
+      }
+    ],
+    "checkpoint_owner": "orchestrator-only",
+    "phases": ["discovering", "dispatching", "rolling-up", "gate-computed", "complete"],
+    "resume": {
+      "completed_assignment_policy": "skip-after-record-revalidation",
+      "orphan_record_policy": "reconcile-as-objective-fact",
+      "mismatch_outcome": "held"
+    },
+    "roll_up": "serial-after-all-rows-terminal",
+    "terminal_conditions": [
+      { "outcome": "succeeded", "condition": "complete-coverage-and-committed-validator-pass" },
+      { "outcome": "held", "condition": "unresolved-rows" },
+      { "outcome": "recovery_required", "condition": "inconsistent-persisted-state" }
+    ]
+  },
+  "touched_paths": [
+    ".compound-engineering/runs/audit-carried-rows",
+    "docs/migration-source/audit/records",
+    "docs/migration-source/audit/decommission-audit-report.md",
+    "docs/migration-source-extraction-ledger.md"
+  ],
+  "evidence_obligations": ["per-row-credential-free-records", "roll-up-gate-report", "decommission-audit-validator-pass", "source-coverage-reconciliation"],
+  "evidence_status": {
+    "legacy_status": "available_validated",
+    "legacy_artifacts": [
+      {
+        "schema_version": "v0",
+        "path": "docs/migration-source/audit/decommission-audit-report.md",
+        "sha256": "sha256:cd343c90f192b3a4ba781a3d1e0800969e11f70843905d41239ef45f09837149",
+        "media_type": "text/markdown"
+      }
+    ],
+    "legacy_artifact_sets": [
+      {
+        "artifact_set_id": "decommission-audit-record-corpus",
+        "members": [
+          "docs/migration-source/audit/records/L1.yaml",
+          "docs/migration-source/audit/records/L2.yaml",
+          "docs/migration-source/audit/records/L3.yaml",
+          "docs/migration-source/audit/records/L4.yaml",
+          "docs/migration-source/audit/records/L5.yaml",
+          "docs/migration-source/audit/records/L6.yaml",
+          "docs/migration-source/audit/records/L7.yaml",
+          "docs/migration-source/audit/records/L8.yaml",
+          "docs/migration-source/audit/records/L9.yaml",
+          "docs/migration-source/audit/records/L10.yaml",
+          "docs/migration-source/audit/records/L11.yaml",
+          "docs/migration-source/audit/records/L12.yaml",
+          "docs/migration-source/audit/records/L13.yaml",
+          "docs/migration-source/audit/records/L14.yaml",
+          "docs/migration-source/audit/records/L15.yaml",
+          "docs/migration-source/audit/records/L16.yaml",
+          "docs/migration-source/audit/records/L17.yaml",
+          "docs/migration-source/audit/records/L18.yaml",
+          "docs/migration-source/audit/records/L19.yaml",
+          "docs/migration-source/audit/records/L20.yaml",
+          "docs/migration-source/audit/records/L21.yaml",
+          "docs/migration-source/audit/records/L22.yaml",
+          "docs/migration-source/audit/records/L23.yaml",
+          "docs/migration-source/audit/records/L24.yaml",
+          "docs/migration-source/audit/records/L25.yaml",
+          "docs/migration-source/audit/records/L26.yaml"
+        ],
+        "aggregate_digest": "sha256:2a9457fd57e90f9a2d554a45e25d4545c500c72acc411b7a1ce6bbc1fe283d97",
+        "validation_basis": {
+          "schema_version": "v0",
+          "path": "crates/ls-trackers/tests/decommission_audit.rs",
+          "sha256": "sha256:7c943993cd0c5bf197baf7a3c9e78ceb6e5306b60a22379910f503c6f82c7ffe",
+          "media_type": "text/x-rust"
+        }
+      }
+    ],
+    "successor_implementation": "absent",
+    "parity": "unproved",
+    "certification": "uncertified",
+    "legacy_evidence_satisfies_successor": false
+  },
+  "human_gates": ["attended-paper-readonly-session", "unverifiable-maintainer-acceptance"],
+  "executor": null,
+  "knowledge_references": [
+    { "schema_version": "v0", "path": ".agents/skills/audit-carried-rows/SKILL.md", "sha256": "sha256:af73dd9d0ed8eaed9d6de01722a8106c4ac5f69f5de5a1a2b6aacb90317c7572", "media_type": "text/markdown" },
+    { "schema_version": "v0", "path": ".agents/skills/audit-row/SKILL.md", "sha256": "sha256:f74a93661cd3956c879834ee18114f955addf2daab04ec16dca0e4500084a10a", "media_type": "text/markdown" },
+    { "schema_version": "v0", "path": ".agents/skills/audit-carried-rows/references/record-format.md", "sha256": "sha256:00139d0dc6eb954777998162ef824f401f486cadf8603ef620349efbcb0f7a1b", "media_type": "text/markdown" },
+    { "schema_version": "v0", "path": "docs/migration-source/audit/manifest.yaml", "sha256": "sha256:2c72d2cdd3e86c72b153732f516c866542328b4d72e8ed70e51b2a64cfbe32bf", "media_type": "application/yaml" },
+    { "schema_version": "v0", "path": "crates/ls-trackers/tests/decommission_audit.rs", "sha256": "sha256:7c943993cd0c5bf197baf7a3c9e78ceb6e5306b60a22379910f503c6f82c7ffe", "media_type": "text/x-rust" }
+  ],
+  "external_source_requirements": [
+    {
+      "requirement_id": "korea-broker-sdk-ls",
+      "purpose": "per-row-old-source-audit",
+      "required_phase": "dispatching",
+      "status": "unavailable_unproved",
+      "locator": null,
+      "digest": null,
+      "unavailable_capability_outcome": "held",
+      "unavailable_worker_verdict": "unverifiable"
+    }
+  ],
+  "legacy_authority_dependencies": ["capability--audit-row", "run-state-consumer--audit-carried-rows"],
+  "worker_roles": ["decommission-row-auditor"],
+  "scenario_references": [],
+  "semantic_claims": [
+    {
+      "field_groups": ["coordination_semantics", "inputs", "outcomes", "worker_roles"],
+      "status": "legacy_observed",
+      "sources": [
+        { "source_kind": "knowledge_reference", "path": ".agents/skills/audit-carried-rows/SKILL.md" },
+        { "source_kind": "knowledge_reference", "path": ".agents/skills/audit-row/SKILL.md" }
+      ]
+    },
+    {
+      "field_groups": ["autonomy", "human_gates", "safety_overlays", "touched_paths", "legacy_authority_dependencies"],
+      "status": "legacy_observed",
+      "sources": [
+        { "source_kind": "knowledge_reference", "path": ".agents/skills/audit-carried-rows/SKILL.md" },
+        { "source_kind": "knowledge_reference", "path": ".agents/skills/audit-carried-rows/references/record-format.md" },
+        { "source_kind": "migration_ledger_rows", "logical_ids": ["capability--audit-row", "run-state-consumer--audit-carried-rows"] }
+      ]
+    },
+    {
+      "field_groups": ["credential_boundary"],
+      "status": "successor_requirement",
+      "sources": [{ "source_kind": "successor_decision", "decision_id": "credential-boundary-v0" }]
+    },
+    {
+      "field_groups": ["external_source_requirements[*].purpose"],
+      "status": "legacy_observed",
+      "sources": [{ "source_kind": "worker_knowledge_reference", "role_id": "decommission-row-auditor", "path": ".claude/agents/decommission-row-auditor.md" }]
+    },
+    {
+      "field_groups": ["external_source_requirements[*].status", "external_source_requirements[*].locator", "external_source_requirements[*].digest"],
+      "status": "unavailable_unproved",
+      "sources": [{ "source_kind": "external_source_requirement", "requirement_id": "korea-broker-sdk-ls" }]
+    },
+    {
+      "field_groups": ["evidence_status.legacy"],
+      "status": "legacy_observed",
+      "sources": [{ "source_kind": "legacy_artifact_set", "artifact_set_id": "decommission-audit-record-corpus" }]
+    },
+    {
+      "field_groups": ["evidence_status.successor", "state", "executor", "scenario_references"],
+      "status": "successor_requirement",
+      "sources": [{ "source_kind": "successor_decision", "decision_id": "inert-migration-boundary-v0" }]
+    }
+  ]
+}

@@ -3,8 +3,10 @@
 use std::collections::BTreeSet;
 
 use crate::schema::{
-    ActivationEligibility, AttemptRecord, AttemptState, AuthorityState, CertificationState,
-    ImplementationState, PackageManifest, RetirementState,
+    ActivationEligibility, AttemptRecord, AttemptState, AuthorityState, CapabilityContract,
+    CertificationState, DeclaredContractRegistration, DispatchConcurrency, FieldType,
+    ImplementationState, OutcomeKind, PackageManifest, RetirementState, TypedField,
+    WorkerRoleContract,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +89,35 @@ pub fn validate_first_slice_package(package: &PackageManifest) -> Vec<Finding> {
             "remove_active_workers",
         ));
     }
+    validate_declared_registrations(
+        &package.declared_capability_contracts,
+        "declared_capability_contracts",
+        &mut findings,
+    );
+    validate_declared_registrations(
+        &package.declared_worker_roles,
+        "declared_worker_roles",
+        &mut findings,
+    );
+    let mut declared_paths = BTreeSet::new();
+    let mut declared_paths_folded = BTreeSet::new();
+    for registration in package
+        .declared_capability_contracts
+        .iter()
+        .chain(&package.declared_worker_roles)
+    {
+        if !declared_paths.insert(registration.path.0.as_str())
+            || !declared_paths_folded.insert(registration.path.0.to_ascii_lowercase())
+        {
+            findings.push(finding(
+                "package.toml",
+                Some(registration.id.0.clone()),
+                "declared_contracts.path",
+                "package.declared_registry.path_collision",
+                "use_unique_declared_contract_path",
+            ));
+        }
+    }
     for component in &package.optional_components {
         if matches!(component, crate::schema::OptionalComponent::Selected { .. }) {
             findings.push(finding(
@@ -125,6 +156,220 @@ pub fn validate_first_slice_package(package: &PackageManifest) -> Vec<Finding> {
     }
     findings.sort();
     findings
+}
+
+pub fn validate_capability_contract_vocabulary(contract: &CapabilityContract) -> Vec<Finding> {
+    let mut findings =
+        validate_first_slice_contract_state(&contract.state, &contract.capability_id.0);
+    validate_typed_fields(
+        &contract.inputs,
+        &contract.capability_id.0,
+        "inputs",
+        &mut findings,
+    );
+    if contract.credential_boundary.is_none() {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "credential_boundary",
+            "capability.credential_boundary.missing",
+        ));
+    }
+    if let Some(coordination) = &contract.coordination_semantics {
+        for cohort in &coordination.dispatch_cohorts {
+            let valid_bound = match cohort.concurrency {
+                DispatchConcurrency::BoundedParallel => {
+                    cohort.max_concurrency.is_some_and(|value| value > 0)
+                }
+                DispatchConcurrency::Serial | DispatchConcurrency::Parallel => {
+                    cohort.max_concurrency.is_none()
+                }
+            };
+            if !valid_bound {
+                findings.push(contract_finding(
+                    &contract.capability_id.0,
+                    "coordination_semantics.dispatch_cohorts.max_concurrency",
+                    "coordination.concurrency.bound_invalid",
+                ));
+            }
+        }
+    } else {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "coordination_semantics",
+            "capability.coordination_semantics.missing",
+        ));
+    }
+    if let Some(evidence) = &contract.evidence_status {
+        for artifact_set in &evidence.legacy_artifact_sets {
+            if has_exact_or_case_folded_duplicate(
+                artifact_set.members.iter().map(|member| member.0.as_str()),
+            ) {
+                findings.push(contract_finding(
+                    &contract.capability_id.0,
+                    "evidence_status.legacy_artifact_sets.members",
+                    "artifact_set.members.duplicate",
+                ));
+            }
+        }
+    } else {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "evidence_status",
+            "capability.evidence_status.missing",
+        ));
+    }
+    for requirement in &contract.external_source_requirements {
+        if requirement.locator.is_some() || requirement.digest.is_some() {
+            findings.push(contract_finding(
+                &contract.capability_id.0,
+                "external_source_requirements",
+                "external_source.unavailable_has_location",
+            ));
+        }
+    }
+    for claim in &contract.semantic_claims {
+        if claim.field_groups.is_empty() || claim.sources.is_empty() {
+            findings.push(contract_finding(
+                &contract.capability_id.0,
+                "semantic_claims",
+                "semantic_claim.incomplete",
+            ));
+        }
+    }
+    findings.sort();
+    findings.dedup();
+    findings
+}
+
+pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -> Vec<Finding> {
+    let mut findings = validate_first_slice_contract_state(&contract.state, &contract.role_id.0);
+    validate_typed_fields(
+        &contract.assignment_fields,
+        &contract.role_id.0,
+        "assignment_fields",
+        &mut findings,
+    );
+    validate_typed_fields(
+        &contract.result_fields,
+        &contract.role_id.0,
+        "result_fields",
+        &mut findings,
+    );
+    if let Some(correlation) = &contract.terminal_result_correlation {
+        let expected = [
+            OutcomeKind::Succeeded,
+            OutcomeKind::Held,
+            OutcomeKind::Cancelled,
+            OutcomeKind::PolicyViolated,
+            OutcomeKind::Failed,
+            OutcomeKind::RecoveryRequired,
+        ];
+        let actual: BTreeSet<_> = correlation.required_variants.iter().copied().collect();
+        if actual.len() != correlation.required_variants.len()
+            || actual != expected.into_iter().collect()
+        {
+            findings.push(contract_finding(
+                &contract.role_id.0,
+                "terminal_result_correlation.required_variants",
+                "worker.terminal_correlation.incomplete",
+            ));
+        }
+    } else {
+        findings.push(contract_finding(
+            &contract.role_id.0,
+            "terminal_result_correlation",
+            "worker.terminal_correlation.missing",
+        ));
+    }
+    for claim in &contract.semantic_claims {
+        if claim.field_groups.is_empty() || claim.sources.is_empty() {
+            findings.push(contract_finding(
+                &contract.role_id.0,
+                "semantic_claims",
+                "semantic_claim.incomplete",
+            ));
+        }
+    }
+    findings.sort();
+    findings.dedup();
+    findings
+}
+
+fn validate_declared_registrations(
+    registrations: &[DeclaredContractRegistration],
+    field: &'static str,
+    findings: &mut Vec<Finding>,
+) {
+    let mut ids = BTreeSet::new();
+    let mut ids_folded = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let mut paths_folded = BTreeSet::new();
+    for registration in registrations {
+        if !ids.insert(registration.id.0.as_str())
+            || !ids_folded.insert(registration.id.0.to_ascii_lowercase())
+            || !paths.insert(registration.path.0.as_str())
+            || !paths_folded.insert(registration.path.0.to_ascii_lowercase())
+        {
+            findings.push(finding(
+                "package.toml",
+                Some(registration.id.0.clone()),
+                field,
+                "package.declared_registry.duplicate",
+                "remove_duplicate_declared_registration",
+            ));
+        }
+    }
+}
+
+fn validate_typed_fields(
+    fields: &[TypedField],
+    logical_id: &str,
+    field_name: &'static str,
+    findings: &mut Vec<Finding>,
+) {
+    let mut names = BTreeSet::new();
+    let mut names_folded = BTreeSet::new();
+    for field in fields {
+        if !names.insert(field.name.0.as_str())
+            || !names_folded.insert(field.name.0.to_ascii_lowercase())
+        {
+            findings.push(finding(
+                "contract",
+                Some(logical_id.to_owned()),
+                field_name,
+                "typed_field.name.duplicate",
+                "remove_duplicate_typed_field",
+            ));
+        }
+        if field.field_type != FieldType::StableId && !field.allowed_values.is_empty() {
+            findings.push(finding(
+                "contract",
+                Some(logical_id.to_owned()),
+                field_name,
+                "typed_field.allowed_values.type_invalid",
+                "use_allowed_values_only_for_stable_id",
+            ));
+        }
+        if has_exact_or_case_folded_duplicate(
+            field.allowed_values.iter().map(|value| value.0.as_str()),
+        ) {
+            findings.push(finding(
+                "contract",
+                Some(logical_id.to_owned()),
+                field_name,
+                "typed_field.allowed_values.duplicate",
+                "remove_duplicate_allowed_value",
+            ));
+        }
+    }
+}
+
+fn has_exact_or_case_folded_duplicate<'a>(values: impl Iterator<Item = &'a str>) -> bool {
+    let mut exact = BTreeSet::new();
+    let mut folded = BTreeSet::new();
+    values.fold(false, |duplicate, value| {
+        duplicate || !exact.insert(value) || !folded.insert(value.to_ascii_lowercase())
+    })
 }
 
 pub fn validate_first_slice_contract_state(
