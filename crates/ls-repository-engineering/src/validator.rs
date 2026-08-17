@@ -227,15 +227,11 @@ pub fn validate_capability_contract_vocabulary(contract: &CapabilityContract) ->
             ));
         }
     }
-    for claim in &contract.semantic_claims {
-        if claim.field_groups.is_empty() || claim.sources.is_empty() {
-            findings.push(contract_finding(
-                &contract.capability_id.0,
-                "semantic_claims",
-                "semantic_claim.incomplete",
-            ));
-        }
-    }
+    validate_semantic_claims(
+        &contract.semantic_claims,
+        &contract.capability_id.0,
+        &mut findings,
+    );
     findings.sort();
     findings.dedup();
     findings
@@ -281,15 +277,11 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
             "worker.terminal_correlation.missing",
         ));
     }
-    for claim in &contract.semantic_claims {
-        if claim.field_groups.is_empty() || claim.sources.is_empty() {
-            findings.push(contract_finding(
-                &contract.role_id.0,
-                "semantic_claims",
-                "semantic_claim.incomplete",
-            ));
-        }
-    }
+    validate_semantic_claims(
+        &contract.semantic_claims,
+        &contract.role_id.0,
+        &mut findings,
+    );
     findings.sort();
     findings.dedup();
     findings
@@ -364,12 +356,31 @@ fn validate_typed_fields(
     }
 }
 
+fn validate_semantic_claims(
+    claims: &[crate::schema::SemanticClaim],
+    logical_id: &str,
+    findings: &mut Vec<Finding>,
+) {
+    for claim in claims {
+        if claim.field_groups.is_empty() || claim.sources.is_empty() {
+            findings.push(contract_finding(
+                logical_id,
+                "semantic_claims",
+                "semantic_claim.incomplete",
+            ));
+        }
+    }
+}
+
 fn has_exact_or_case_folded_duplicate<'a>(values: impl Iterator<Item = &'a str>) -> bool {
     let mut exact = BTreeSet::new();
     let mut folded = BTreeSet::new();
-    values.fold(false, |duplicate, value| {
-        duplicate || !exact.insert(value) || !folded.insert(value.to_ascii_lowercase())
-    })
+    for value in values {
+        if !exact.insert(value) || !folded.insert(value.to_ascii_lowercase()) {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn validate_first_slice_contract_state(

@@ -1,7 +1,7 @@
 {
   "schema_version": "v0",
   "role_id": "decommission-row-auditor",
-  "public_description": "Non-authoritative fidelity fixture derived from the current row-auditor worker role.",
+  "public_description": "A fresh worker audits exactly one manifest row and returns a validated credential-free result.",
   "state": {
     "declaration": "declared",
     "implementation": "unported",

@@ -23,8 +23,8 @@
   "inputs": [],
   "outcomes": ["succeeded", "held", "cancelled", "policy_violated", "failed", "recovery_required"],
   "coordination_semantics": {
-    "coverage": "complete-manifest-reconciliation",
-    "assignment": "fresh-worker-per-row",
+    "coverage": "complete_manifest_reconciliation",
+    "assignment": "fresh_worker_per_row",
     "dispatch_cohorts": [
       {
         "cohort_id": "knowledge-discard",
@@ -39,18 +39,18 @@
         "max_concurrency": 2
       }
     ],
-    "checkpoint_owner": "orchestrator-only",
-    "phases": ["discovering", "dispatching", "rolling-up", "gate-computed", "complete"],
+    "checkpoint_owner": "orchestrator_only",
+    "phases": ["discovering", "dispatching", "rolling_up", "gate_computed", "complete"],
     "resume": {
-      "completed_assignment_policy": "skip-after-record-revalidation",
-      "orphan_record_policy": "reconcile-as-objective-fact",
+      "completed_assignment_policy": "skip_after_record_revalidation",
+      "orphan_record_policy": "reconcile_as_objective_fact",
       "mismatch_outcome": "held"
     },
-    "roll_up": "serial-after-all-rows-terminal",
+    "roll_up": "serial_after_all_rows_terminal",
     "terminal_conditions": [
-      { "outcome": "succeeded", "condition": "complete-coverage-and-committed-validator-pass" },
-      { "outcome": "held", "condition": "unresolved-rows" },
-      { "outcome": "recovery_required", "condition": "inconsistent-persisted-state" }
+      { "outcome": "succeeded", "condition": "complete_coverage_and_committed_validator_pass" },
+      { "outcome": "held", "condition": "unresolved_rows" },
+      { "outcome": "recovery_required", "condition": "inconsistent_persisted_state" }
     ]
   },
   "touched_paths": [

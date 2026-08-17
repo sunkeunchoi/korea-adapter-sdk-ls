@@ -17,8 +17,9 @@ source_locator = ".agents/skills/audit-carried-rows"
 source_digest = "sha256:1dd707f6481a2cb4e71c95f12041d8b1c2c6aee38f45554ff3e5ff8a05a19949"
 current_authority = "legacy"
 disposition = "PORT"
-migration_state = "unported"
-absence_reason = "successor_not_implemented"
+migration_state = "planned"
+replacement_contract = "audit-carried-rows"
+absence_reason = "parity_not_proven"
 
 [[rows]]
 logical_id = "capability--audit-row"
@@ -763,8 +764,9 @@ source_locator = ".claude/agents/decommission-row-auditor.md"
 source_digest = "sha256:67e28c21b90e82703efbd129dda3fe10d5ecaf8ee198f2a3dcb754f518fd9f72"
 current_authority = "legacy"
 disposition = "PORT"
-migration_state = "unported"
-absence_reason = "successor_not_implemented"
+migration_state = "planned"
+replacement_contract = "decommission-row-auditor"
+absence_reason = "parity_not_proven"
 
 [[rows]]
 logical_id = "worker-role--tr-promoter"
