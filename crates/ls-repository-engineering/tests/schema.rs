@@ -19,15 +19,22 @@ fn structural_catalog_is_closed_and_draft_2020_12() {
         "attempt-checkpoint",
         "attempt-event",
         "attempt-record",
+        "audit-assignment",
+        "audit-success-payload",
         "capability-contract",
         "discovery-policy",
         "exact-lock",
+        "executor-descriptor",
+        "implementation-subject-manifest",
         "migration-ledger",
         "package-manifest",
+        "runtime-bundle-manifest",
         "runtime-installation-state",
+        "scenario-catalog",
         "state-migration-handoff",
         "version-set-fixture-input",
         "worker-result",
+        "worker-role-bundle",
         "worker-role-contract",
     ];
 
@@ -233,7 +240,7 @@ fn every_worker_result_variant_requires_assignment_correlation() {
         ),
     ];
     for variant in &variants {
-        assert!(serde_json::from_str::<WorkerResult>(&variant).is_err());
+        assert!(serde_json::from_str::<WorkerResult>(variant).is_err());
         let correlated = variant.replacen('{', &format!(r#"{{{common},"#), 1);
         assert!(serde_json::from_str::<WorkerResult>(&correlated).is_ok());
     }

@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:executor-descriptor",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capability_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "effective_concurrency_cap": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "executor_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "phases": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "state_owner": {
+      "$ref": "#/$defs/StableId"
+    },
+    "worker_role_id": {
+      "$ref": "#/$defs/StableId"
+    }
+  },
+  "required": [
+    "schema_version",
+    "executor_id",
+    "capability_id",
+    "worker_role_id",
+    "phases",
+    "effective_concurrency_cap",
+    "state_owner"
+  ],
+  "title": "ExecutorDescriptor",
+  "type": "object"
+}

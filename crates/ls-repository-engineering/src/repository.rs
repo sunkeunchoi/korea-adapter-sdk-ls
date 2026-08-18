@@ -1,9 +1,11 @@
 //! Composition of the authored package into its complete generated projection set.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -18,8 +20,9 @@ use crate::inventory::{
 };
 use crate::lock::{build_lock, lock_bytes};
 use crate::schema::{
-    schema_catalog, ArtifactReference, BuildProvenance, ContractState, NormativeLockClosure,
-    RepositoryPath, SchemaVersion, Sha256Digest,
+    schema_catalog, ArtifactReference, BuildProvenance, ContractState, ExecutorDescriptor,
+    ImplementationSubjectManifest, NormativeLockClosure, RepositoryPath, RuntimeBundleManifest,
+    ScenarioCatalog, SchemaVersion, Sha256Digest, WorkerRoleBundle,
 };
 use crate::validator::{validate_semantic_package, Finding};
 
@@ -28,6 +31,13 @@ const DISCOVERY_PATH: &str = ".repository-engineering/discovery-policy.toml";
 const LEDGER_PATH: &str = ".repository-engineering/migration-ledger.toml";
 const REGISTRY_PATH: &str = ".repository-engineering/schema-registry.json";
 const CONFORMANCE_MANIFEST_PATH: &str = ".repository-engineering/conformance/v0/manifest.json";
+const EXECUTOR_PATH: &str = ".repository-engineering/executors/audit-carried-rows.toml";
+const ROLE_BUNDLE_PATH: &str = ".repository-engineering/roles/decommission-row-auditor.toml";
+const SCENARIO_PATH: &str =
+    ".repository-engineering/scenarios/audit-carried-rows/implementation.toml";
+const RUNTIME_BUNDLE_PATH: &str = ".repository-engineering/runtime-bundle.json";
+const IMPLEMENTATION_SUBJECT_PATH: &str =
+    ".repository-engineering/implementation-subjects/audit-carried-rows.json";
 const LOCK_PATH: &str = ".repository-engineering/package.lock.json";
 const REFERENCE_PATH: &str = "docs/reference/repository-engineering-package.md";
 
@@ -93,6 +103,10 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
             findings,
         ));
     }
+    let executor: ExecutorDescriptor = read_closed_toml(root, EXECUTOR_PATH)?;
+    let role_bundle: WorkerRoleBundle = read_closed_toml(root, ROLE_BUNDLE_PATH)?;
+    let scenario: ScenarioCatalog = read_closed_toml(root, SCENARIO_PATH)?;
+    validate_portable_descriptors(&authored, &executor, &role_bundle, &scenario)?;
 
     let mut projections = Vec::new();
     let mut registry_entries = Vec::new();
@@ -110,10 +124,15 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         });
         projections.push(Projection::new(path, bytes));
     }
+    let schema_artifacts: Vec<_> = registry_entries
+        .iter()
+        .map(|entry| entry.artifact.clone())
+        .collect();
     let registry_bytes = pretty_json(&SchemaRegistry {
         schema_version: SchemaVersion::V0,
         entries: registry_entries,
     })?;
+    let registry_reference = bytes_reference(REGISTRY_PATH, &registry_bytes, "application/json");
     projections.push(Projection::new(REGISTRY_PATH, registry_bytes.clone()));
 
     let structural_path = ".repository-engineering/conformance/v0/structural.json";
@@ -164,24 +183,153 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         "input": vector_input,
         "expected_version_set_id": expected_version_set_id
     }))?;
+    let runtime_vector_path = ".repository-engineering/conformance/v0/runtime-semantics.json";
+    let runtime_vector_bytes = pretty_json(&json!({
+        "schema_version": "v0",
+        "cases": [
+            {
+                "case_id": "valid-audit-assignment",
+                "kind": "audit_assignment",
+                "expected": "accept",
+                "input": {
+                    "schema_version": "v0",
+                    "attempt_id": "attempt-1",
+                    "invocation_id": "invocation-1",
+                    "assignment_id": "L1",
+                    "row_id": "L1",
+                    "idempotency_key": "attempt-1-L1",
+                    "worker_instance_id": "worker-1"
+                }
+            },
+            {
+                "case_id": "valid-audit-success",
+                "kind": "worker_result",
+                "expected": "accept",
+                "input": runtime_success_vector("L1")
+            },
+            {
+                "case_id": "missing-attempt-id",
+                "kind": "worker_result",
+                "expected": "reject",
+                "input": {
+                    "schema_version": "v0",
+                    "result": "held",
+                    "invocation_id": "invocation-1",
+                    "assignment_id": "L1",
+                    "worker_instance_id": "worker-1",
+                    "worker_instance_receipt": fixture_reference("receipts/worker-1.json", '1'),
+                    "reason": "source-unavailable"
+                }
+            },
+            {
+                "case_id": "mismatched-success-row",
+                "kind": "worker_result",
+                "expected": "reject",
+                "input": runtime_success_vector("L2")
+            }
+        ]
+    }))?;
     let conformance_artifacts = vec![
         bytes_reference(structural_path, &structural_bytes, "application/json"),
         bytes_reference(cross_record_path, &cross_record_bytes, "application/json"),
         bytes_reference(vector_path, &vector_bytes, "application/json"),
+        bytes_reference(
+            runtime_vector_path,
+            &runtime_vector_bytes,
+            "application/json",
+        ),
     ];
     let conformance_manifest_bytes = pretty_json(&ConformanceManifest {
         schema_version: SchemaVersion::V0,
-        artifacts: conformance_artifacts,
+        artifacts: conformance_artifacts.clone(),
     })?;
+    let conformance_reference = bytes_reference(
+        CONFORMANCE_MANIFEST_PATH,
+        &conformance_manifest_bytes,
+        "application/json",
+    );
     projections.extend([
         Projection::new(structural_path, structural_bytes),
         Projection::new(cross_record_path, cross_record_bytes),
         Projection::new(vector_path, vector_bytes),
+        Projection::new(runtime_vector_path, runtime_vector_bytes),
         Projection::new(
             CONFORMANCE_MANIFEST_PATH,
             conformance_manifest_bytes.clone(),
         ),
     ]);
+
+    let executor_reference = file_reference(root, EXECUTOR_PATH, "application/toml")?;
+    let role_bundle_reference = file_reference(root, ROLE_BUNDLE_PATH, "application/toml")?;
+    let scenario_reference = file_reference(root, SCENARIO_PATH, "application/toml")?;
+    let mut source_artifacts: Vec<_> = authored
+        .capability_contracts
+        .iter()
+        .flat_map(|contract| contract.knowledge_references.iter().cloned())
+        .chain(
+            authored
+                .worker_role_contracts
+                .iter()
+                .flat_map(|contract| contract.knowledge_references.iter().cloned()),
+        )
+        .collect();
+    sort_and_dedup_references(&mut source_artifacts)?;
+
+    let mut bundle_members = vec![
+        executor_reference.clone(),
+        role_bundle_reference.clone(),
+        scenario_reference.clone(),
+        registry_reference.clone(),
+        conformance_reference.clone(),
+    ];
+    for registration in authored
+        .package
+        .declared_capability_contracts
+        .iter()
+        .chain(authored.package.declared_worker_roles.iter())
+    {
+        bundle_members.push(file_reference(
+            root,
+            &registration.path.0,
+            "application/toml",
+        )?);
+    }
+    bundle_members.extend(schema_artifacts);
+    bundle_members.extend(conformance_artifacts);
+    bundle_members.extend(source_artifacts.iter().cloned());
+    sort_and_dedup_references(&mut bundle_members)?;
+    let runtime_bundle_bytes = pretty_json(&RuntimeBundleManifest {
+        schema_version: SchemaVersion::V0,
+        bundle_id: crate::schema::StableId("audit-carried-rows-runtime-v0".to_owned()),
+        members: bundle_members,
+    })?;
+    let runtime_bundle_reference = bytes_reference(
+        RUNTIME_BUNDLE_PATH,
+        &runtime_bundle_bytes,
+        "application/json",
+    );
+    projections.push(Projection::new(RUNTIME_BUNDLE_PATH, runtime_bundle_bytes));
+
+    let implementation_subject_bytes = pretty_json(&ImplementationSubjectManifest {
+        schema_version: SchemaVersion::V0,
+        subject_id: crate::schema::StableId("audit-carried-rows".to_owned()),
+        executor: executor_reference,
+        role_bundle: role_bundle_reference,
+        runtime_bundle: runtime_bundle_reference.clone(),
+        scenario_catalog: scenario_reference,
+        source_artifacts,
+        schema_registry: registry_reference.clone(),
+        conformance_corpus: conformance_reference.clone(),
+    })?;
+    let implementation_subject_reference = bytes_reference(
+        IMPLEMENTATION_SUBJECT_PATH,
+        &implementation_subject_bytes,
+        "application/json",
+    );
+    projections.push(Projection::new(
+        IMPLEMENTATION_SUBJECT_PATH,
+        implementation_subject_bytes,
+    ));
 
     let capability_contracts = authored
         .package
@@ -227,12 +375,10 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
             "application/toml",
         )?,
         migration_ledger: semantic_reference(LEDGER_PATH, &authored.ledger, "application/toml")?,
-        schema_registry: bytes_reference(REGISTRY_PATH, &registry_bytes, "application/json"),
-        conformance_corpus: bytes_reference(
-            CONFORMANCE_MANIFEST_PATH,
-            &conformance_manifest_bytes,
-            "application/json",
-        ),
+        schema_registry: registry_reference,
+        conformance_corpus: conformance_reference,
+        runtime_bundle: runtime_bundle_reference,
+        implementation_subjects: vec![implementation_subject_reference],
         capability_contracts,
         worker_role_contracts,
         optional_components: authored.package.optional_components.clone(),
@@ -261,6 +407,92 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     ProjectionSet::new(projections).map_err(|error| RepositoryError::new(error.code))
 }
 
+fn read_closed_toml<T: DeserializeOwned>(
+    root: &Path,
+    relative: &str,
+) -> Result<T, RepositoryError> {
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|_| RepositoryError::new("repository.portable_artifact.read_failed"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(RepositoryError::new("repository.portable_artifact.unsafe"));
+    }
+    let bytes = fs::read(path)
+        .map_err(|_| RepositoryError::new("repository.portable_artifact.read_failed"))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| RepositoryError::new("repository.portable_artifact.invalid_utf8"))?;
+    toml::from_str(text).map_err(|_| RepositoryError::new("repository.portable_artifact.invalid"))
+}
+
+fn validate_portable_descriptors(
+    authored: &AuthoredPackage,
+    executor: &ExecutorDescriptor,
+    role_bundle: &WorkerRoleBundle,
+    scenario: &ScenarioCatalog,
+) -> Result<(), RepositoryError> {
+    let capability = authored
+        .capability_contracts
+        .first()
+        .ok_or_else(|| RepositoryError::new("repository.portable_artifact.contract_missing"))?;
+    let worker = authored
+        .worker_role_contracts
+        .first()
+        .ok_or_else(|| RepositoryError::new("repository.portable_artifact.contract_missing"))?;
+    let expected_knowledge: BTreeSet<_> = worker
+        .knowledge_references
+        .iter()
+        .map(|reference| reference.path.0.as_str())
+        .collect();
+    let actual_knowledge: BTreeSet<_> = role_bundle
+        .knowledge_paths
+        .iter()
+        .map(|path| path.0.as_str())
+        .collect();
+    if executor.executor_id != capability.capability_id
+        || executor.capability_id != capability.capability_id
+        || executor.worker_role_id != worker.role_id
+        || executor.effective_concurrency_cap != 2
+        || executor.phases
+            != [
+                "discovering",
+                "dispatching",
+                "rolling_up",
+                "gate_computed",
+                "complete",
+            ]
+            .map(|value| crate::schema::StableId(value.to_owned()))
+        || role_bundle.role_id != worker.role_id
+        || role_bundle.assignment_schema.0 != "audit-assignment"
+        || role_bundle.result_schema.0 != "worker-result"
+        || role_bundle.record_format.0
+            != ".agents/skills/audit-carried-rows/references/record-format.md"
+        || expected_knowledge != actual_knowledge
+        || scenario.capability_id != capability.capability_id
+        || scenario.positive_cases.is_empty()
+        || scenario.negative_cases.is_empty()
+    {
+        return Err(RepositoryError::new(
+            "repository.portable_artifact.contract_mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn sort_and_dedup_references(
+    references: &mut Vec<ArtifactReference>,
+) -> Result<(), RepositoryError> {
+    references.sort_by(|left, right| left.path.cmp(&right.path));
+    for pair in references.windows(2) {
+        if pair[0].path == pair[1].path && pair[0] != pair[1] {
+            return Err(RepositoryError::new(
+                "repository.portable_artifact.reference_conflict",
+            ));
+        }
+    }
+    references.dedup_by(|left, right| left.path == right.path);
+    Ok(())
+}
+
 fn workflow_pins(root: &Path) -> Result<Vec<ArtifactReference>, RepositoryError> {
     let path = ".github/workflows/repository-engineering-check.yml";
     match fs::read(root.join(path)) {
@@ -268,6 +500,32 @@ fn workflow_pins(root: &Path) -> Result<Vec<ArtifactReference>, RepositoryError>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(_) => Err(RepositoryError::new("repository.provenance.read_failed")),
     }
+}
+
+fn runtime_success_vector(row_id: &str) -> Value {
+    json!({
+        "schema_version": "v0",
+        "result": "succeeded",
+        "attempt_id": "attempt-1",
+        "invocation_id": "invocation-1",
+        "assignment_id": "L1",
+        "worker_instance_id": "worker-1",
+        "worker_instance_receipt": fixture_reference("receipts/worker-1.json", '1'),
+        "payload": {
+            "row_id": row_id,
+            "verdict": "unverifiable",
+            "record": fixture_reference("records/L1.yaml", '2')
+        }
+    })
+}
+
+fn fixture_reference(path: &str, digest_byte: char) -> Value {
+    json!({
+        "schema_version": "v0",
+        "path": path,
+        "sha256": format!("sha256:{}", digest_byte.to_string().repeat(64)),
+        "media_type": "application/json"
+    })
 }
 
 fn semantic_reference<T: Serialize>(

@@ -1,0 +1,7 @@
+schema_version = "v0"
+executor_id = "audit-carried-rows"
+capability_id = "audit-carried-rows"
+worker_role_id = "decommission-row-auditor"
+phases = ["discovering", "dispatching", "rolling_up", "gate_computed", "complete"]
+effective_concurrency_cap = 2
+state_owner = "orchestrator_only"

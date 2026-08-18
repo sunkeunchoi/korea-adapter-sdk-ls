@@ -38,11 +38,29 @@
       }
     },
     {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:audit-assignment",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/audit-assignment.schema.json",
+        "sha256": "sha256:8912b73ff72ebb0c7b1e096962a001616fd6b5f9025c71a8eb2a4ae542c3fe46",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:audit-success-payload",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/audit-success-payload.schema.json",
+        "sha256": "sha256:3162082c2ab8279f247dc363bd63622725f8409f094cd1bcf06e5238133611cf",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
       "schema_id": "urn:ls:repository-engineering:schema:v0:capability-contract",
       "artifact": {
         "schema_version": "v0",
         "path": ".repository-engineering/schemas/v0/capability-contract.schema.json",
-        "sha256": "sha256:6b5275778c3e3be93a028258d525f89ddcd05c152de94d480da2dd3a2b9ad3ac",
+        "sha256": "sha256:95066c31aa9c7b26de62fada6aaf2be6546a6ea2cbd76af3559c8cab53a5be41",
         "media_type": "application/schema+json"
       }
     },
@@ -60,7 +78,25 @@
       "artifact": {
         "schema_version": "v0",
         "path": ".repository-engineering/schemas/v0/exact-lock.schema.json",
-        "sha256": "sha256:47c15db116add234d77a25736e53ad4cfec2454b274ecd20fb0b11f24ac31025",
+        "sha256": "sha256:fa865065e92ebf0d2075db746c3e646d5fddbe9a9267a986c4862ab3945d61b5",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:executor-descriptor",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/executor-descriptor.schema.json",
+        "sha256": "sha256:3b3f97cb1ef9a039613ab35b82caa709b133c51219260debc2de779cd9206471",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:implementation-subject-manifest",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/implementation-subject-manifest.schema.json",
+        "sha256": "sha256:814e4daf91c3ab86438175b7616c929f59e326bbfb09eadea58147584b009a4e",
         "media_type": "application/schema+json"
       }
     },
@@ -83,11 +119,29 @@
       }
     },
     {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:runtime-bundle-manifest",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/runtime-bundle-manifest.schema.json",
+        "sha256": "sha256:dfa722502eeab145125e3c0f328c42f18bf2cc323e286816bc2bd3eb06b150ff",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
       "schema_id": "urn:ls:repository-engineering:schema:v0:runtime-installation-state",
       "artifact": {
         "schema_version": "v0",
         "path": ".repository-engineering/schemas/v0/runtime-installation-state.schema.json",
         "sha256": "sha256:993043386a4d4ed7334db8a6d48a60c7ca1de695ccd883738c41605f01c5dee3",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:scenario-catalog",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/scenario-catalog.schema.json",
+        "sha256": "sha256:82e146e986c0905d72309056c6160b23afbc3df5ddaa749284d07e0f57d6b53b",
         "media_type": "application/schema+json"
       }
     },
@@ -114,7 +168,16 @@
       "artifact": {
         "schema_version": "v0",
         "path": ".repository-engineering/schemas/v0/worker-result.schema.json",
-        "sha256": "sha256:0f82d9c26a86d7d1f0ee187c5d419fa2ae3768827d82d239e1aa6e27a3db354f",
+        "sha256": "sha256:a5be40e6bd3c457eb549ba14f231cf430137418e2a2f100948b09d87fd192584",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:worker-role-bundle",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/worker-role-bundle.schema.json",
+        "sha256": "sha256:8e3ef041764c3edff6ed645bd84084feeb44b55872f7a91c285e5a64072374ec",
         "media_type": "application/schema+json"
       }
     },
@@ -123,7 +186,7 @@
       "artifact": {
         "schema_version": "v0",
         "path": ".repository-engineering/schemas/v0/worker-role-contract.schema.json",
-        "sha256": "sha256:27b047f325438c7ac7e7500f1edace164c1e46deeb67433bf4ed35229d183207",
+        "sha256": "sha256:9c8f140a6a081e457b8de84f04c5f7ac7df4e6c4bf0ad4c720caf0e30095a5d1",
         "media_type": "application/schema+json"
       }
     }

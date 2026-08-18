@@ -581,6 +581,53 @@ pub struct TerminalResultCorrelation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct AuditAssignment {
+    pub schema_version: SchemaVersion,
+    pub attempt_id: StableId,
+    pub invocation_id: StableId,
+    pub assignment_id: StableId,
+    pub row_id: StableId,
+    pub idempotency_key: StableId,
+    pub worker_instance_id: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutorDescriptor {
+    pub schema_version: SchemaVersion,
+    pub executor_id: StableId,
+    pub capability_id: StableId,
+    pub worker_role_id: StableId,
+    pub phases: Vec<StableId>,
+    pub effective_concurrency_cap: u16,
+    pub state_owner: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRoleBundle {
+    pub schema_version: SchemaVersion,
+    pub role_id: StableId,
+    pub assignment_schema: StableId,
+    pub result_schema: StableId,
+    pub knowledge_paths: Vec<RepositoryPath>,
+    pub record_format: RepositoryPath,
+    pub safety_rules: Vec<StableId>,
+    pub verdicts: Vec<AuditVerdict>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioCatalog {
+    pub schema_version: SchemaVersion,
+    pub catalog_id: StableId,
+    pub capability_id: StableId,
+    pub positive_cases: Vec<StableId>,
+    pub negative_cases: Vec<StableId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkerRoleContract {
     pub schema_version: SchemaVersion,
     pub role_id: StableId,
@@ -731,9 +778,33 @@ pub struct NormativeLockClosure {
     pub migration_ledger: ArtifactReference,
     pub schema_registry: ArtifactReference,
     pub conformance_corpus: ArtifactReference,
+    pub runtime_bundle: ArtifactReference,
+    pub implementation_subjects: Vec<ArtifactReference>,
     pub capability_contracts: Vec<ArtifactReference>,
     pub worker_role_contracts: Vec<ArtifactReference>,
     pub optional_components: Vec<OptionalComponent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBundleManifest {
+    pub schema_version: SchemaVersion,
+    pub bundle_id: StableId,
+    pub members: Vec<ArtifactReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationSubjectManifest {
+    pub schema_version: SchemaVersion,
+    pub subject_id: StableId,
+    pub executor: ArtifactReference,
+    pub role_bundle: ArtifactReference,
+    pub runtime_bundle: ArtifactReference,
+    pub scenario_catalog: ArtifactReference,
+    pub source_artifacts: Vec<ArtifactReference>,
+    pub schema_registry: ArtifactReference,
+    pub conformance_corpus: ArtifactReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -847,18 +918,25 @@ pub struct VersionSetFixtureInput {
 pub fn schema_catalog() -> BTreeMap<String, Value> {
     let mut schemas = BTreeMap::new();
     insert_schema::<ArtifactReference>(&mut schemas, "artifact-reference");
+    insert_schema::<AuditAssignment>(&mut schemas, "audit-assignment");
+    insert_schema::<AuditSuccessPayload>(&mut schemas, "audit-success-payload");
     insert_schema::<AttemptCheckpoint>(&mut schemas, "attempt-checkpoint");
     insert_schema::<AttemptEvent>(&mut schemas, "attempt-event");
     insert_schema::<AttemptRecord>(&mut schemas, "attempt-record");
     insert_schema::<CapabilityContract>(&mut schemas, "capability-contract");
     insert_schema::<DiscoveryPolicy>(&mut schemas, "discovery-policy");
     insert_schema::<ExactLock>(&mut schemas, "exact-lock");
+    insert_schema::<ExecutorDescriptor>(&mut schemas, "executor-descriptor");
+    insert_schema::<ImplementationSubjectManifest>(&mut schemas, "implementation-subject-manifest");
     insert_schema::<MigrationLedger>(&mut schemas, "migration-ledger");
     insert_schema::<PackageManifest>(&mut schemas, "package-manifest");
     insert_schema::<RuntimeInstallationState>(&mut schemas, "runtime-installation-state");
+    insert_schema::<RuntimeBundleManifest>(&mut schemas, "runtime-bundle-manifest");
+    insert_schema::<ScenarioCatalog>(&mut schemas, "scenario-catalog");
     insert_schema::<StateMigrationHandoff>(&mut schemas, "state-migration-handoff");
     insert_schema::<VersionSetFixtureInput>(&mut schemas, "version-set-fixture-input");
     insert_schema::<WorkerResult>(&mut schemas, "worker-result");
+    insert_schema::<WorkerRoleBundle>(&mut schemas, "worker-role-bundle");
     insert_schema::<WorkerRoleContract>(&mut schemas, "worker-role-contract");
     schemas
 }

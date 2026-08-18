@@ -83,13 +83,7 @@ pub fn capability_contract_semantic_digest(
     normalized.touched_paths.sort();
     normalized.evidence_obligations.sort();
     normalized.human_gates.sort();
-    if let Some(evidence) = &mut normalized.implementation_evidence {
-        normalize_implementation_evidence(evidence);
-    }
     normalized.knowledge_references.sort_by_key(artifact_key);
-    if let Some(evidence) = &mut normalized.implementation_evidence {
-        normalize_implementation_evidence(evidence);
-    }
     normalized.scenario_references.sort_by_key(artifact_key);
     normalized
         .external_source_requirements
@@ -201,6 +195,7 @@ pub(crate) fn normalize_normative(normative: &NormativeLockClosure) -> Normative
     let mut normalized = normative.clone();
     normalized.capability_contracts.sort_by_key(artifact_key);
     normalized.worker_role_contracts.sort_by_key(artifact_key);
+    normalized.implementation_subjects.sort_by_key(artifact_key);
     normalized.optional_components.sort_by_key(optional_key);
     normalized
 }
@@ -231,13 +226,6 @@ fn normalize_semantic_claims(claims: &mut [SemanticClaim]) {
         claim.sources.sort_by_key(serialized_key);
     }
     claims.sort_by_key(serialized_key);
-}
-
-fn normalize_implementation_evidence(
-    _evidence: &mut crate::schema::ImplementationEvidenceReference,
-) {
-    // All fields are scalar or closed artifact references. Keeping this helper explicit
-    // documents that the evidence reference participates in semantic identity.
 }
 
 fn artifact_key(reference: &ArtifactReference) -> (RepositoryPath, Sha256Digest, String) {

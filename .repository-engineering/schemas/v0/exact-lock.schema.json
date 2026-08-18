@@ -62,6 +62,12 @@
         "discovery_policy": {
           "$ref": "#/$defs/ArtifactReference"
         },
+        "implementation_subjects": {
+          "items": {
+            "$ref": "#/$defs/ArtifactReference"
+          },
+          "type": "array"
+        },
         "migration_ledger": {
           "$ref": "#/$defs/ArtifactReference"
         },
@@ -72,6 +78,9 @@
           "type": "array"
         },
         "package": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "runtime_bundle": {
           "$ref": "#/$defs/ArtifactReference"
         },
         "schema_registry": {
@@ -90,6 +99,8 @@
         "migration_ledger",
         "schema_registry",
         "conformance_corpus",
+        "runtime_bundle",
+        "implementation_subjects",
         "capability_contracts",
         "worker_role_contracts",
         "optional_components"

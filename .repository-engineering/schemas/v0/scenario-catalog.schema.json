@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:scenario-catalog",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capability_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "catalog_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "negative_cases": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "positive_cases": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "schema_version",
+    "catalog_id",
+    "capability_id",
+    "positive_cases",
+    "negative_cases"
+  ],
+  "title": "ScenarioCatalog",
+  "type": "object"
+}

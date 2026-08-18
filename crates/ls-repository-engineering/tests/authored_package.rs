@@ -36,7 +36,7 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
             .iter()
             .filter(|path| path.starts_with(".repository-engineering/schemas/v0/"))
             .count(),
-        14
+        21
     );
 
     for artifact in first
@@ -47,6 +47,84 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
         let schema: serde_json::Value = serde_json::from_slice(&artifact.bytes).unwrap();
         assert!(schema["$id"].as_str().unwrap().contains(":v0:"));
         assert!(all_references_are_local(&schema));
+    }
+}
+
+#[test]
+fn portable_runtime_bundle_is_closed_and_subject_bound() {
+    let projections = compose_repository(repository_root()).unwrap();
+    let artifact = |path: &str| {
+        projections
+            .artifacts()
+            .iter()
+            .find(|artifact| artifact.relative_path == path)
+            .unwrap_or_else(|| panic!("missing generated artifact {path}"))
+    };
+
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&artifact(".repository-engineering/runtime-bundle.json").bytes)
+            .unwrap();
+    let members = bundle["members"].as_array().unwrap();
+    assert!(!members.is_empty());
+    for member in members {
+        let path = member["path"].as_str().unwrap();
+        assert!(!path.starts_with('/'));
+        assert!(!path.contains(".."));
+        assert!(!path.starts_with(".compound-engineering/runs/"));
+    }
+    for required in [
+        ".repository-engineering/executors/audit-carried-rows.toml",
+        ".repository-engineering/roles/decommission-row-auditor.toml",
+        ".repository-engineering/scenarios/audit-carried-rows/implementation.toml",
+        ".repository-engineering/schema-registry.json",
+        ".repository-engineering/conformance/v0/manifest.json",
+        ".repository-engineering/conformance/v0/runtime-semantics.json",
+    ] {
+        assert!(members.iter().any(|member| member["path"] == required));
+    }
+
+    let subject: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/implementation-subjects/audit-carried-rows.json").bytes,
+    )
+    .unwrap();
+    assert_eq!(subject["subject_id"], "audit-carried-rows");
+    assert_eq!(
+        subject["runtime_bundle"]["path"],
+        ".repository-engineering/runtime-bundle.json"
+    );
+    assert!(subject.get("evidence").is_none());
+    assert!(subject.get("lifecycle").is_none());
+
+    let lock: serde_json::Value =
+        serde_json::from_slice(&artifact(".repository-engineering/package.lock.json").bytes)
+            .unwrap();
+    assert_eq!(
+        lock["normative"]["runtime_bundle"]["path"],
+        ".repository-engineering/runtime-bundle.json"
+    );
+    assert_eq!(
+        lock["normative"]["implementation_subjects"][0]["path"],
+        ".repository-engineering/implementation-subjects/audit-carried-rows.json"
+    );
+}
+
+#[test]
+fn portable_descriptors_are_host_neutral() {
+    for path in [
+        ".repository-engineering/executors/audit-carried-rows.toml",
+        ".repository-engineering/roles/decommission-row-auditor.toml",
+    ] {
+        let text = std::fs::read_to_string(repository_root().join(path)).unwrap();
+        let lowered = text.to_ascii_lowercase();
+        for forbidden in [
+            "command =",
+            "agent =",
+            "credential =",
+            "installation =",
+            "/users/",
+        ] {
+            assert!(!lowered.contains(forbidden), "{path} contains {forbidden}");
+        }
     }
 }
 
