@@ -77,7 +77,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:101ae89784c6b88b9a1d8682db7ceca10588dcf95bd425157658b9644f6e1587",
+      "sha256": "sha256:1da615537be86355734530fb8073147f7de0229253a43c8d36ada8d7f43f0df1",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {
@@ -90,7 +90,7 @@
       {
         "schema_version": "v0",
         "path": ".github/workflows/repository-engineering-check.yml",
-        "sha256": "sha256:7e82040f8a2d7a3329ec384916b432fb5b63bde2363ba154ddf1cc360a0ab759",
+        "sha256": "sha256:413a287bb5dbe0b7f9ffc0b9208fa3ba4ff027791de08ae630972050b2c142f1",
         "media_type": "application/yaml"
       }
     ]
