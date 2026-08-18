@@ -1,0 +1,35 @@
+schema_version = "v0"
+policy_id = "audit-carried-rows-bounded-v0"
+wave1_package_lock_id = "sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c"
+implementation_subject = { schema_version = "v0", path = ".repository-engineering/implementation-subjects/audit-carried-rows.json", sha256 = "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19", media_type = "application/json" }
+capability_contract = { schema_version = "v0", path = ".repository-engineering/contracts/capabilities/audit-carried-rows.toml", sha256 = "sha256:c9efe6f79fc1291d556010d574cbd5a2c3ffd84379465e3f1dc9b2caeee9f0f8", media_type = "application/toml" }
+worker_role_contract = { schema_version = "v0", path = ".repository-engineering/contracts/workers/decommission-row-auditor.toml", sha256 = "sha256:3f3f2dea5891ffb05fe04d631e9e940f505dd4b414f15606842c7ea7aaf39dc0", media_type = "application/toml" }
+executor = { schema_version = "v0", path = ".repository-engineering/executors/audit-carried-rows.toml", sha256 = "sha256:c05f380924e0daf3e10274a003bef676a2d3c542fc7421c70251ee76ff2c6775", media_type = "application/toml" }
+successor_scenario = { schema_version = "v0", path = ".repository-engineering/scenarios/audit-carried-rows/implementation.toml", sha256 = "sha256:b4b3009f5350a2262bd634893f852f8d5e8417fb92546bdc4945a0dea25e932c", media_type = "application/toml" }
+migration_source_manifest = { schema_version = "v0", path = "docs/migration-source/audit/manifest.yaml", sha256 = "sha256:2c72d2cdd3e86c72b153732f516c866542328b4d72e8ed70e51b2a64cfbe32bf", media_type = "application/yaml" }
+legacy_ledger = { schema_version = "v0", path = "docs/migration-source-extraction-ledger.md", sha256 = "sha256:f3ed6793d3ca6c7bf6e33bd761b7c0b7050e7d9f256a246ad906e59a49d80f1f", media_type = "text/markdown" }
+legacy_report = { schema_version = "v0", path = "docs/migration-source/audit/decommission-audit-report.md", sha256 = "sha256:cd343c90f192b3a4ba781a3d1e0800969e11f70843905d41239ef45f09837149", media_type = "text/markdown" }
+legacy_oracle = { schema_version = "v0", path = "crates/ls-trackers/tests/decommission_audit.rs", sha256 = "sha256:7c943993cd0c5bf197baf7a3c9e78ceb6e5306b60a22379910f503c6f82c7ffe", media_type = "text/x-rust" }
+legacy_artifact_set_digest = "sha256:216974d42107f6e4fbbcba6a1fa4df7638fdfc62304378ba6f93f8892fea307a"
+case_catalog = { schema_version = "v0", path = ".repository-engineering/scenarios/audit-carried-rows/comparison-cases.toml", sha256 = "sha256:fff67c48d10c4fec855269578dbf4eb9c10e29cc6a4c5de62866886406724e8e", media_type = "application/toml" }
+successor_conformance_basis = [
+  { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/end_to_end.rs", sha256 = "sha256:9cc08862aad567b31c339d90f26fb38797689c80a1d78f52f58c861988058cda", media_type = "text/x-rust" },
+  { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/driver.rs", sha256 = "sha256:03b86a967ba129fda455d8b24c6be8f29233130b8dffa613410650ab354532ed", media_type = "text/x-rust" },
+  { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/checkpoint_recovery.rs", sha256 = "sha256:1a14de7f2c6ccfbe8092fd96584817f855318080219b5ee5600ddbd5bcc6285d", media_type = "text/x-rust" },
+  { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/effect_recovery.rs", sha256 = "sha256:70c0c672a19989d3096150b0809b7c644e5f9a73a8deffeae395930ea0195601", media_type = "text/x-rust" },
+]
+expected_case_ids = ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "L11", "L12", "L13", "L14", "L15", "L16", "L17", "L18", "L19", "L20", "L21", "L22", "L23", "L24", "L25", "L26"]
+compared_dimensions = ["row_coverage", "verdict", "row_completion", "capability_blocking", "roll_up", "credential_rule", "path_rule"]
+successor_only_dimensions = ["durability", "cancellation", "correlation", "freshness", "confinement"]
+exclusions = [
+  "global parity",
+  "certification",
+  "runtime installation",
+  "activation and authority transfer",
+  "legacy ignored-state continuity",
+  "production host and model behavior",
+  "assurance-rung A3 paper-readonly evidence",
+  "timestamps, temporary paths, scheduling order, and host diagnostics",
+  "maintainer acceptance is not synthesized; the frozen corpus contains no assumption-accepted verdict",
+]
+global_parity_eligible = false

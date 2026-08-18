@@ -38,6 +38,12 @@ const SCENARIO_PATH: &str =
 const RUNTIME_BUNDLE_PATH: &str = ".repository-engineering/runtime-bundle.json";
 const IMPLEMENTATION_SUBJECT_PATH: &str =
     ".repository-engineering/implementation-subjects/audit-carried-rows.json";
+const COMPARISON_ONLY_RUNTIME_PATHS: &[&str] = &[
+    "src/bin/bounded-audit-comparison.rs",
+    "src/comparison/",
+    "tests/comparison.rs",
+    "tests/fixtures/comparison/",
+];
 const LOCK_PATH: &str = ".repository-engineering/package.lock.json";
 const REFERENCE_PATH: &str = "docs/reference/repository-engineering-package.md";
 
@@ -299,10 +305,11 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     projections.push(Projection::new(RUNTIME_BUNDLE_PATH, runtime_bundle_bytes));
 
     let mut subject_source_artifacts = bundle_source_artifacts;
-    subject_source_artifacts.push(tree_reference(
+    subject_source_artifacts.push(tree_reference_excluding(
         root,
         "tools/repository-engineering-runtime",
         "application/vnd.rust.crate",
+        COMPARISON_ONLY_RUNTIME_PATHS,
     )?);
     sort_and_dedup_references(&mut subject_source_artifacts)?;
     let implementation_subject_bytes = pretty_json(&ImplementationSubjectManifest {
@@ -548,9 +555,26 @@ fn tree_reference(
     relative: &str,
     media_type: &str,
 ) -> Result<ArtifactReference, RepositoryError> {
+    tree_reference_excluding(root, relative, media_type, &[])
+}
+
+fn tree_reference_excluding(
+    root: &Path,
+    relative: &str,
+    media_type: &str,
+    excluded: &[&str],
+) -> Result<ArtifactReference, RepositoryError> {
     let base = root.join(relative);
     let mut files = Vec::new();
     collect_regular_files(&base, &base, &mut files)?;
+    files.retain(|(path, _)| {
+        !excluded.iter().any(|excluded| {
+            path == excluded.trim_end_matches('/')
+                || excluded
+                    .strip_suffix('/')
+                    .is_some_and(|prefix| path.starts_with(&format!("{prefix}/")))
+        })
+    });
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut hasher = Sha256::new();
     hasher.update(b"ls-repository-engineering/tree/v0\0");
