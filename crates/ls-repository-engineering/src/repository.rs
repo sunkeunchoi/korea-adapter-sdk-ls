@@ -9,14 +9,19 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::generate::{Projection, ProjectionSet};
-use crate::identity::built_in_conformance_vector;
-use crate::inventory::{discover_inventory, load_authored_package, reconcile_inventory};
+use crate::identity::{
+    built_in_conformance_vector, capability_contract_semantic_digest,
+    package_manifest_semantic_digest, worker_role_contract_semantic_digest,
+};
+use crate::inventory::{
+    discover_inventory, load_authored_package, reconcile_inventory, AuthoredPackage,
+};
 use crate::lock::{build_lock, lock_bytes};
 use crate::schema::{
-    schema_catalog, ArtifactReference, BuildProvenance, NormativeLockClosure, RepositoryPath,
-    SchemaVersion, Sha256Digest,
+    schema_catalog, ArtifactReference, BuildProvenance, ContractState, NormativeLockClosure,
+    RepositoryPath, SchemaVersion, Sha256Digest,
 };
-use crate::validator::{validate_first_slice_package, Finding};
+use crate::validator::{validate_semantic_package, Finding};
 
 const PACKAGE_PATH: &str = ".repository-engineering/package.toml";
 const DISCOVERY_PATH: &str = ".repository-engineering/discovery-policy.toml";
@@ -78,7 +83,7 @@ struct ConformanceManifest {
 
 pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError> {
     let authored = load_authored_package(root).map_err(|error| RepositoryError::new(error.code))?;
-    let mut findings = validate_first_slice_package(&authored.package);
+    let mut findings = validate_semantic_package(root, &authored);
     let inventory = discover_inventory(root, &authored.discovery_policy)
         .map_err(|error| RepositoryError::new(error.code))?;
     findings.extend(reconcile_inventory(&authored.ledger, &inventory));
@@ -112,14 +117,24 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     projections.push(Projection::new(REGISTRY_PATH, registry_bytes.clone()));
 
     let structural_path = ".repository-engineering/conformance/v0/structural.json";
+    let mut structurally_validated = vec![
+        PACKAGE_PATH.to_owned(),
+        DISCOVERY_PATH.to_owned(),
+        LEDGER_PATH.to_owned(),
+        REGISTRY_PATH.to_owned(),
+    ];
+    structurally_validated.extend(
+        authored
+            .package
+            .declared_capability_contracts
+            .iter()
+            .chain(authored.package.declared_worker_roles.iter())
+            .map(|registration| registration.path.0.clone()),
+    );
+    structurally_validated.sort();
     let structural_bytes = pretty_json(&json!({
         "schema_version": "v0",
-        "validates": [
-            PACKAGE_PATH,
-            DISCOVERY_PATH,
-            LEDGER_PATH,
-            REGISTRY_PATH
-        ],
+        "validates": structurally_validated,
         "unknown_fields": "reject",
         "unsupported_schema_versions": "reject"
     }))?;
@@ -129,8 +144,14 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         "rules": [
             "every_discovered_obligation_has_exactly_one_ledger_row",
             "every_ledger_source_matches_its_discovered_source",
+            "declared_contract_registration_resolves_kind_id_and_path",
+            "planned_replacement_is_declared_and_type_correct",
+            "legacy_dependencies_remain_legacy_authoritative_below_parity",
+            "semantic_claim_sources_resolve_and_field_groups_are_unique",
+            "legacy_evidence_does_not_satisfy_successor_evidence",
+            "unavailable_external_sources_remain_unproved_without_locator_or_digest",
+            "terminal_results_preserve_assignment_row_correlation",
             "first_slice_authority_remains_legacy",
-            "first_slice_migration_state_remains_unported",
             "first_slice_activation_eligibility_is_none"
         ]
     }))?;
@@ -162,8 +183,44 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         ),
     ]);
 
+    let capability_contracts = authored
+        .package
+        .declared_capability_contracts
+        .iter()
+        .zip(&authored.capability_contracts)
+        .map(|(registration, contract)| {
+            Ok(ArtifactReference {
+                schema_version: SchemaVersion::V0,
+                path: registration.path.clone(),
+                sha256: capability_contract_semantic_digest(contract)
+                    .map_err(|_| RepositoryError::new("repository.semantic_digest_failed"))?,
+                media_type: "application/toml".to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, RepositoryError>>()?;
+    let worker_role_contracts = authored
+        .package
+        .declared_worker_roles
+        .iter()
+        .zip(&authored.worker_role_contracts)
+        .map(|(registration, contract)| {
+            Ok(ArtifactReference {
+                schema_version: SchemaVersion::V0,
+                path: registration.path.clone(),
+                sha256: worker_role_contract_semantic_digest(contract)
+                    .map_err(|_| RepositoryError::new("repository.semantic_digest_failed"))?,
+                media_type: "application/toml".to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, RepositoryError>>()?;
     let normative = NormativeLockClosure {
-        package: semantic_reference(PACKAGE_PATH, &authored.package, "application/toml")?,
+        package: ArtifactReference {
+            schema_version: SchemaVersion::V0,
+            path: RepositoryPath(PACKAGE_PATH.to_owned()),
+            sha256: package_manifest_semantic_digest(&authored.package)
+                .map_err(|_| RepositoryError::new("repository.semantic_digest_failed"))?,
+            media_type: "application/toml".to_owned(),
+        },
         discovery_policy: semantic_reference(
             DISCOVERY_PATH,
             &authored.discovery_policy,
@@ -176,6 +233,8 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
             &conformance_manifest_bytes,
             "application/json",
         ),
+        capability_contracts,
+        worker_role_contracts,
         optional_components: authored.package.optional_components.clone(),
     };
     let build_provenance = BuildProvenance {
@@ -196,7 +255,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     ));
     projections.push(Projection::new(
         REFERENCE_PATH,
-        reference_document(&authored.ledger, &exact_lock.package_lock_id.0).into_bytes(),
+        reference_document(&authored, &exact_lock.package_lock_id.0).into_bytes(),
     ));
 
     ProjectionSet::new(projections).map_err(|error| RepositoryError::new(error.code))
@@ -309,29 +368,199 @@ fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, RepositoryError> {
     Ok(bytes)
 }
 
-fn reference_document(ledger: &crate::schema::MigrationLedger, package_lock_id: &str) -> String {
-    let mut rows: Vec<_> = ledger.rows.iter().collect();
+fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> String {
+    let mut rows: Vec<_> = authored.ledger.rows.iter().collect();
     rows.sort_by(|left, right| left.logical_id.cmp(&right.logical_id));
+    let planned_rows = rows
+        .iter()
+        .filter(|row| row.migration_state == crate::schema::MigrationState::Planned)
+        .count();
     let mut document = format!(
-        "# Repository Engineering Package\n\nThis page is generated from the inert, reviewed package declaration. It grants no runtime or publication authority.\n\n- Schema version: `v0`\n- Package lock identity: `{package_lock_id}`\n- Activation eligibility: `none`\n- Reviewed migration rows: `{}`\n\nDeclaration, implementation, certification, authority, and retirement are independent states. Every row below remains unported, uncertified, legacy-authoritative, and not retired.\n\n| Logical ID | Source kind | Source locator | Disposition | Declaration | Implementation | Certification | Authority | Retirement | Replacement |\n|---|---|---|---|---|---|---|---|---|---|\n",
-        rows.len()
+        "# Repository Engineering Package\n\nThis page is generated from the inert, reviewed package declaration. It grants no runtime, credential, activation, authority-transfer, retirement, or publication authority.\n\n- Schema version: `v0`\n- Package lock identity: `{package_lock_id}`\n- Activation eligibility: `{}`\n- Declared capability contracts: `{}`\n- Declared worker roles: `{}`\n- Active capability contracts: `{}`\n- Active worker roles: `{}`\n- Reviewed migration rows: `{}`\n- Planned migration rows: `{planned_rows}`\n\nDeclaration, migration planning, implementation, certification, parity, activation, authority, and retirement are independent states. Canonical lifecycle statements below come only from validated typed fields.\n\n## Declared contracts\n",
+        enum_token(&authored.package.activation_eligibility),
+        authored.package.declared_capability_contracts.len(),
+        authored.package.declared_worker_roles.len(),
+        authored.package.active_capability_contracts.len(),
+        authored.package.active_worker_roles.len(),
+        rows.len(),
     );
+    for contract in &authored.capability_contracts {
+        document.push_str(&format!(
+            "\n### Capability `{}`\n\nNon-normative purpose text (not identity-bound and not lifecycle evidence): {}\n\nCanonical typed state: {}; activation: {}; executor: {}; scenarios: {}.\n",
+            escape_markdown(&contract.capability_id.0),
+            escape_markdown(contract.public_description.as_deref().unwrap_or("not provided")),
+            state_summary(&contract.state),
+            active_token(
+                authored
+                    .package
+                    .active_capability_contracts
+                    .contains(&contract.capability_id)
+            ),
+            if contract.executor.is_some() { "present" } else { "absent" },
+            contract.scenario_references.len(),
+        ));
+        if let Some(evidence) = &contract.evidence_status {
+            let artifact_set_members: usize = evidence
+                .legacy_artifact_sets
+                .iter()
+                .map(|set| set.members.len())
+                .sum();
+            document.push_str(&format!(
+                "\nEvidence boundary: legacy evidence `{}` ({} artifact(s), {} artifact set(s), {} set member(s)); successor implementation evidence `{}`; parity `{}`; certification `{}`; legacy evidence satisfies successor: `{}`.\n",
+                enum_token(&evidence.legacy_status),
+                evidence.legacy_artifacts.len(),
+                evidence.legacy_artifact_sets.len(),
+                artifact_set_members,
+                enum_token(&evidence.successor_implementation),
+                enum_token(&evidence.parity),
+                enum_token(&evidence.certification),
+                evidence.legacy_evidence_satisfies_successor,
+            ));
+        }
+        if !contract.external_source_requirements.is_empty() {
+            document.push_str("\nExternal source requirements:\n\n| Requirement | Status | Locator | Digest | Unavailable outcome | Worker verdict |\n|---|---|---|---|---|---|\n");
+            for requirement in &contract.external_source_requirements {
+                document.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} |\n",
+                    escape_markdown(&requirement.requirement_id.0),
+                    enum_token(&requirement.status),
+                    requirement
+                        .locator
+                        .as_ref()
+                        .map(|value| escape_markdown(&value.0))
+                        .unwrap_or_else(|| "absent".to_owned()),
+                    requirement
+                        .digest
+                        .as_ref()
+                        .map(|value| escape_markdown(&value.0))
+                        .unwrap_or_else(|| "absent".to_owned()),
+                    enum_token(&requirement.unavailable_capability_outcome),
+                    escape_markdown(&requirement.unavailable_worker_verdict.0),
+                ));
+            }
+        }
+        append_claims(&mut document, &contract.semantic_claims);
+    }
+    for contract in &authored.worker_role_contracts {
+        document.push_str(&format!(
+            "\n### Worker role `{}`\n\nNon-normative purpose text (not identity-bound and not lifecycle evidence): {}\n\nCanonical typed state: {}; activation: {}; terminal correlation: {}.\n",
+            escape_markdown(&contract.role_id.0),
+            escape_markdown(contract.public_description.as_deref().unwrap_or("not provided")),
+            state_summary(&contract.state),
+            active_token(authored.package.active_worker_roles.contains(&contract.role_id)),
+            if contract.terminal_result_correlation.is_some() {
+                "required"
+            } else {
+                "absent"
+            },
+        ));
+        append_claims(&mut document, &contract.semantic_claims);
+    }
+
+    document.push_str("\n## Migration ledger\n\n| Logical ID | Source kind | Source locator | Disposition | Migration | Absence reason | Declaration | Implementation | Certification | Authority | Retirement | Replacement |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
     for row in rows {
         let replacement = row
             .replacement_contract
             .as_ref()
             .map(|value| value.0.as_str())
             .unwrap_or("absent");
+        let state = row
+            .replacement_contract
+            .as_ref()
+            .and_then(|replacement| replacement_state(authored, replacement));
         document.push_str(&format!(
-            "| {} | {} | `{}` | {} | declared | unported | uncertified | legacy | not_started | {} |\n",
+            "| {} | {} | `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             escape_markdown(&row.logical_id.0),
             escape_markdown(&row.source_kind.0),
             escape_markdown(&row.source_locator.0),
             enum_token(&row.disposition),
+            enum_token(&row.migration_state),
+            row.absence_reason
+                .as_ref()
+                .map(|reason| escape_markdown(&reason.0))
+                .unwrap_or_else(|| "absent".to_owned()),
+            state
+                .map(|value| enum_token(&value.declaration))
+                .unwrap_or_else(|| "absent".to_owned()),
+            state
+                .map(|value| enum_token(&value.implementation))
+                .unwrap_or_else(|| "unported".to_owned()),
+            state
+                .map(|value| enum_token(&value.certification))
+                .unwrap_or_else(|| "uncertified".to_owned()),
+            enum_token(&row.current_authority),
+            state
+                .map(|value| enum_token(&value.retirement))
+                .unwrap_or_else(|| "not_started".to_owned()),
             escape_markdown(replacement),
         ));
     }
     document
+}
+
+fn replacement_state<'a>(
+    authored: &'a AuthoredPackage,
+    replacement: &crate::schema::StableId,
+) -> Option<&'a ContractState> {
+    authored
+        .capability_contracts
+        .iter()
+        .find(|contract| &contract.capability_id == replacement)
+        .map(|contract| &contract.state)
+        .or_else(|| {
+            authored
+                .worker_role_contracts
+                .iter()
+                .find(|contract| &contract.role_id == replacement)
+                .map(|contract| &contract.state)
+        })
+}
+
+fn state_summary(state: &ContractState) -> String {
+    format!(
+        "declaration `{}`, implementation `{}`, certification `{}`, authority `{}`, retirement `{}`",
+        enum_token(&state.declaration),
+        enum_token(&state.implementation),
+        enum_token(&state.certification),
+        enum_token(&state.authority),
+        enum_token(&state.retirement),
+    )
+}
+
+fn active_token(active: bool) -> &'static str {
+    if active {
+        "active"
+    } else {
+        "inactive"
+    }
+}
+
+fn append_claims(document: &mut String, claims: &[crate::schema::SemanticClaim]) {
+    if claims.is_empty() {
+        return;
+    }
+    document.push_str("\nIdentity-bearing semantic provenance:\n\n| Field groups | Status | Source basis |\n|---|---|---|\n");
+    for claim in claims {
+        let fields = claim
+            .field_groups
+            .iter()
+            .map(|field| field.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sources = claim
+            .sources
+            .iter()
+            .filter_map(|source| serde_json::to_string(source).ok())
+            .map(|source| escape_markdown(&source))
+            .collect::<Vec<_>>()
+            .join("; ");
+        document.push_str(&format!(
+            "| {} | {} | `{}` |\n",
+            escape_markdown(&fields),
+            enum_token(&claim.status),
+            sources,
+        ));
+    }
 }
 
 fn enum_token<T: Serialize>(value: &T) -> String {
@@ -343,4 +572,26 @@ fn enum_token<T: Serialize>(value: &T) -> String {
 
 fn escape_markdown(value: &str) -> String {
     value.replace('|', "\\|").replace(['\r', '\n'], " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reference_document;
+    use crate::inventory::load_authored_package;
+    use std::path::Path;
+
+    #[test]
+    fn contradictory_presentation_stays_non_normative_and_adjacent_to_typed_state() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let mut authored = load_authored_package(root).unwrap();
+        authored.capability_contracts[0].public_description =
+            Some("Certified and successor-authoritative.".to_owned());
+        let document = reference_document(&authored, "sha256:test");
+        assert!(document.contains(
+            "Non-normative purpose text (not identity-bound and not lifecycle evidence): Certified and successor-authoritative.\n\nCanonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
+        ));
+    }
 }

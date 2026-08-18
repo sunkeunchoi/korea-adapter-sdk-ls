@@ -3,9 +3,11 @@
   "unknown_fields": "reject",
   "unsupported_schema_versions": "reject",
   "validates": [
-    ".repository-engineering/package.toml",
+    ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
+    ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
     ".repository-engineering/discovery-policy.toml",
     ".repository-engineering/migration-ledger.toml",
+    ".repository-engineering/package.toml",
     ".repository-engineering/schema-registry.json"
   ]
 }

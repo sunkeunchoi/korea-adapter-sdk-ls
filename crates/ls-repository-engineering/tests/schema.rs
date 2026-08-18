@@ -1,10 +1,12 @@
 use ls_repository_engineering::schema::{
-    schema_catalog, AttemptRecord, AuthorityState, CapabilityContract, CertificationState,
-    ContractState, DeclarationState, ImplementationState, PackageManifest, RetirementState,
-    WorkerResult, WorkerRoleContract,
+    schema_catalog, ArtifactSetReference, AttemptRecord, AuthorityState, CapabilityContract,
+    CertificationState, ContractState, DeclarationState, ImplementationState, PackageManifest,
+    RetirementState, WorkerResult, WorkerRoleContract,
 };
 use ls_repository_engineering::validator::{
-    validate_attempt_record, validate_first_slice_contract_state, validate_first_slice_package,
+    validate_attempt_record, validate_capability_contract_vocabulary,
+    validate_first_slice_contract_state, validate_first_slice_package,
+    validate_worker_role_contract_vocabulary,
 };
 
 const PACKAGE: &str = include_str!("fixtures/schema/package-manifest.valid.json");
@@ -132,7 +134,7 @@ fn lexical_contracts_reject_unsafe_ids_paths_and_digests() {
 #[test]
 fn worker_result_requires_an_explicit_tagged_outcome() {
     let held = serde_json::from_str::<WorkerResult>(
-        r#"{"schema_version":"v0","result":"held","reason":"human_gate_required"}"#,
+        r#"{"schema_version":"v0","result":"held","assignment_id":"L1","reason":"human_gate_required"}"#,
     )
     .expect("typed held result");
     assert_eq!(serde_json::to_value(held).unwrap()["result"], "held");
@@ -142,9 +144,81 @@ fn worker_result_requires_an_explicit_tagged_outcome() {
     )
     .is_err());
     assert!(serde_json::from_str::<WorkerResult>(
-        r#"{"schema_version":"v0","result":"success","payload":{}}"#
+        r#"{"schema_version":"v0","result":"success","assignment_id":"L1","payload":{}}"#
     )
     .is_err());
+}
+
+#[test]
+fn every_worker_result_variant_requires_assignment_correlation() {
+    let artifact = r#"{"schema_version":"v0","path":"records/L1.yaml","sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","media_type":"application/yaml"}"#;
+    let variants = [
+        format!(r#"{{"schema_version":"v0","result":"succeeded","artifacts":[{artifact}]}}"#),
+        r#"{"schema_version":"v0","result":"held","reason":"blocked"}"#.to_owned(),
+        r#"{"schema_version":"v0","result":"cancelled","reason":"cancelled"}"#.to_owned(),
+        r#"{"schema_version":"v0","result":"policy_violated","policy_id":"policy"}"#.to_owned(),
+        r#"{"schema_version":"v0","result":"failed","error_code":"failed"}"#.to_owned(),
+        format!(
+            r#"{{"schema_version":"v0","result":"recovery_required","checkpoint":{artifact}}}"#
+        ),
+    ];
+    for variant in variants {
+        assert!(serde_json::from_str::<WorkerResult>(&variant).is_err());
+        let correlated = variant.replacen('{', r#"{"assignment_id":"L1","#, 1);
+        assert!(serde_json::from_str::<WorkerResult>(&correlated).is_ok());
+    }
+}
+
+#[test]
+fn declared_registries_and_semantic_vocabulary_are_closed() {
+    let package: PackageManifest = serde_json::from_str(PACKAGE).unwrap();
+    assert!(validate_first_slice_package(&package).is_empty());
+
+    let capability: CapabilityContract = serde_json::from_str(include_str!(
+        "fixtures/fidelity/audit-carried-rows.capability.json"
+    ))
+    .expect("audit capability fixture");
+    assert!(validate_capability_contract_vocabulary(&capability).is_empty());
+    let artifact_set: &ArtifactSetReference = &capability
+        .evidence_status
+        .as_ref()
+        .unwrap()
+        .legacy_artifact_sets[0];
+    let mut expected = artifact_set.members.clone();
+    expected.sort();
+    assert_eq!(artifact_set.normalized_members(), expected);
+
+    let worker: WorkerRoleContract = serde_json::from_str(include_str!(
+        "fixtures/fidelity/decommission-row-auditor.worker.json"
+    ))
+    .expect("audit worker fixture");
+    assert!(validate_worker_role_contract_vocabulary(&worker).is_empty());
+
+    let mut unavailable = serde_json::to_value(&capability).unwrap();
+    unavailable["external_source_requirements"][0]["locator"] = serde_json::json!("sibling");
+    let unavailable: CapabilityContract = serde_json::from_value(unavailable).unwrap();
+    assert!(validate_capability_contract_vocabulary(&unavailable)
+        .iter()
+        .any(|finding| finding.code == "external_source.unavailable_has_location"));
+
+    let mut duplicate_allowed = serde_json::to_value(&worker).unwrap();
+    duplicate_allowed["result_fields"][1]["allowed_values"] =
+        serde_json::json!(["confirmed", "confirmed"]);
+    let duplicate_allowed: WorkerRoleContract = serde_json::from_value(duplicate_allowed).unwrap();
+    assert!(validate_worker_role_contract_vocabulary(&duplicate_allowed)
+        .iter()
+        .any(|finding| finding.code == "typed_field.allowed_values.duplicate"));
+
+    let mut duplicate_registry = serde_json::to_value(package).unwrap();
+    let duplicate = duplicate_registry["declared_capability_contracts"][0].clone();
+    duplicate_registry["declared_capability_contracts"]
+        .as_array_mut()
+        .unwrap()
+        .push(duplicate);
+    let duplicate_registry: PackageManifest = serde_json::from_value(duplicate_registry).unwrap();
+    assert!(validate_first_slice_package(&duplicate_registry)
+        .iter()
+        .any(|finding| finding.code == "package.declared_registry.duplicate"));
 }
 
 #[test]

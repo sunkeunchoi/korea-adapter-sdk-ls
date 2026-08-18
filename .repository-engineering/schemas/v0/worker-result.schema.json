@@ -55,6 +55,9 @@
           },
           "type": "array"
         },
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "result": {
           "const": "succeeded",
           "type": "string"
@@ -66,6 +69,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "artifacts"
       ],
       "type": "object"
@@ -73,6 +77,9 @@
     {
       "additionalProperties": false,
       "properties": {
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "reason": {
           "$ref": "#/$defs/StableId"
         },
@@ -87,6 +94,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "reason"
       ],
       "type": "object"
@@ -94,6 +102,9 @@
     {
       "additionalProperties": false,
       "properties": {
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "reason": {
           "$ref": "#/$defs/StableId"
         },
@@ -108,6 +119,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "reason"
       ],
       "type": "object"
@@ -115,6 +127,9 @@
     {
       "additionalProperties": false,
       "properties": {
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "policy_id": {
           "$ref": "#/$defs/StableId"
         },
@@ -129,6 +144,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "policy_id"
       ],
       "type": "object"
@@ -136,6 +152,9 @@
     {
       "additionalProperties": false,
       "properties": {
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "error_code": {
           "$ref": "#/$defs/StableId"
         },
@@ -150,6 +169,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "error_code"
       ],
       "type": "object"
@@ -157,6 +177,9 @@
     {
       "additionalProperties": false,
       "properties": {
+        "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "checkpoint": {
           "$ref": "#/$defs/ArtifactReference"
         },
@@ -171,6 +194,7 @@
       "required": [
         "result",
         "schema_version",
+        "assignment_id",
         "checkpoint"
       ],
       "type": "object"

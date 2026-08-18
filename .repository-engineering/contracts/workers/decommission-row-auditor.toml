@@ -1,0 +1,96 @@
+schema_version = "v0"
+role_id = "decommission-row-auditor"
+public_description = "A fresh worker audits exactly one manifest row and returns a validated credential-free result."
+fresh_context_required = true
+concurrency = "bounded_parallel"
+cancellation_supported = true
+idempotency_key_required = true
+result_validation_required = true
+
+[state]
+declaration = "declared"
+implementation = "unported"
+certification = "uncertified"
+authority = "legacy"
+retirement = "not_started"
+
+[[assignment_fields]]
+name = "row_id"
+field_type = "stable_id"
+required = true
+allowed_values = []
+
+[[result_fields]]
+name = "row_id"
+field_type = "stable_id"
+required = true
+allowed_values = []
+
+[[result_fields]]
+name = "verdict"
+field_type = "stable_id"
+required = true
+allowed_values = ["confirmed", "refuted", "unverifiable"]
+
+[[result_fields]]
+name = "record"
+field_type = "artifact_reference"
+required = true
+allowed_values = []
+
+[terminal_result_correlation]
+assignment_field = "row_id"
+envelope_field = "assignment_id"
+success_payload_field = "row_id"
+required_variants = ["succeeded", "held", "cancelled", "policy_violated", "failed", "recovery_required"]
+correlation = "all_equal"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".claude/agents/decommission-row-auditor.md"
+sha256 = "sha256:770352bab0259ab636c42e8cc75df47db134536deade7c77c6ec107d449b5f3d"
+media_type = "text/markdown"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".agents/skills/audit-row/SKILL.md"
+sha256 = "sha256:f74a93661cd3956c879834ee18114f955addf2daab04ec16dca0e4500084a10a"
+media_type = "text/markdown"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".agents/skills/audit-carried-rows/references/record-format.md"
+sha256 = "sha256:00139d0dc6eb954777998162ef824f401f486cadf8603ef620349efbcb0f7a1b"
+media_type = "text/markdown"
+
+[[semantic_claims]]
+field_groups = ["assignment_fields", "result_fields", "fresh_context_required", "concurrency", "result_validation_required"]
+status = "legacy_observed"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".claude/agents/decommission-row-auditor.md"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-row/SKILL.md"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-carried-rows/references/record-format.md"
+
+[[semantic_claims]]
+field_groups = ["terminal_result_correlation", "cancellation_supported", "idempotency_key_required"]
+status = "successor_requirement"
+
+[[semantic_claims.sources]]
+source_kind = "successor_decision"
+decision_id = "terminal-correlation-v0"
+
+[[semantic_claims]]
+field_groups = ["state"]
+status = "successor_requirement"
+
+[[semantic_claims.sources]]
+source_kind = "successor_decision"
+decision_id = "inert-migration-boundary-v0"

@@ -5,6 +5,14 @@ activation_eligibility = "none"
 active_capability_contracts = []
 active_worker_roles = []
 
+[[declared_capability_contracts]]
+id = "audit-carried-rows"
+path = ".repository-engineering/contracts/capabilities/audit-carried-rows.toml"
+
+[[declared_worker_roles]]
+id = "decommission-row-auditor"
+path = ".repository-engineering/contracts/workers/decommission-row-auditor.toml"
+
 [compatibility]
 contract_family = "repository-engineering"
 minimum_reader = "v0"

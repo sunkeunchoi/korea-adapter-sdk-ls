@@ -3,18 +3,18 @@
   "artifacts": [
     {
       "path": ".repository-engineering/conformance/v0/cross-record.json",
-      "sha256": "sha256:f0573af5003f2f3417aa1b5070fa8e0067888d72c9f3b77a4cdb2158a551fc03",
-      "byte_length": "311"
+      "sha256": "sha256:0e6b1019af6e77a30a568020fdf47311b96efe3594e58a1d72311f3cfee89ded",
+      "byte_length": "710"
     },
     {
       "path": ".repository-engineering/conformance/v0/manifest.json",
-      "sha256": "sha256:620e519fa2d39cbc8bbb1996c9a1e21b579751ba3c8f17e893ab820affb0859d",
+      "sha256": "sha256:cfb0b3d5d5e90bb546b5dcb302d62209f2e88549ee9ac1247ac85873310e0784",
       "byte_length": "795"
     },
     {
       "path": ".repository-engineering/conformance/v0/structural.json",
-      "sha256": "sha256:c71987c48bdccd9d3944a4f1a456c1b33f3fbd7592cdd3c3a890d11818cc351c",
-      "byte_length": "325"
+      "sha256": "sha256:00ab511d83d46d84ec9c0aea3043e1870dd546cc471f25e1fd4867c388125ea0",
+      "byte_length": "482"
     },
     {
       "path": ".repository-engineering/conformance/v0/version-set-vector.json",
@@ -23,12 +23,12 @@
     },
     {
       "path": ".repository-engineering/package.lock.json",
-      "sha256": "sha256:ee5124169dea80fc72dc3210aa1a424da59fb01da62d54e3606b8efaac597b81",
-      "byte_length": "2395"
+      "sha256": "sha256:694b646b502ec8c423cc9014cb6f78abb351404727f067a0990d687becaea60e",
+      "byte_length": "3015"
     },
     {
       "path": ".repository-engineering/schema-registry.json",
-      "sha256": "sha256:fb76e32d57c56f0905ed5e1beafde6698c3375e9ea7b6c7322837091f25799cd",
+      "sha256": "sha256:ddfccd697675f692dbfd00ebb3b9e4d6ec9c75491d06a660cd847af3ec6695cd",
       "byte_length": "5358"
     },
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".repository-engineering/schemas/v0/capability-contract.schema.json",
-      "sha256": "sha256:ef6ee1932d340d816e3e207e0a2bcd2c6651784bb5a50a40cc0b5f18edda0614",
-      "byte_length": "5481"
+      "sha256": "sha256:6b5275778c3e3be93a028258d525f89ddcd05c152de94d480da2dd3a2b9ad3ac",
+      "byte_length": "17483"
     },
     {
       "path": ".repository-engineering/schemas/v0/discovery-policy.schema.json",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".repository-engineering/schemas/v0/exact-lock.schema.json",
-      "sha256": "sha256:cd7428d5b18c915e44f5e22ab2ad17dfcdeac6f78e28daa15e7c74f90a4b53c3",
-      "byte_length": "4006"
+      "sha256": "sha256:47c15db116add234d77a25736e53ad4cfec2454b274ecd20fb0b11f24ac31025",
+      "byte_length": "4378"
     },
     {
       "path": ".repository-engineering/schemas/v0/migration-ledger.schema.json",
@@ -73,8 +73,8 @@
     },
     {
       "path": ".repository-engineering/schemas/v0/package-manifest.schema.json",
-      "sha256": "sha256:c76b4f1d95359d1c28351ca4627f47872e7990ed5e95e63f83e562d4e8af0ea2",
-      "byte_length": "4290"
+      "sha256": "sha256:9261a88e59f78bd889a24637263a627c0ccf8740fd792c7497879cdae5044360",
+      "byte_length": "4951"
     },
     {
       "path": ".repository-engineering/schemas/v0/runtime-installation-state.schema.json",
@@ -93,18 +93,18 @@
     },
     {
       "path": ".repository-engineering/schemas/v0/worker-result.schema.json",
-      "sha256": "sha256:a483b253778f7d577e1d102bed621136fd296db58a6f5c36e534dffa3c6f7d35",
-      "byte_length": "3806"
+      "sha256": "sha256:0f82d9c26a86d7d1f0ee187c5d419fa2ae3768827d82d239e1aa6e27a3db354f",
+      "byte_length": "4406"
     },
     {
       "path": ".repository-engineering/schemas/v0/worker-role-contract.schema.json",
-      "sha256": "sha256:52f55c66f5394bfb62aac975edf9efd967c3f63632b473ba55dc0bc76d3d1406",
-      "byte_length": "3555"
+      "sha256": "sha256:27b047f325438c7ac7e7500f1edace164c1e46deeb67433bf4ed35229d183207",
+      "byte_length": "9629"
     },
     {
       "path": "docs/reference/repository-engineering-package.md",
-      "sha256": "sha256:1e5aecd28f8e958d24526a6d8c3a3dad19f7ac52fa7d1b6fe9037a997b3bd02a",
-      "byte_length": "13145"
+      "sha256": "sha256:a44c6cedc8d33b8194c2df91c27e756d8810c019e99fa7aa56193d19fd1955c2",
+      "byte_length": "20172"
     }
   ]
 }

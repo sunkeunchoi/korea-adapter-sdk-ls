@@ -48,6 +48,22 @@
       ],
       "type": "object"
     },
+    "DeclaredContractRegistration": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "type": "object"
+    },
     "OptionalComponent": {
       "oneOf": [
         {
@@ -157,6 +173,20 @@
     },
     "compatibility": {
       "$ref": "#/$defs/Compatibility"
+    },
+    "declared_capability_contracts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DeclaredContractRegistration"
+      },
+      "type": "array"
+    },
+    "declared_worker_roles": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DeclaredContractRegistration"
+      },
+      "type": "array"
     },
     "optional_components": {
       "items": {

@@ -50,6 +50,12 @@
     "NormativeLockClosure": {
       "additionalProperties": false,
       "properties": {
+        "capability_contracts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactReference"
+          },
+          "type": "array"
+        },
         "conformance_corpus": {
           "$ref": "#/$defs/ArtifactReference"
         },
@@ -70,6 +76,12 @@
         },
         "schema_registry": {
           "$ref": "#/$defs/ArtifactReference"
+        },
+        "worker_role_contracts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactReference"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -78,6 +90,8 @@
         "migration_ledger",
         "schema_registry",
         "conformance_corpus",
+        "capability_contracts",
+        "worker_role_contracts",
         "optional_components"
       ],
       "type": "object"

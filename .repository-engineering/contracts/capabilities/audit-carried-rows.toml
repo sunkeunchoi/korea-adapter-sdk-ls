@@ -1,0 +1,232 @@
+schema_version = "v0"
+capability_id = "audit-carried-rows"
+public_description = "Audits every carried or discard row and produces credential-free per-row records plus a roll-up gate."
+autonomy = "A3"
+safety_overlays = ["no_external_mutation", "human_gate", "path_confined", "redacted_diagnostics"]
+inputs = []
+outcomes = ["succeeded", "held", "cancelled", "policy_violated", "failed", "recovery_required"]
+touched_paths = [
+  ".compound-engineering/runs/audit-carried-rows",
+  "docs/migration-source/audit/records",
+  "docs/migration-source/audit/decommission-audit-report.md",
+  "docs/migration-source-extraction-ledger.md",
+]
+evidence_obligations = [
+  "per-row-credential-free-records",
+  "roll-up-gate-report",
+  "decommission-audit-validator-pass",
+  "source-coverage-reconciliation",
+]
+human_gates = ["attended-paper-readonly-session", "unverifiable-maintainer-acceptance"]
+legacy_authority_dependencies = ["capability--audit-row", "run-state-consumer--audit-carried-rows"]
+worker_roles = ["decommission-row-auditor"]
+scenario_references = []
+
+[state]
+declaration = "declared"
+implementation = "unported"
+certification = "uncertified"
+authority = "legacy"
+retirement = "not_started"
+
+[credential_boundary]
+credential_free_scopes = ["package-authored-state", "checkpoints", "committed-records", "diagnostics"]
+
+[credential_boundary.future_executor]
+attendance = "required"
+credential_scope = "minimum"
+environment = "paper-readonly"
+review_requirements = ["credential-sourcing", "process-environment-isolation", "redaction", "trading-environment-selection"]
+
+[coordination_semantics]
+coverage = "complete_manifest_reconciliation"
+assignment = "fresh_worker_per_row"
+checkpoint_owner = "orchestrator_only"
+phases = ["discovering", "dispatching", "rolling_up", "gate_computed", "complete"]
+roll_up = "serial_after_all_rows_terminal"
+
+[[coordination_semantics.dispatch_cohorts]]
+cohort_id = "knowledge-discard"
+candidate_classes = ["knowledge", "discard"]
+concurrency = "parallel"
+
+[[coordination_semantics.dispatch_cohorts]]
+cohort_id = "behavioral"
+candidate_classes = ["behavioral"]
+concurrency = "bounded_parallel"
+max_concurrency = 2
+
+[coordination_semantics.resume]
+completed_assignment_policy = "skip_after_record_revalidation"
+orphan_record_policy = "reconcile_as_objective_fact"
+mismatch_outcome = "held"
+
+[[coordination_semantics.terminal_conditions]]
+outcome = "succeeded"
+condition = "complete_coverage_and_committed_validator_pass"
+
+[[coordination_semantics.terminal_conditions]]
+outcome = "held"
+condition = "unresolved_rows"
+
+[[coordination_semantics.terminal_conditions]]
+outcome = "recovery_required"
+condition = "inconsistent_persisted_state"
+
+[evidence_status]
+legacy_status = "available_validated"
+successor_implementation = "absent"
+parity = "unproved"
+certification = "uncertified"
+legacy_evidence_satisfies_successor = false
+
+[[evidence_status.legacy_artifacts]]
+schema_version = "v0"
+path = "docs/migration-source/audit/decommission-audit-report.md"
+sha256 = "sha256:cd343c90f192b3a4ba781a3d1e0800969e11f70843905d41239ef45f09837149"
+media_type = "text/markdown"
+
+[[evidence_status.legacy_artifact_sets]]
+artifact_set_id = "decommission-audit-record-corpus"
+members = [
+  "docs/migration-source/audit/records/L1.yaml",
+  "docs/migration-source/audit/records/L2.yaml",
+  "docs/migration-source/audit/records/L3.yaml",
+  "docs/migration-source/audit/records/L4.yaml",
+  "docs/migration-source/audit/records/L5.yaml",
+  "docs/migration-source/audit/records/L6.yaml",
+  "docs/migration-source/audit/records/L7.yaml",
+  "docs/migration-source/audit/records/L8.yaml",
+  "docs/migration-source/audit/records/L9.yaml",
+  "docs/migration-source/audit/records/L10.yaml",
+  "docs/migration-source/audit/records/L11.yaml",
+  "docs/migration-source/audit/records/L12.yaml",
+  "docs/migration-source/audit/records/L13.yaml",
+  "docs/migration-source/audit/records/L14.yaml",
+  "docs/migration-source/audit/records/L15.yaml",
+  "docs/migration-source/audit/records/L16.yaml",
+  "docs/migration-source/audit/records/L17.yaml",
+  "docs/migration-source/audit/records/L18.yaml",
+  "docs/migration-source/audit/records/L19.yaml",
+  "docs/migration-source/audit/records/L20.yaml",
+  "docs/migration-source/audit/records/L21.yaml",
+  "docs/migration-source/audit/records/L22.yaml",
+  "docs/migration-source/audit/records/L23.yaml",
+  "docs/migration-source/audit/records/L24.yaml",
+  "docs/migration-source/audit/records/L25.yaml",
+  "docs/migration-source/audit/records/L26.yaml",
+]
+aggregate_digest = "sha256:216974d42107f6e4fbbcba6a1fa4df7638fdfc62304378ba6f93f8892fea307a"
+
+[evidence_status.legacy_artifact_sets.validation_basis]
+schema_version = "v0"
+path = "crates/ls-trackers/tests/decommission_audit.rs"
+sha256 = "sha256:7c943993cd0c5bf197baf7a3c9e78ceb6e5306b60a22379910f503c6f82c7ffe"
+media_type = "text/x-rust"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".agents/skills/audit-carried-rows/SKILL.md"
+sha256 = "sha256:af73dd9d0ed8eaed9d6de01722a8106c4ac5f69f5de5a1a2b6aacb90317c7572"
+media_type = "text/markdown"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".agents/skills/audit-row/SKILL.md"
+sha256 = "sha256:f74a93661cd3956c879834ee18114f955addf2daab04ec16dca0e4500084a10a"
+media_type = "text/markdown"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = ".agents/skills/audit-carried-rows/references/record-format.md"
+sha256 = "sha256:00139d0dc6eb954777998162ef824f401f486cadf8603ef620349efbcb0f7a1b"
+media_type = "text/markdown"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = "docs/migration-source/audit/manifest.yaml"
+sha256 = "sha256:2c72d2cdd3e86c72b153732f516c866542328b4d72e8ed70e51b2a64cfbe32bf"
+media_type = "application/yaml"
+
+[[knowledge_references]]
+schema_version = "v0"
+path = "crates/ls-trackers/tests/decommission_audit.rs"
+sha256 = "sha256:7c943993cd0c5bf197baf7a3c9e78ceb6e5306b60a22379910f503c6f82c7ffe"
+media_type = "text/x-rust"
+
+[[external_source_requirements]]
+requirement_id = "korea-broker-sdk-ls"
+purpose = "per-row-old-source-audit"
+required_phase = "dispatching"
+status = "unavailable_unproved"
+unavailable_capability_outcome = "held"
+unavailable_worker_verdict = "unverifiable"
+
+[[semantic_claims]]
+field_groups = ["coordination_semantics", "inputs", "outcomes", "worker_roles"]
+status = "legacy_observed"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-carried-rows/SKILL.md"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-row/SKILL.md"
+
+[[semantic_claims]]
+field_groups = ["autonomy", "evidence_obligations", "human_gates", "safety_overlays", "touched_paths", "legacy_authority_dependencies"]
+status = "legacy_observed"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-carried-rows/SKILL.md"
+
+[[semantic_claims.sources]]
+source_kind = "knowledge_reference"
+path = ".agents/skills/audit-carried-rows/references/record-format.md"
+
+[[semantic_claims.sources]]
+source_kind = "migration_ledger_rows"
+logical_ids = ["capability--audit-row", "run-state-consumer--audit-carried-rows"]
+
+[[semantic_claims]]
+field_groups = ["credential_boundary"]
+status = "successor_requirement"
+
+[[semantic_claims.sources]]
+source_kind = "successor_decision"
+decision_id = "credential-boundary-v0"
+
+[[semantic_claims]]
+field_groups = ["external_source_requirements[*].purpose"]
+status = "legacy_observed"
+
+[[semantic_claims.sources]]
+source_kind = "worker_knowledge_reference"
+role_id = "decommission-row-auditor"
+path = ".claude/agents/decommission-row-auditor.md"
+
+[[semantic_claims]]
+field_groups = ["external_source_requirements[*].status", "external_source_requirements[*].locator", "external_source_requirements[*].digest"]
+status = "unavailable_unproved"
+
+[[semantic_claims.sources]]
+source_kind = "external_source_requirement"
+requirement_id = "korea-broker-sdk-ls"
+
+[[semantic_claims]]
+field_groups = ["evidence_status.legacy"]
+status = "legacy_observed"
+
+[[semantic_claims.sources]]
+source_kind = "legacy_artifact_set"
+artifact_set_id = "decommission-audit-record-corpus"
+
+[[semantic_claims]]
+field_groups = ["evidence_status.successor", "state", "executor", "scenario_references"]
+status = "successor_requirement"
+
+[[semantic_claims.sources]]
+source_kind = "successor_decision"
+decision_id = "inert-migration-boundary-v0"
