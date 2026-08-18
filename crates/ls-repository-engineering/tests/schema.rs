@@ -6,7 +6,7 @@ use ls_repository_engineering::schema::{
 use ls_repository_engineering::validator::{
     validate_attempt_record, validate_capability_contract_vocabulary,
     validate_first_slice_contract_state, validate_first_slice_package,
-    validate_worker_role_contract_vocabulary,
+    validate_worker_result_correlation, validate_worker_role_contract_vocabulary,
 };
 
 const PACKAGE: &str = include_str!("fixtures/schema/package-manifest.valid.json");
@@ -45,7 +45,7 @@ fn structural_catalog_is_closed_and_draft_2020_12() {
 }
 
 #[test]
-fn every_authority_bearing_state_stays_legacy_and_unported() {
+fn inactive_contract_state_allows_only_unported_or_implemented() {
     let valid = ContractState {
         declaration: DeclarationState::Declared,
         implementation: ImplementationState::Unported,
@@ -55,11 +55,13 @@ fn every_authority_bearing_state_stays_legacy_and_unported() {
     };
     assert!(validate_first_slice_contract_state(&valid, "fixture").is_empty());
 
+    let implemented = ContractState {
+        implementation: ImplementationState::Implemented,
+        ..valid.clone()
+    };
+    assert!(validate_first_slice_contract_state(&implemented, "fixture").is_empty());
+
     let mutations = [
-        ContractState {
-            implementation: ImplementationState::Implemented,
-            ..valid.clone()
-        },
         ContractState {
             certification: CertificationState::Certified,
             ..valid.clone()
@@ -76,6 +78,71 @@ fn every_authority_bearing_state_stays_legacy_and_unported() {
     for mutation in mutations {
         assert!(!validate_first_slice_contract_state(&mutation, "fixture").is_empty());
     }
+}
+
+#[test]
+fn implemented_contracts_require_closed_component_evidence() {
+    let artifact = |path: &str| {
+        serde_json::json!({
+            "schema_version": "v0",
+            "path": path,
+            "sha256": format!("sha256:{}", "1".repeat(64)),
+            "media_type": "application/json"
+        })
+    };
+
+    let mut capability: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/fidelity/audit-carried-rows.capability.json"
+    ))
+    .unwrap();
+    capability["state"]["implementation"] = serde_json::json!("implemented");
+    capability["executor"] = artifact(".repository-engineering/executors/audit-carried-rows.json");
+    capability["scenario_references"] = serde_json::json!([artifact(
+        ".repository-engineering/scenarios/audit-carried-rows/implementation.json"
+    )]);
+    capability["implementation_evidence"] = serde_json::json!({
+        "component_kind": "capability",
+        "component_id": "audit-carried-rows",
+        "subject_manifest": artifact(".repository-engineering/implementation-subjects/audit-carried-rows.json"),
+        "evidence": artifact(".repository-engineering/evidence/implementation/audit-carried-rows.json"),
+        "validation_basis": artifact(".repository-engineering/conformance/v0/runtime.json")
+    });
+    capability["evidence_status"]["successor_implementation"] =
+        serde_json::json!("available_validated");
+    let capability: CapabilityContract = serde_json::from_value(capability).unwrap();
+    assert!(validate_capability_contract_vocabulary(&capability).is_empty());
+
+    for missing in ["executor", "scenario_references", "implementation_evidence"] {
+        let mut invalid = capability.clone();
+        match missing {
+            "executor" => invalid.executor = None,
+            "scenario_references" => invalid.scenario_references.clear(),
+            "implementation_evidence" => invalid.implementation_evidence = None,
+            _ => unreachable!(),
+        }
+        assert!(validate_capability_contract_vocabulary(&invalid)
+            .iter()
+            .any(|finding| finding.code == "implementation.component_evidence.incomplete"));
+    }
+
+    let mut worker: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/fidelity/decommission-row-auditor.worker.json"
+    ))
+    .unwrap();
+    worker["state"]["implementation"] = serde_json::json!("implemented");
+    worker["role_bundle"] = artifact(".repository-engineering/roles/decommission-row-auditor.json");
+    worker["scenario_references"] = serde_json::json!([artifact(
+        ".repository-engineering/scenarios/audit-carried-rows/implementation.json"
+    )]);
+    worker["implementation_evidence"] = serde_json::json!({
+        "component_kind": "worker_role",
+        "component_id": "decommission-row-auditor",
+        "subject_manifest": artifact(".repository-engineering/implementation-subjects/audit-carried-rows.json"),
+        "evidence": artifact(".repository-engineering/evidence/implementation/decommission-row-auditor.json"),
+        "validation_basis": artifact(".repository-engineering/conformance/v0/runtime.json")
+    });
+    let worker: WorkerRoleContract = serde_json::from_value(worker).unwrap();
+    assert!(validate_worker_role_contract_vocabulary(&worker).is_empty());
 }
 
 #[test]
@@ -134,7 +201,7 @@ fn lexical_contracts_reject_unsafe_ids_paths_and_digests() {
 #[test]
 fn worker_result_requires_an_explicit_tagged_outcome() {
     let held = serde_json::from_str::<WorkerResult>(
-        r#"{"schema_version":"v0","result":"held","assignment_id":"L1","reason":"human_gate_required"}"#,
+        r#"{"schema_version":"v0","result":"held","attempt_id":"attempt-1","invocation_id":"invocation-1","assignment_id":"L1","worker_instance_id":"worker-1","worker_instance_receipt":{"schema_version":"v0","path":"receipts/worker-1.json","sha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","media_type":"application/json"},"reason":"human_gate_required"}"#,
     )
     .expect("typed held result");
     assert_eq!(serde_json::to_value(held).unwrap()["result"], "held");
@@ -152,8 +219,11 @@ fn worker_result_requires_an_explicit_tagged_outcome() {
 #[test]
 fn every_worker_result_variant_requires_assignment_correlation() {
     let artifact = r#"{"schema_version":"v0","path":"records/L1.yaml","sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","media_type":"application/yaml"}"#;
+    let common = r#""attempt_id":"attempt-1","invocation_id":"invocation-1","assignment_id":"L1","worker_instance_id":"worker-1","worker_instance_receipt":{"schema_version":"v0","path":"receipts/worker-1.json","sha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","media_type":"application/json"}"#;
     let variants = [
-        format!(r#"{{"schema_version":"v0","result":"succeeded","artifacts":[{artifact}]}}"#),
+        format!(
+            r#"{{"schema_version":"v0","result":"succeeded","payload":{{"row_id":"L1","verdict":"unverifiable","record":{artifact}}}}}"#
+        ),
         r#"{"schema_version":"v0","result":"held","reason":"blocked"}"#.to_owned(),
         r#"{"schema_version":"v0","result":"cancelled","reason":"cancelled"}"#.to_owned(),
         r#"{"schema_version":"v0","result":"policy_violated","policy_id":"policy"}"#.to_owned(),
@@ -162,11 +232,50 @@ fn every_worker_result_variant_requires_assignment_correlation() {
             r#"{{"schema_version":"v0","result":"recovery_required","checkpoint":{artifact}}}"#
         ),
     ];
-    for variant in variants {
+    for variant in &variants {
         assert!(serde_json::from_str::<WorkerResult>(&variant).is_err());
-        let correlated = variant.replacen('{', r#"{"assignment_id":"L1","#, 1);
+        let correlated = variant.replacen('{', &format!(r#"{{{common},"#), 1);
         assert!(serde_json::from_str::<WorkerResult>(&correlated).is_ok());
     }
+
+    let success = variants[0].replacen('{', &format!(r#"{{{common},"#), 1);
+    let success: WorkerResult = serde_json::from_str(&success).unwrap();
+    let stable = |value: &str| ls_repository_engineering::schema::StableId(value.to_owned());
+    assert!(validate_worker_result_correlation(
+        &success,
+        &stable("attempt-1"),
+        &stable("invocation-1"),
+        &stable("L1"),
+    )
+    .is_empty());
+
+    let wrong_row = serde_json::to_string(&success)
+        .unwrap()
+        .replace("\"row_id\":\"L1\"", "\"row_id\":\"L2\"");
+    let wrong_row: WorkerResult = serde_json::from_str(&wrong_row).unwrap();
+    assert!(validate_worker_result_correlation(
+        &wrong_row,
+        &stable("attempt-1"),
+        &stable("invocation-1"),
+        &stable("L1"),
+    )
+    .iter()
+    .any(|finding| finding.code == "worker_result.success_row.mismatch"));
+
+    assert!(validate_worker_result_correlation(
+        &success,
+        &stable("stale-attempt"),
+        &stable("invocation-1"),
+        &stable("L1"),
+    )
+    .iter()
+    .any(|finding| finding.code == "worker_result.correlation.mismatch"));
+
+    let success = serde_json::to_string(&success).unwrap();
+    assert!(serde_json::from_str::<WorkerResult>(
+        &success.replace("\"payload\"", "\"payload\":{},\"payload_extra\"")
+    )
+    .is_err());
 }
 
 #[test]

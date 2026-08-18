@@ -226,6 +226,17 @@ fn validate_referenced_artifacts(
     workers: &[WorkerRoleContract],
 ) -> Result<(), AuthoredError> {
     for capability in capabilities {
+        if let Some(reference) = &capability.executor {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        for reference in &capability.scenario_references {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        if let Some(evidence) = &capability.implementation_evidence {
+            validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
+            validate_artifact_reference(root, tracked, &evidence.evidence)?;
+            validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+        }
         for reference in &capability.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }
@@ -252,6 +263,17 @@ fn validate_referenced_artifacts(
         }
     }
     for worker in workers {
+        if let Some(reference) = &worker.role_bundle {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        for reference in &worker.scenario_references {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        if let Some(evidence) = &worker.implementation_evidence {
+            validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
+            validate_artifact_reference(root, tracked, &evidence.evidence)?;
+            validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+        }
         for reference in &worker.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }

@@ -420,6 +420,23 @@ pub struct EvidenceStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ImplementationComponentKind {
+    Capability,
+    WorkerRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationEvidenceReference {
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub subject_manifest: ArtifactReference,
+    pub evidence: ArtifactReference,
+    pub validation_basis: ArtifactReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ExternalSourceStatus {
     UnavailableUnproved,
 }
@@ -526,6 +543,8 @@ pub struct CapabilityContract {
     pub evidence_status: Option<EvidenceStatus>,
     pub human_gates: Vec<StableId>,
     pub executor: Option<ArtifactReference>,
+    #[serde(default)]
+    pub implementation_evidence: Option<ImplementationEvidenceReference>,
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub external_source_requirements: Vec<ExternalSourceRequirement>,
@@ -576,6 +595,12 @@ pub struct WorkerRoleContract {
     pub result_validation_required: bool,
     pub terminal_result_correlation: Option<TerminalResultCorrelation>,
     #[serde(default)]
+    pub role_bundle: Option<ArtifactReference>,
+    #[serde(default)]
+    pub scenario_references: Vec<ArtifactReference>,
+    #[serde(default)]
+    pub implementation_evidence: Option<ImplementationEvidenceReference>,
+    #[serde(default)]
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub semantic_claims: Vec<SemanticClaim>,
@@ -586,34 +611,74 @@ pub struct WorkerRoleContract {
 pub enum WorkerResult {
     Succeeded {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
-        artifacts: Vec<ArtifactReference>,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
+        payload: AuditSuccessPayload,
     },
     Held {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         reason: StableId,
     },
     Cancelled {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         reason: StableId,
     },
     PolicyViolated {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         policy_id: StableId,
     },
     Failed {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         error_code: StableId,
     },
     RecoveryRequired {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         checkpoint: ArtifactReference,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditVerdict {
+    Confirmed,
+    Refuted,
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuditSuccessPayload {
+    pub row_id: StableId,
+    pub verdict: AuditVerdict,
+    pub record: ArtifactReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
