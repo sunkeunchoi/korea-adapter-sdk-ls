@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 use crate::adapters::{canonical_root, confined_relative, existing_real_path, reject_symlink};
 use crate::model::{
     valid_digest, valid_id, CheckpointGeneration, CheckpointHead, CheckpointRow, EffectEntry,
+    PublishedHead, RecoveredCheckpoint,
 };
+use crate::ports::CheckpointStore;
 
 const MAX_CHECKPOINT_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -41,19 +43,6 @@ impl FaultInjector for NoFault {
     fn should_fail(&mut self, _point: CheckpointFault) -> bool {
         false
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishedHead {
-    pub sequence: u64,
-    pub generation_digest: String,
-    pub head_digest: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecoveredCheckpoint {
-    pub head: PublishedHead,
-    pub generation: CheckpointGeneration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,6 +359,26 @@ impl<F: FaultInjector> CheckpointFs<F> {
     }
 }
 
+impl<F: FaultInjector> CheckpointStore for CheckpointFs<F> {
+    type Error = CheckpointError;
+
+    fn create(&mut self, generation: CheckpointGeneration) -> Result<PublishedHead, Self::Error> {
+        CheckpointFs::create(self, generation)
+    }
+
+    fn publish(
+        &mut self,
+        observed_generation_digest: &str,
+        generation: CheckpointGeneration,
+    ) -> Result<PublishedHead, Self::Error> {
+        CheckpointFs::publish(self, observed_generation_digest, generation)
+    }
+
+    fn recover(&mut self, caller_pin: &str) -> Result<RecoveredCheckpoint, Self::Error> {
+        CheckpointFs::recover(self, caller_pin)
+    }
+}
+
 fn validate_generation(
     generation: &CheckpointGeneration,
     previous: Option<&CheckpointGeneration>,
@@ -503,17 +512,21 @@ fn valid_phase_transition(previous: &crate::model::Phase, next: &crate::model::P
         (previous, next),
         (
             Phase::Discovering,
-            Phase::Discovering | Phase::Dispatching | Phase::RecoveryRequired
+            Phase::Discovering | Phase::Dispatching | Phase::Cancelling | Phase::RecoveryRequired
         ) | (
             Phase::Dispatching,
-            Phase::Dispatching | Phase::RollingUp | Phase::RecoveryRequired
+            Phase::Dispatching | Phase::RollingUp | Phase::Cancelling | Phase::RecoveryRequired
         ) | (
             Phase::RollingUp,
-            Phase::RollingUp | Phase::GateComputed | Phase::RecoveryRequired
+            Phase::RollingUp | Phase::GateComputed | Phase::Cancelling | Phase::RecoveryRequired
         ) | (
             Phase::GateComputed,
             Phase::GateComputed | Phase::Complete | Phase::RecoveryRequired
-        ) | (Phase::RecoveryRequired, Phase::RecoveryRequired)
+        ) | (
+            Phase::Cancelling,
+            Phase::Cancelling | Phase::Cancelled | Phase::RecoveryRequired
+        ) | (Phase::Cancelled, Phase::Cancelled)
+            | (Phase::RecoveryRequired, Phase::RecoveryRequired)
     )
 }
 

@@ -1,7 +1,7 @@
 use repository_engineering_runtime::machine::SweepMachine;
 use repository_engineering_runtime::model::{
-    AuditRecord, AuditVerdict, MachineError, Phase, RowInput, RunRequest, TerminalOutcome,
-    WorkerResult,
+    AcceptedResultCapsule, AuditRecord, AuditVerdict, MachineError, Phase, RowInput, RunRequest,
+    TerminalOutcome, WorkerResult,
 };
 use sha2::{Digest, Sha256};
 
@@ -37,7 +37,7 @@ fn request(limit: usize) -> RunRequest {
 fn terminal_json(
     intent: &repository_engineering_runtime::model::DispatchIntent,
     verdict: AuditVerdict,
-) -> (WorkerResult, Vec<u8>) {
+) -> AcceptedResultCapsule {
     let record = AuditRecord {
         schema_version: "v0".to_owned(),
         row_id: intent.row_id.clone(),
@@ -45,10 +45,8 @@ fn terminal_json(
     };
     let record_bytes = serde_json::to_vec(&record).unwrap();
     let record_digest = format!("sha256:{:x}", Sha256::digest(&record_bytes));
-    let receipt_digest = format!(
-        "sha256:{:x}",
-        Sha256::digest(intent.worker_instance_id.as_bytes())
-    );
+    let receipt_bytes = intent.worker_instance_id.as_bytes().to_vec();
+    let receipt_digest = format!("sha256:{:x}", Sha256::digest(&receipt_bytes));
     let result: WorkerResult = serde_json::from_value(serde_json::json!({
         "schema_version": "v0",
         "result": "succeeded",
@@ -74,7 +72,12 @@ fn terminal_json(
         }
     }))
     .unwrap();
-    (result, record_bytes)
+    AcceptedResultCapsule {
+        schema_version: "v0".to_owned(),
+        result,
+        record_bytes: Some(record_bytes),
+        worker_instance_receipt_bytes: receipt_bytes,
+    }
 }
 
 #[test]
@@ -88,8 +91,8 @@ fn complete_sweep_is_bounded_and_projects_manifest_order() {
         assert!(!intents.is_empty());
         assert!(intents.len() <= 2);
         for intent in intents.into_iter().rev() {
-            let (result, record) = terminal_json(&intent, AuditVerdict::Confirmed);
-            machine.accept_terminal(result, Some(&record)).unwrap();
+            let capsule = terminal_json(&intent, AuditVerdict::Confirmed);
+            machine.accept_capsule(&capsule).unwrap();
         }
     }
     assert_eq!(machine.phase(), Phase::RollingUp);
@@ -120,13 +123,13 @@ fn correlation_conflict_and_replay_fail_closed() {
     let mut machine = SweepMachine::new(request(2)).unwrap();
     machine.begin_dispatch().unwrap();
     let intent = machine.request_dispatches().unwrap().remove(0);
-    let (result, record) = terminal_json(&intent, AuditVerdict::Unverifiable);
+    let capsule = terminal_json(&intent, AuditVerdict::Unverifiable);
 
-    let mut stale: serde_json::Value = serde_json::to_value(&result).unwrap();
-    stale["attempt_id"] = serde_json::json!("stale-attempt");
+    let mut stale: serde_json::Value = serde_json::to_value(&capsule).unwrap();
+    stale["result"]["attempt_id"] = serde_json::json!("stale-attempt");
     assert_eq!(
         machine
-            .accept_terminal(serde_json::from_value(stale).unwrap(), Some(&record))
+            .accept_capsule(&serde_json::from_value(stale).unwrap())
             .unwrap_err(),
         MachineError::CorrelationMismatch
     );
@@ -135,18 +138,14 @@ fn correlation_conflict_and_replay_fail_closed() {
     let mut machine = SweepMachine::new(request(2)).unwrap();
     machine.begin_dispatch().unwrap();
     let intent = machine.request_dispatches().unwrap().remove(0);
-    let (result, record) = terminal_json(&intent, AuditVerdict::Confirmed);
-    machine
-        .accept_terminal(result.clone(), Some(&record))
-        .unwrap();
-    machine
-        .accept_terminal(result.clone(), Some(&record))
-        .unwrap();
-    let mut conflict = serde_json::to_value(result).unwrap();
-    conflict["payload"]["verdict"] = serde_json::json!("refuted");
+    let capsule = terminal_json(&intent, AuditVerdict::Confirmed);
+    machine.accept_capsule(&capsule).unwrap();
+    machine.accept_capsule(&capsule).unwrap();
+    let mut conflict = serde_json::to_value(capsule).unwrap();
+    conflict["result"]["payload"]["verdict"] = serde_json::json!("refuted");
     assert_eq!(
         machine
-            .accept_terminal(serde_json::from_value(conflict).unwrap(), Some(&record))
+            .accept_capsule(&serde_json::from_value(conflict).unwrap())
             .unwrap_err(),
         MachineError::ConflictingReplay
     );
@@ -161,8 +160,8 @@ fn refuted_or_unavailable_source_produces_held_capability_outcome() {
     let mut machine = SweepMachine::new(request).unwrap();
     machine.begin_dispatch().unwrap();
     let intent = machine.request_dispatches().unwrap().remove(0);
-    let (result, record) = terminal_json(&intent, AuditVerdict::Unverifiable);
-    machine.accept_terminal(result, Some(&record)).unwrap();
+    let capsule = terminal_json(&intent, AuditVerdict::Unverifiable);
+    machine.accept_capsule(&capsule).unwrap();
     machine.finish_roll_up(&digest('8')).unwrap();
     assert_eq!(machine.complete().unwrap().outcome, TerminalOutcome::Held);
 }

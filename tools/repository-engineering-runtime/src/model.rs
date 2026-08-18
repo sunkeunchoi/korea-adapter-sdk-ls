@@ -93,6 +93,17 @@ pub enum WorkerResult {
 }
 
 impl WorkerResult {
+    pub(crate) fn schema_version(&self) -> &str {
+        match self {
+            Self::Succeeded { schema_version, .. }
+            | Self::Held { schema_version, .. }
+            | Self::Cancelled { schema_version, .. }
+            | Self::PolicyViolated { schema_version, .. }
+            | Self::Failed { schema_version, .. }
+            | Self::RecoveryRequired { schema_version, .. } => schema_version,
+        }
+    }
+
     pub(crate) fn common(&self) -> (&str, &str, &str, &str, &ArtifactReference) {
         match self {
             Self::Succeeded {
@@ -162,6 +173,15 @@ impl WorkerResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct AcceptedResultCapsule {
+    pub schema_version: String,
+    pub result: WorkerResult,
+    pub record_bytes: Option<Vec<u8>>,
+    pub worker_instance_receipt_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RowInput {
     pub row_id: String,
     pub source_available: bool,
@@ -194,6 +214,8 @@ pub enum Phase {
     RollingUp,
     GateComputed,
     Complete,
+    Cancelling,
+    Cancelled,
     RecoveryRequired,
 }
 
@@ -260,6 +282,19 @@ pub struct CheckpointHead {
     pub sequence: u64,
     pub generation_digest: String,
     pub parent_generation_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedHead {
+    pub sequence: u64,
+    pub generation_digest: String,
+    pub head_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredCheckpoint {
+    pub head: PublishedHead,
+    pub generation: CheckpointGeneration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
