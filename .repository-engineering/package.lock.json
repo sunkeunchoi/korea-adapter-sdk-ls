@@ -1,6 +1,6 @@
 {
   "schema_version": "v0",
-  "package_lock_id": "sha256:e6f25387dce6fcf5208ff09951840bac45cf16ecf23b4c9e2270cf76395a23e6",
+  "package_lock_id": "sha256:9a65c605089ac42a307d28a0d72efa226727d4c19258ab62562df84cb3936ee0",
   "normative": {
     "package": {
       "schema_version": "v0",
@@ -11,7 +11,7 @@
     "discovery_policy": {
       "schema_version": "v0",
       "path": ".repository-engineering/discovery-policy.toml",
-      "sha256": "sha256:b49058d032da57a7e5edf51ba68da06275406df36f5dfa3e6460695dc0216951",
+      "sha256": "sha256:3eee8fc11a32b46cfc5f573aaef8ed715089c1256ade1bd023fd5996aa3fa097",
       "media_type": "application/toml"
     },
     "migration_ledger": {
@@ -42,7 +42,7 @@
       {
         "schema_version": "v0",
         "path": ".repository-engineering/implementation-subjects/audit-carried-rows.json",
-        "sha256": "sha256:8abf1f5335e61e2eaec2259e531a1a70fc40b7e7783868da4fe6aae3358804ad",
+        "sha256": "sha256:d1b801092c31c3bbcb8e094600761d8b3d374038df8bb7a7e9e73cdfa5785715",
         "media_type": "application/json"
       }
     ],

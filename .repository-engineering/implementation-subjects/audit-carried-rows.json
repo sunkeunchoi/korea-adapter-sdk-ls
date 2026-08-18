@@ -65,7 +65,7 @@
     {
       "schema_version": "v0",
       "path": "tools/repository-engineering-runtime",
-      "sha256": "sha256:4e38e30a90edcae8a68efc159e379634219f100792d7e594dd35c6f8ae1f4f17",
+      "sha256": "sha256:de9939884d2198442ed131d95433a04885e60a6887997c9749436a64a355f2d6",
       "media_type": "application/vnd.rust.crate"
     }
   ],

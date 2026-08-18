@@ -102,6 +102,10 @@ reason = "operational_queue"
 prefix = "scripts/"
 reason = "repository_script"
 
+[[exclusions]]
+prefix = "tools/"
+reason = "inactive_repository_engineering_runtime"
+
 [[declared_obligations]]
 logical_id = "run-state-consumer--audit-carried-rows"
 source_kind = "ignored_state_consumer"

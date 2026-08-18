@@ -28,12 +28,12 @@
     },
     {
       "path": ".repository-engineering/implementation-subjects/audit-carried-rows.json",
-      "sha256": "sha256:8abf1f5335e61e2eaec2259e531a1a70fc40b7e7783868da4fe6aae3358804ad",
+      "sha256": "sha256:d1b801092c31c3bbcb8e094600761d8b3d374038df8bb7a7e9e73cdfa5785715",
       "byte_length": "3233"
     },
     {
       "path": ".repository-engineering/package.lock.json",
-      "sha256": "sha256:f67ae52f57b5ae07109c7ef8c37573fd42e2b811e6117ecb11a5c873577d0e4c",
+      "sha256": "sha256:73acb2222e1479fe031b77b0a8d5e4e23a48abc049ff78f2a5925f00c5a2b98b",
       "byte_length": "3580"
     },
     {
@@ -153,7 +153,7 @@
     },
     {
       "path": "docs/reference/repository-engineering-package.md",
-      "sha256": "sha256:7db09e1e3385f13b7f78a2c38e6331cd8945fc6d14b6441f6777c51ee75613fb",
+      "sha256": "sha256:9906c2a9979d6135b7a4ef1c8d599979c2d1c64a21da6b4345dba728886c96f5",
       "byte_length": "20172"
     }
   ]
