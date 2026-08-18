@@ -73,6 +73,76 @@ fn generated_reference_names_every_reviewed_row_and_separates_states() {
     assert!(text.contains("unported"));
     assert!(text.contains("uncertified"));
     assert!(text.contains("legacy"));
+    assert!(text.contains("Planned migration rows: `2`"));
+    assert_eq!(
+        text.matches("| planned | parity_not_proven | declared |")
+            .count(),
+        2
+    );
+    assert!(text.contains("successor implementation evidence `absent`"));
+    assert!(text.contains("parity `unproved`"));
+    assert!(text.contains("unavailable_unproved"));
+    assert!(text.contains("Locator | Digest"));
+    assert!(text.contains(
+        "Canonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
+    ));
+    assert!(!text.contains("successor-authoritative"));
+}
+
+#[test]
+fn conformance_and_exact_lock_include_declared_contract_semantics() {
+    let projections = compose_repository(repository_root()).unwrap();
+    let artifact = |path: &str| {
+        projections
+            .artifacts()
+            .iter()
+            .find(|artifact| artifact.relative_path == path)
+            .unwrap()
+    };
+
+    let structural: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/conformance/v0/structural.json").bytes,
+    )
+    .unwrap();
+    let validates = structural["validates"].as_array().unwrap();
+    for path in [
+        ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
+        ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
+    ] {
+        assert!(validates.iter().any(|value| value == path));
+    }
+
+    let cross_record: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/conformance/v0/cross-record.json").bytes,
+    )
+    .unwrap();
+    let rules = cross_record["rules"].as_array().unwrap();
+    for rule in [
+        "planned_replacement_is_declared_and_type_correct",
+        "legacy_dependencies_remain_legacy_authoritative_below_parity",
+        "semantic_claim_sources_resolve_and_field_groups_are_unique",
+        "legacy_evidence_does_not_satisfy_successor_evidence",
+        "terminal_results_preserve_assignment_row_correlation",
+    ] {
+        assert!(rules.iter().any(|value| value == rule));
+    }
+
+    let exact_lock: serde_json::Value =
+        serde_json::from_slice(&artifact(".repository-engineering/package.lock.json").bytes)
+            .unwrap();
+    let normative = &exact_lock["normative"];
+    assert_eq!(
+        normative["capability_contracts"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        normative["worker_role_contracts"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        normative["capability_contracts"][0]["path"],
+        ".repository-engineering/contracts/capabilities/audit-carried-rows.toml"
+    );
 }
 
 #[test]
@@ -212,6 +282,17 @@ fn semantic_cross_record_validation_rejects_false_readiness_and_broken_links() {
     ));
     assert_semantic_code(&wrong_replacement, "semantic.replacement.type_mismatch");
 
+    let mut cross_kind_id_collision = authored.clone();
+    cross_kind_id_collision.package.declared_worker_roles[0].id = cross_kind_id_collision
+        .package
+        .declared_capability_contracts[0]
+        .id
+        .clone();
+    assert_semantic_code(
+        &cross_kind_id_collision,
+        "package.declared_registry.id_collision",
+    );
+
     let mut unresolved_dependency = authored.clone();
     unresolved_dependency
         .ledger
@@ -291,11 +372,37 @@ fn semantic_cross_record_validation_rejects_false_readiness_and_broken_links() {
         .authority = AuthorityState::Successor;
     assert_semantic_code(&contradictory_description, "authority.transfer.forbidden");
 
+    let mut absent_declaration = authored.clone();
+    absent_declaration.capability_contracts[0].state.declaration =
+        ls_repository_engineering::schema::DeclarationState::Absent;
+    assert_semantic_code(&absent_declaration, "declaration.absent.forbidden");
+
     let mut unresolved_claim_source = authored.clone();
     unresolved_claim_source.worker_role_contracts[0]
         .knowledge_references
         .remove(0);
     assert_semantic_code(&unresolved_claim_source, "semantic.claim.source_unresolved");
+
+    let mut uncovered_claim = authored.clone();
+    for claim in &mut uncovered_claim.capability_contracts[0].semantic_claims {
+        claim
+            .field_groups
+            .retain(|field| field.0 != "evidence_obligations");
+    }
+    assert_semantic_code(&uncovered_claim, "semantic.claim.field_group_uncovered");
+
+    let mut worker_reference = authored.clone();
+    let worker = &mut worker_reference.worker_role_contracts[0];
+    worker.semantic_claims[0].sources[0] =
+        ls_repository_engineering::schema::SemanticClaimSource::WorkerKnowledgeReference {
+            role_id: worker.role_id.clone(),
+            path: worker.knowledge_references[0].path.clone(),
+        };
+    assert!(
+        !validate_semantic_package(repository_root(), &worker_reference)
+            .iter()
+            .any(|finding| finding.code == "semantic.claim.source_unresolved")
+    );
 
     let mut escaping_path = authored.clone();
     escaping_path.capability_contracts[0].touched_paths[0] = RepositoryPath("../escape".to_owned());
@@ -375,6 +482,14 @@ fn real_repository_generate_and_check_round_trip() {
     let projections = compose_repository(repository_root()).unwrap();
     let temp = tempfile_directory();
     generate_projection_set(&temp, &projections).unwrap();
+    assert!(check_projection_set(&temp, &projections).is_empty());
+    let first_manifest =
+        std::fs::read(temp.join(".repository-engineering/generated-set.json")).unwrap();
+    generate_projection_set(&temp, &projections).unwrap();
+    assert_eq!(
+        std::fs::read(temp.join(".repository-engineering/generated-set.json")).unwrap(),
+        first_manifest
+    );
     assert!(check_projection_set(&temp, &projections).is_empty());
     std::fs::remove_dir_all(temp).unwrap();
 }

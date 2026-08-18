@@ -666,6 +666,8 @@ pub struct NormativeLockClosure {
     pub migration_ledger: ArtifactReference,
     pub schema_registry: ArtifactReference,
     pub conformance_corpus: ArtifactReference,
+    pub capability_contracts: Vec<ArtifactReference>,
+    pub worker_role_contracts: Vec<ArtifactReference>,
     pub optional_components: Vec<OptionalComponent>,
 }
 

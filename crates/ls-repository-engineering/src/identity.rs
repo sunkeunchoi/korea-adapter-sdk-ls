@@ -4,14 +4,15 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 
 use crate::schema::{
-    ArtifactReference, NormativeLockClosure, OptionalComponent, OptionalComponentKind,
-    RepositoryPath, SchemaVersion, Sha256Digest, StableId, VersionSetComponent,
-    VersionSetFixtureInput,
+    ArtifactReference, CapabilityContract, NormativeLockClosure, OptionalComponent,
+    OptionalComponentKind, PackageManifest, RepositoryPath, SchemaVersion, SemanticClaim,
+    SemanticClaimSource, Sha256Digest, StableId, VersionSetComponent, VersionSetFixtureInput,
+    WorkerRoleContract,
 };
 
 const PACKAGE_DOMAIN: &[u8] = b"ls-repository-engineering/package-lock-id/v0\0";
@@ -53,6 +54,82 @@ pub fn package_lock_id(normative: &NormativeLockClosure) -> Result<Sha256Digest,
     let canonical = serde_json_canonicalizer::to_vec(&normalized)
         .map_err(|_| IdentityError::Canonicalization)?;
     Ok(domain_digest(PACKAGE_DOMAIN, &canonical))
+}
+
+pub fn package_manifest_semantic_digest(
+    package: &PackageManifest,
+) -> Result<Sha256Digest, IdentityError> {
+    let mut normalized = package.clone();
+    normalized
+        .declared_capability_contracts
+        .sort_by(|left, right| left.id.cmp(&right.id).then(left.path.cmp(&right.path)));
+    normalized
+        .declared_worker_roles
+        .sort_by(|left, right| left.id.cmp(&right.id).then(left.path.cmp(&right.path)));
+    normalized.active_capability_contracts.sort();
+    normalized.active_worker_roles.sort();
+    normalized.optional_components.sort_by_key(optional_key);
+    semantic_digest(&normalized)
+}
+
+pub fn capability_contract_semantic_digest(
+    contract: &CapabilityContract,
+) -> Result<Sha256Digest, IdentityError> {
+    let mut normalized = contract.clone();
+    normalized.public_description = None;
+    normalized.safety_overlays.sort_by_key(serialized_key);
+    normalize_typed_fields(&mut normalized.inputs);
+    normalized.outcomes.sort_by_key(serialized_key);
+    normalized.touched_paths.sort();
+    normalized.evidence_obligations.sort();
+    normalized.human_gates.sort();
+    normalized.knowledge_references.sort_by_key(artifact_key);
+    normalized
+        .external_source_requirements
+        .sort_by(|left, right| left.requirement_id.cmp(&right.requirement_id));
+    normalized.legacy_authority_dependencies.sort();
+    normalized.worker_roles.sort();
+    normalized.scenario_references.sort_by_key(artifact_key);
+    normalize_semantic_claims(&mut normalized.semantic_claims);
+
+    if let Some(boundary) = &mut normalized.credential_boundary {
+        boundary.credential_free_scopes.sort();
+        boundary.future_executor.review_requirements.sort();
+    }
+    if let Some(coordination) = &mut normalized.coordination_semantics {
+        for cohort in &mut coordination.dispatch_cohorts {
+            cohort.candidate_classes.sort();
+        }
+        coordination
+            .dispatch_cohorts
+            .sort_by(|left, right| left.cohort_id.cmp(&right.cohort_id));
+        coordination.terminal_conditions.sort_by_key(serialized_key);
+    }
+    if let Some(evidence) = &mut normalized.evidence_status {
+        evidence.legacy_artifacts.sort_by_key(artifact_key);
+        for artifact_set in &mut evidence.legacy_artifact_sets {
+            artifact_set.members.sort();
+        }
+        evidence
+            .legacy_artifact_sets
+            .sort_by(|left, right| left.artifact_set_id.cmp(&right.artifact_set_id));
+    }
+    semantic_digest(&normalized)
+}
+
+pub fn worker_role_contract_semantic_digest(
+    contract: &WorkerRoleContract,
+) -> Result<Sha256Digest, IdentityError> {
+    let mut normalized = contract.clone();
+    normalized.public_description = None;
+    normalize_typed_fields(&mut normalized.assignment_fields);
+    normalize_typed_fields(&mut normalized.result_fields);
+    normalized.knowledge_references.sort_by_key(artifact_key);
+    normalize_semantic_claims(&mut normalized.semantic_claims);
+    if let Some(correlation) = &mut normalized.terminal_result_correlation {
+        correlation.required_variants.sort_by_key(serialized_key);
+    }
+    semantic_digest(&normalized)
 }
 
 pub fn canonicalize_strict_json(input: &str) -> Result<Vec<u8>, IdentityError> {
@@ -115,8 +192,51 @@ pub(crate) fn version_set_id_for_fixture(
 
 pub(crate) fn normalize_normative(normative: &NormativeLockClosure) -> NormativeLockClosure {
     let mut normalized = normative.clone();
+    normalized.capability_contracts.sort_by_key(artifact_key);
+    normalized.worker_role_contracts.sort_by_key(artifact_key);
     normalized.optional_components.sort_by_key(optional_key);
     normalized
+}
+
+fn semantic_digest<T: Serialize>(value: &T) -> Result<Sha256Digest, IdentityError> {
+    let canonical =
+        serde_json_canonicalizer::to_vec(value).map_err(|_| IdentityError::Canonicalization)?;
+    Ok(Sha256Digest(format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical)
+    )))
+}
+
+fn normalize_typed_fields(fields: &mut [crate::schema::TypedField]) {
+    for field in fields {
+        field.allowed_values.sort();
+    }
+}
+
+fn normalize_semantic_claims(claims: &mut [SemanticClaim]) {
+    for claim in claims.iter_mut() {
+        claim.field_groups.sort();
+        for source in &mut claim.sources {
+            if let SemanticClaimSource::MigrationLedgerRows { logical_ids } = source {
+                logical_ids.sort();
+            }
+        }
+        claim.sources.sort_by_key(serialized_key);
+    }
+    claims.sort_by_key(serialized_key);
+}
+
+fn artifact_key(reference: &ArtifactReference) -> (RepositoryPath, Sha256Digest, String) {
+    (
+        reference.path.clone(),
+        reference.sha256.clone(),
+        reference.media_type.clone(),
+    )
+}
+
+fn serialized_key<T: Serialize>(value: &T) -> Vec<u8> {
+    serde_json_canonicalizer::to_vec(value)
+        .expect("schema-owned semantic values must serialize canonically")
 }
 
 fn optional_key(component: &OptionalComponent) -> u8 {

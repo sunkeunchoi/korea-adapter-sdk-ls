@@ -2,8 +2,14 @@
   "rules": [
     "every_discovered_obligation_has_exactly_one_ledger_row",
     "every_ledger_source_matches_its_discovered_source",
+    "declared_contract_registration_resolves_kind_id_and_path",
+    "planned_replacement_is_declared_and_type_correct",
+    "legacy_dependencies_remain_legacy_authoritative_below_parity",
+    "semantic_claim_sources_resolve_and_field_groups_are_unique",
+    "legacy_evidence_does_not_satisfy_successor_evidence",
+    "unavailable_external_sources_remain_unproved_without_locator_or_digest",
+    "terminal_results_preserve_assignment_row_correlation",
     "first_slice_authority_remains_legacy",
-    "first_slice_migration_state_remains_unported",
     "first_slice_activation_eligibility_is_none"
   ],
   "schema_version": "v0"

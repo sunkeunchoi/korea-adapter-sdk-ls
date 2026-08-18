@@ -1,5 +1,29 @@
 {
   "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
     "AuthorityState": {
       "enum": [
         "legacy",
@@ -49,6 +73,12 @@
       ],
       "type": "object"
     },
+    "CorrelationRule": {
+      "enum": [
+        "all_equal"
+      ],
+      "type": "string"
+    },
     "DeclarationState": {
       "enum": [
         "declared",
@@ -73,6 +103,21 @@
       ],
       "type": "string"
     },
+    "OutcomeKind": {
+      "enum": [
+        "succeeded",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
     "RetirementState": {
       "enum": [
         "not_started",
@@ -86,13 +131,206 @@
       ],
       "type": "string"
     },
+    "SemanticClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "field_groups": {
+          "items": {
+            "$ref": "#/$defs/SemanticFieldPath"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/SemanticClaimSource"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/SemanticClaimStatus"
+        }
+      },
+      "required": [
+        "field_groups",
+        "status",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "SemanticClaimSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/RepositoryPath"
+            },
+            "source_kind": {
+              "const": "knowledge_reference",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/RepositoryPath"
+            },
+            "role_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "worker_knowledge_reference",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "role_id",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "logical_ids": {
+              "items": {
+                "$ref": "#/$defs/StableId"
+              },
+              "type": "array"
+            },
+            "source_kind": {
+              "const": "migration_ledger_rows",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "logical_ids"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_set_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "legacy_artifact_set",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "artifact_set_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "decision_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "successor_decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "requirement_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "external_source_requirement",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "requirement_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SemanticClaimStatus": {
+      "enum": [
+        "legacy_observed",
+        "successor_requirement",
+        "unavailable_unproved"
+      ],
+      "type": "string"
+    },
+    "SemanticFieldPath": {
+      "pattern": "^[a-z][a-z0-9_.*\\[\\]]{0,255}$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
     "StableId": {
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
       "type": "string"
     },
+    "TerminalResultCorrelation": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment_field": {
+          "$ref": "#/$defs/StableId"
+        },
+        "correlation": {
+          "$ref": "#/$defs/CorrelationRule"
+        },
+        "envelope_field": {
+          "$ref": "#/$defs/StableId"
+        },
+        "required_variants": {
+          "items": {
+            "$ref": "#/$defs/OutcomeKind"
+          },
+          "type": "array"
+        },
+        "success_payload_field": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "assignment_field",
+        "envelope_field",
+        "success_payload_field",
+        "required_variants",
+        "correlation"
+      ],
+      "type": "object"
+    },
     "TypedField": {
       "additionalProperties": false,
       "properties": {
+        "allowed_values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StableId"
+          },
+          "type": "array"
+        },
         "field_type": {
           "$ref": "#/$defs/FieldType"
         },
@@ -133,6 +371,13 @@
     "idempotency_key_required": {
       "type": "boolean"
     },
+    "knowledge_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
     "public_description": {
       "type": [
         "string",
@@ -154,8 +399,25 @@
     "schema_version": {
       "$ref": "#/$defs/SchemaVersion"
     },
+    "semantic_claims": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SemanticClaim"
+      },
+      "type": "array"
+    },
     "state": {
       "$ref": "#/$defs/ContractState"
+    },
+    "terminal_result_correlation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TerminalResultCorrelation"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

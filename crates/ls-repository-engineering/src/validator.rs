@@ -7,10 +7,10 @@ use std::path::Path;
 use crate::inventory::AuthoredPackage;
 use crate::schema::{
     ActivationEligibility, AttemptRecord, AttemptState, AuthorityState, CapabilityContract,
-    CertificationState, DeclaredContractRegistration, DispatchConcurrency, EvidenceAvailability,
-    FieldType, ImplementationState, MigrationState, OutcomeKind, PackageManifest, ParityStatus,
-    RepositoryPath, RetirementState, SemanticClaim, SemanticClaimSource, SemanticClaimStatus,
-    TypedField, WorkerRoleContract,
+    CertificationState, DeclarationState, DeclaredContractRegistration, DispatchConcurrency,
+    EvidenceAvailability, FieldType, ImplementationState, MigrationState, OutcomeKind,
+    PackageManifest, ParityStatus, RepositoryPath, RetirementState, SemanticClaim,
+    SemanticClaimSource, SemanticClaimStatus, TypedField, WorkerRoleContract,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,6 +103,8 @@ pub fn validate_first_slice_package(package: &PackageManifest) -> Vec<Finding> {
         "declared_worker_roles",
         &mut findings,
     );
+    let mut declared_ids = BTreeSet::new();
+    let mut declared_ids_folded = BTreeSet::new();
     let mut declared_paths = BTreeSet::new();
     let mut declared_paths_folded = BTreeSet::new();
     for registration in package
@@ -110,9 +112,20 @@ pub fn validate_first_slice_package(package: &PackageManifest) -> Vec<Finding> {
         .iter()
         .chain(&package.declared_worker_roles)
     {
-        if !declared_paths.insert(registration.path.0.as_str())
-            || !declared_paths_folded.insert(registration.path.0.to_ascii_lowercase())
-        {
+        let id_is_unique = declared_ids.insert(registration.id.0.as_str())
+            && declared_ids_folded.insert(registration.id.0.to_ascii_lowercase());
+        let path_is_unique = declared_paths.insert(registration.path.0.as_str())
+            && declared_paths_folded.insert(registration.path.0.to_ascii_lowercase());
+        if !id_is_unique {
+            findings.push(finding(
+                "package.toml",
+                Some(registration.id.0.clone()),
+                "declared_contracts.id",
+                "package.declared_registry.id_collision",
+                "use_unique_declared_contract_id",
+            ));
+        }
+        if !path_is_unique {
             findings.push(finding(
                 "package.toml",
                 Some(registration.id.0.clone()),
@@ -236,6 +249,29 @@ pub fn validate_capability_contract_vocabulary(contract: &CapabilityContract) ->
         &contract.capability_id.0,
         &mut findings,
     );
+    validate_semantic_claim_coverage(
+        &contract.semantic_claims,
+        &contract.capability_id.0,
+        &[
+            "state",
+            "autonomy",
+            "safety_overlays",
+            "credential_boundary",
+            "inputs",
+            "outcomes",
+            "coordination_semantics",
+            "touched_paths",
+            "evidence_obligations",
+            "evidence_status",
+            "human_gates",
+            "executor",
+            "external_source_requirements",
+            "legacy_authority_dependencies",
+            "worker_roles",
+            "scenario_references",
+        ],
+        &mut findings,
+    );
     findings.sort();
     findings.dedup();
     findings
@@ -286,6 +322,22 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
         &contract.role_id.0,
         &mut findings,
     );
+    validate_semantic_claim_coverage(
+        &contract.semantic_claims,
+        &contract.role_id.0,
+        &[
+            "state",
+            "assignment_fields",
+            "result_fields",
+            "fresh_context_required",
+            "concurrency",
+            "cancellation_supported",
+            "idempotency_key_required",
+            "result_validation_required",
+            "terminal_result_correlation",
+        ],
+        &mut findings,
+    );
     findings.sort();
     findings.dedup();
     findings
@@ -316,7 +368,7 @@ pub fn validate_semantic_package(root: &Path, authored: &AuthoredPackage) -> Vec
     }
     for contract in &authored.worker_role_contracts {
         findings.extend(validate_worker_role_contract_vocabulary(contract));
-        validate_worker_links(contract, &ledger, &mut findings);
+        validate_worker_links(contract, &workers, &ledger, &mut findings);
     }
 
     for row in authored
@@ -490,6 +542,7 @@ fn validate_capability_links<'a>(
 
 fn validate_worker_links(
     contract: &WorkerRoleContract,
+    workers: &BTreeMap<&str, &WorkerRoleContract>,
     ledger: &BTreeMap<&str, &crate::schema::MigrationRow>,
     findings: &mut Vec<Finding>,
 ) {
@@ -533,7 +586,7 @@ fn validate_worker_links(
         &contract.knowledge_references,
         &[],
         &[],
-        &BTreeMap::new(),
+        workers,
         ledger,
         findings,
     );
@@ -835,6 +888,34 @@ fn validate_semantic_claims(
     }
 }
 
+fn validate_semantic_claim_coverage(
+    claims: &[SemanticClaim],
+    logical_id: &str,
+    required_top_level_fields: &[&str],
+    findings: &mut Vec<Finding>,
+) {
+    for required in required_top_level_fields {
+        let covered = claims
+            .iter()
+            .flat_map(|claim| &claim.field_groups)
+            .any(|field| {
+                field.0 == *required
+                    || field
+                        .0
+                        .strip_prefix(required)
+                        .is_some_and(|suffix| suffix.starts_with('.') || suffix.starts_with('['))
+            });
+        if !covered {
+            findings.push(semantic_finding(
+                logical_id,
+                "semantic_claims.field_groups",
+                "semantic.claim.field_group_uncovered",
+                "cover_identity_bearing_field_group",
+            ));
+        }
+    }
+}
+
 fn has_exact_or_case_folded_duplicate<'a>(values: impl Iterator<Item = &'a str>) -> bool {
     let mut exact = BTreeSet::new();
     let mut folded = BTreeSet::new();
@@ -851,6 +932,13 @@ pub fn validate_first_slice_contract_state(
     logical_id: &str,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
+    if state.declaration != DeclarationState::Declared {
+        findings.push(contract_finding(
+            logical_id,
+            "declaration",
+            "declaration.absent.forbidden",
+        ));
+    }
     if state.implementation != ImplementationState::Unported {
         findings.push(contract_finding(
             logical_id,

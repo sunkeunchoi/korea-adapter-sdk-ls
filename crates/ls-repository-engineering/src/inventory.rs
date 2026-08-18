@@ -235,15 +235,11 @@ fn validate_referenced_artifacts(
             }
             for artifact_set in &evidence.legacy_artifact_sets {
                 validate_artifact_reference(root, tracked, &artifact_set.validation_basis)?;
-                let mut members = artifact_set.normalized_members();
-                let mut hasher = Sha256::new();
-                hasher.update(b"ls-repository-engineering/artifact-set/v0\0");
-                for member in members.drain(..) {
+                let members = artifact_set.normalized_members();
+                let mut hasher = artifact_set_hasher(members.len());
+                for member in members {
                     let bytes = read_tracked_bytes(root, tracked, &member)?;
-                    hasher.update(member.0.as_bytes());
-                    hasher.update([0]);
-                    hasher.update(bytes);
-                    hasher.update([0]);
+                    hash_artifact_set_member(&mut hasher, member.0.as_bytes(), &bytes);
                 }
                 let actual = Sha256Digest(format!("sha256:{:x}", hasher.finalize()));
                 if actual != artifact_set.aggregate_digest {
@@ -277,6 +273,20 @@ fn validate_artifact_reference(
         });
     }
     Ok(())
+}
+
+fn artifact_set_hasher(member_count: usize) -> Sha256 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ls-repository-engineering/artifact-set/v0\0");
+    hasher.update((member_count as u64).to_be_bytes());
+    hasher
+}
+
+fn hash_artifact_set_member(hasher: &mut Sha256, path: &[u8], bytes: &[u8]) {
+    hasher.update((path.len() as u64).to_be_bytes());
+    hasher.update(path);
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
 }
 
 pub fn discover_inventory(
@@ -824,5 +834,27 @@ fn finding(
         field,
         code,
         remediation,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{artifact_set_hasher, hash_artifact_set_member};
+    use sha2::Digest;
+
+    fn digest(members: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut hasher = artifact_set_hasher(members.len());
+        for (path, bytes) in members {
+            hash_artifact_set_member(&mut hasher, path, bytes);
+        }
+        hasher.finalize().to_vec()
+    }
+
+    #[test]
+    fn artifact_set_framing_distinguishes_embedded_nul_boundaries() {
+        assert_ne!(
+            digest(&[(b"a", b"X\0b\0Y")]),
+            digest(&[(b"a", b"X"), (b"b", b"Y")])
+        );
     }
 }

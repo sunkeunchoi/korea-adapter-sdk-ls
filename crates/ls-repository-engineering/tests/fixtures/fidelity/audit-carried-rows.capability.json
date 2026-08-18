@@ -101,7 +101,7 @@
           "docs/migration-source/audit/records/L25.yaml",
           "docs/migration-source/audit/records/L26.yaml"
         ],
-        "aggregate_digest": "sha256:2a9457fd57e90f9a2d554a45e25d4545c500c72acc411b7a1ce6bbc1fe283d97",
+        "aggregate_digest": "sha256:216974d42107f6e4fbbcba6a1fa4df7638fdfc62304378ba6f93f8892fea307a",
         "validation_basis": {
           "schema_version": "v0",
           "path": "crates/ls-trackers/tests/decommission_audit.rs",
@@ -149,7 +149,7 @@
       ]
     },
     {
-      "field_groups": ["autonomy", "human_gates", "safety_overlays", "touched_paths", "legacy_authority_dependencies"],
+      "field_groups": ["autonomy", "evidence_obligations", "human_gates", "safety_overlays", "touched_paths", "legacy_authority_dependencies"],
       "status": "legacy_observed",
       "sources": [
         { "source_kind": "knowledge_reference", "path": ".agents/skills/audit-carried-rows/SKILL.md" },
