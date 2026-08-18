@@ -6,10 +6,10 @@ use tokio::task::JoinSet;
 
 use crate::machine::SweepMachine;
 use crate::model::{
-    AcceptedResultCapsule, ArtifactReference, CheckpointGeneration, DispatchIntent, Phase,
-    PublishedHead, RunRequest, TerminalRecord,
+    AcceptedResultCapsule, ArtifactReference, CheckpointGeneration, DispatchIntent,
+    EffectApplyOutcome, EffectEntry, Phase, PublishedHead, RunRequest, TerminalRecord,
 };
-use crate::ports::{ArtifactStore, CheckpointStore};
+use crate::ports::{ArtifactStore, CheckpointStore, EffectApplier};
 use crate::worker_host::{HostRecovery, WorkerHost};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub enum DriverError {
     Machine,
     Artifact,
     Checkpoint,
+    Effect,
     Host,
     Join,
     RecoveryRequired,
@@ -36,23 +37,41 @@ pub struct RunResult {
     pub head: PublishedHead,
 }
 
-pub struct Driver<H, A, C> {
+#[derive(Debug, Default)]
+struct EffectProgress {
+    prepared: Vec<EffectEntry>,
+    applied_ids: Vec<String>,
+}
+
+#[derive(Debug)]
+struct RunState {
+    machine: SweepMachine,
+    capsules: BTreeMap<String, ArtifactReference>,
+    sequence: u64,
+    head: PublishedHead,
+    effects: EffectProgress,
+}
+
+pub struct Driver<H, A, C, E> {
     host: H,
     artifacts: A,
     checkpoints: C,
+    effects: E,
 }
 
-impl<H, A, C> Driver<H, A, C>
+impl<H, A, C, E> Driver<H, A, C, E>
 where
     H: WorkerHost,
     A: ArtifactStore,
     C: CheckpointStore,
+    E: EffectApplier,
 {
-    pub fn new(host: H, artifacts: A, checkpoints: C) -> Self {
+    pub fn new(host: H, artifacts: A, checkpoints: C, effects: E) -> Self {
         Self {
             host,
             artifacts,
             checkpoints,
+            effects,
         }
     }
 
@@ -63,15 +82,22 @@ where
     ) -> Result<RunResult, DriverError> {
         let mut machine = SweepMachine::new(request).map_err(|_| DriverError::Machine)?;
         let capsules = BTreeMap::new();
-        let mut sequence = 0;
-        let mut head = self.create_checkpoint(&machine, sequence, None, None, &capsules)?;
+        let sequence = 0;
+        let effects = EffectProgress::default();
+        let head = self.create_checkpoint(&machine, sequence, None, None, &capsules, &effects)?;
 
         machine.begin_dispatch().map_err(|_| DriverError::Machine)?;
-        sequence += 1;
-        head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
+        let mut state = RunState {
+            machine,
+            capsules,
+            sequence,
+            head,
+            effects,
+        };
+        state.sequence += 1;
+        self.publish_state(&mut state, None)?;
 
-        self.drive(machine, capsules, sequence, head, cancellation, Vec::new())
-            .await
+        self.drive(state, cancellation, Vec::new()).await
     }
 
     pub async fn resume(
@@ -85,9 +111,9 @@ where
             .recover(caller_pin)
             .map_err(|_| DriverError::Checkpoint)?;
         let loaded_capsules = self.load_capsules(&recovered.generation)?;
-        let mut machine = SweepMachine::restore(request, &recovered.generation, &loaded_capsules)
+        let machine = SweepMachine::restore(request, &recovered.generation, &loaded_capsules)
             .map_err(|_| DriverError::RecoveryRequired)?;
-        let mut capsules = recovered
+        let capsules = recovered
             .generation
             .rows
             .iter()
@@ -97,41 +123,65 @@ where
                     .map(|reference| (row.row_id.clone(), reference))
             })
             .collect::<BTreeMap<_, _>>();
-        let mut sequence = recovered.generation.sequence;
-        let mut head = recovered.head;
+        let mut state = RunState {
+            machine,
+            capsules,
+            sequence: recovered.generation.sequence,
+            head: recovered.head,
+            effects: EffectProgress {
+                prepared: recovered.generation.prepared_effects.clone(),
+                applied_ids: recovered.generation.applied_effect_ids.clone(),
+            },
+        };
 
-        if let Some(terminal) = machine.current_terminal_record() {
-            return Ok(RunResult { terminal, head });
+        self.reconcile_effects(&mut state, recovered.generation.cancellation_fence)?;
+
+        if let Some(terminal) = state.machine.current_terminal_record() {
+            return Ok(RunResult {
+                terminal,
+                head: state.head,
+            });
         }
-        if machine.phase() == Phase::RecoveryRequired {
+        if state.machine.phase() == Phase::RecoveryRequired {
             return Err(DriverError::RecoveryRequired);
         }
-        if machine.phase() == Phase::Discovering {
-            machine.begin_dispatch().map_err(|_| DriverError::Machine)?;
-            sequence += 1;
-            head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
+        if state.machine.phase() == Phase::Discovering {
+            state
+                .machine
+                .begin_dispatch()
+                .map_err(|_| DriverError::Machine)?;
+            state.sequence += 1;
+            self.publish_state(&mut state, None)?;
         }
-        if machine.phase() == Phase::Cancelling {
-            for intent in machine.running_intents() {
-                self.host
+        if state.machine.phase() == Phase::Cancelling {
+            let mut host_failed = false;
+            for intent in state.machine.running_intents() {
+                if self
+                    .host
                     .cancel_and_reap(intent.invocation_id)
                     .await
-                    .map_err(|_| DriverError::Host)?;
+                    .is_err()
+                {
+                    host_failed = true;
+                }
             }
-            let terminal = machine.finish_cancel().map_err(|_| DriverError::Machine)?;
-            sequence += 1;
-            head = self.publish_checkpoint(
-                &machine,
-                sequence,
-                &head,
-                recovered.generation.cancellation_fence,
-                &capsules,
-            )?;
-            return Ok(RunResult { terminal, head });
+            if host_failed {
+                return Err(DriverError::Host);
+            }
+            let terminal = state
+                .machine
+                .finish_cancel()
+                .map_err(|_| DriverError::Machine)?;
+            state.sequence += 1;
+            self.publish_state(&mut state, recovered.generation.cancellation_fence)?;
+            return Ok(RunResult {
+                terminal,
+                head: state.head,
+            });
         }
 
         let mut initial = Vec::new();
-        for intent in machine.running_intents() {
+        for intent in state.machine.running_intents() {
             match self
                 .host
                 .recover(intent.clone())
@@ -141,32 +191,22 @@ where
                 HostRecovery::NeverStarted => initial.push((intent, false)),
                 HostRecovery::Running => initial.push((intent, true)),
                 HostRecovery::Terminal(capsule) => {
-                    head = self.ingest_capsule(
-                        &mut machine,
-                        &mut capsules,
-                        &mut sequence,
-                        &head,
-                        *capsule,
-                    )?;
+                    self.ingest_capsule(&mut state, *capsule)?;
                 }
                 HostRecovery::Unknown => {
-                    machine.require_recovery();
-                    sequence += 1;
-                    let _ = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
+                    state.machine.require_recovery();
+                    state.sequence += 1;
+                    self.publish_state(&mut state, None)?;
                     return Err(DriverError::RecoveryRequired);
                 }
             }
         }
-        self.drive(machine, capsules, sequence, head, cancellation, initial)
-            .await
+        self.drive(state, cancellation, initial).await
     }
 
     async fn drive(
         &mut self,
-        mut machine: SweepMachine,
-        mut capsules: BTreeMap<String, ArtifactReference>,
-        mut sequence: u64,
-        mut head: PublishedHead,
+        mut state: RunState,
         mut cancellation: watch::Receiver<bool>,
         initial: Vec<(DispatchIntent, bool)>,
     ) -> Result<RunResult, DriverError> {
@@ -188,25 +228,25 @@ where
         }
         loop {
             if *cancellation.borrow() {
-                return self
-                    .cancel(
-                        &mut machine,
-                        &mut sequence,
-                        head,
-                        &capsules,
-                        &mut tasks,
-                        &mut in_flight,
-                    )
-                    .await;
+                return self.cancel(&mut state, &mut tasks, &mut in_flight).await;
             }
 
-            if machine.phase() == Phase::Dispatching {
-                let intents = machine
+            if state.machine.phase() == Phase::Dispatching {
+                let intents = state
+                    .machine
                     .request_dispatches()
                     .map_err(|_| DriverError::Machine)?;
                 if !intents.is_empty() {
-                    sequence += 1;
-                    head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
+                    state.sequence += 1;
+                    match self.publish_state(&mut state, None) {
+                        Ok(()) => {}
+                        Err(error) => {
+                            let _ = self
+                                .fail_and_drain(&mut state, &mut tasks, &mut in_flight)
+                                .await;
+                            return Err(error);
+                        }
+                    }
                     for intent in intents {
                         let host = self.host.clone();
                         in_flight.insert(intent.invocation_id.clone(), intent.clone());
@@ -218,23 +258,58 @@ where
                 }
             }
 
-            if machine.phase() == Phase::RollingUp && tasks.is_empty() {
-                machine
-                    .finish_roll_up(&machine.request().base_ledger_digest.clone())
-                    .map_err(|_| DriverError::Machine)?;
-                sequence += 1;
-                head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
-                let terminal = machine.complete().map_err(|_| DriverError::Machine)?;
-                sequence += 1;
-                head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
-                return Ok(RunResult { terminal, head });
+            if state.machine.phase() == Phase::RollingUp && tasks.is_empty() {
+                if state.effects.prepared.is_empty() {
+                    let base_matches = self
+                        .effects
+                        .observed_base_ledger_digest()
+                        .is_ok_and(|digest| digest == state.machine.request().base_ledger_digest);
+                    if !base_matches {
+                        self.persist_recovery(&mut state, None)?;
+                        return Err(DriverError::RecoveryRequired);
+                    }
+                    state.effects.prepared = state
+                        .machine
+                        .prepare_roll_up_effects()
+                        .map_err(|_| DriverError::Machine)?;
+                    if self.effects.validate_plan(&state.effects.prepared).is_err() {
+                        self.persist_recovery(&mut state, None)?;
+                        return Err(DriverError::RecoveryRequired);
+                    }
+                    state.sequence += 1;
+                    self.publish_state(&mut state, None)?;
+                }
+                self.reconcile_effects(&mut state, None)?;
+                let observed = match self.effects.observed_base_ledger_digest() {
+                    Ok(observed) => observed,
+                    Err(_) => {
+                        self.persist_recovery(&mut state, None)?;
+                        return Err(DriverError::RecoveryRequired);
+                    }
+                };
+                if state.machine.finish_roll_up(&observed).is_err() {
+                    self.persist_recovery(&mut state, None)?;
+                    return Err(DriverError::RecoveryRequired);
+                }
+                state.sequence += 1;
+                self.publish_state(&mut state, None)?;
+                let terminal = state.machine.complete().map_err(|_| DriverError::Machine)?;
+                state.sequence += 1;
+                self.publish_state(&mut state, None)?;
+                return Ok(RunResult {
+                    terminal,
+                    head: state.head,
+                });
             }
 
-            if machine.phase() == Phase::GateComputed && tasks.is_empty() {
-                let terminal = machine.complete().map_err(|_| DriverError::Machine)?;
-                sequence += 1;
-                head = self.publish_checkpoint(&machine, sequence, &head, None, &capsules)?;
-                return Ok(RunResult { terminal, head });
+            if state.machine.phase() == Phase::GateComputed && tasks.is_empty() {
+                let terminal = state.machine.complete().map_err(|_| DriverError::Machine)?;
+                state.sequence += 1;
+                self.publish_state(&mut state, None)?;
+                return Ok(RunResult {
+                    terminal,
+                    head: state.head,
+                });
             }
 
             if tasks.is_empty() {
@@ -245,14 +320,7 @@ where
                 changed = cancellation.changed(), if cancellation_open => {
                     match changed {
                         Ok(()) if *cancellation.borrow() => {
-                            return self.cancel(
-                                &mut machine,
-                                &mut sequence,
-                                head,
-                                &capsules,
-                                &mut tasks,
-                                &mut in_flight,
-                            ).await;
+                            return self.cancel(&mut state, &mut tasks, &mut in_flight).await;
                         }
                         Ok(()) => {}
                         Err(_) => cancellation_open = false,
@@ -265,14 +333,7 @@ where
                     let (invocation_id, output) = match joined {
                         Ok(output) => output,
                         Err(_) => {
-                            self.fail_and_drain(
-                                &mut machine,
-                                &mut sequence,
-                                head,
-                                &capsules,
-                                &mut tasks,
-                                &mut in_flight,
-                            ).await?;
+                            self.fail_and_drain(&mut state, &mut tasks, &mut in_flight).await?;
                             return Err(DriverError::Join);
                         }
                     };
@@ -280,24 +341,19 @@ where
                     let capsule = match output {
                         Ok(capsule) => capsule,
                         Err(_) => {
-                            self.fail_and_drain(
-                                &mut machine,
-                                &mut sequence,
-                                head,
-                                &capsules,
-                                &mut tasks,
-                                &mut in_flight,
-                            ).await?;
+                            self.fail_and_drain(&mut state, &mut tasks, &mut in_flight).await?;
                             return Err(DriverError::Host);
                         }
                     };
-                    head = self.ingest_capsule(
-                        &mut machine,
-                        &mut capsules,
-                        &mut sequence,
-                        &head,
-                        capsule,
-                    )?;
+                    match self.ingest_capsule(&mut state, capsule) {
+                        Ok(()) => {}
+                        Err(error) => {
+                            let _ = self
+                                .fail_and_drain(&mut state, &mut tasks, &mut in_flight)
+                                .await;
+                            return Err(error);
+                        }
+                    }
                 }
             }
         }
@@ -305,70 +361,132 @@ where
 
     async fn cancel(
         &mut self,
-        machine: &mut SweepMachine,
-        sequence: &mut u64,
-        mut head: PublishedHead,
-        capsules: &BTreeMap<String, ArtifactReference>,
+        state: &mut RunState,
         tasks: &mut JoinSet<(String, Result<AcceptedResultCapsule, H::Error>)>,
         in_flight: &mut BTreeMap<String, DispatchIntent>,
     ) -> Result<RunResult, DriverError> {
-        machine.cancel().map_err(|_| DriverError::Machine)?;
-        *sequence += 1;
-        let fence = *sequence;
-        head = self.publish_checkpoint(machine, *sequence, &head, Some(fence), capsules)?;
-        for invocation_id in in_flight.keys().cloned().collect::<Vec<_>>() {
-            self.host
-                .cancel_and_reap(invocation_id)
-                .await
-                .map_err(|_| DriverError::Host)?;
+        state.machine.cancel().map_err(|_| DriverError::Machine)?;
+        state.sequence += 1;
+        let fence = state.sequence;
+        let checkpoint_failed = self.publish_state(state, Some(fence)).is_err();
+        let host_failed = self.cancel_all_and_drain(tasks, in_flight).await;
+        if checkpoint_failed {
+            return Err(DriverError::Checkpoint);
         }
-        while tasks.join_next().await.is_some() {}
-        in_flight.clear();
-        let terminal = machine.finish_cancel().map_err(|_| DriverError::Machine)?;
-        *sequence += 1;
-        head = self.publish_checkpoint(machine, *sequence, &head, Some(fence), capsules)?;
-        Ok(RunResult { terminal, head })
+        if host_failed {
+            return Err(DriverError::Host);
+        }
+        let terminal = state
+            .machine
+            .finish_cancel()
+            .map_err(|_| DriverError::Machine)?;
+        state.sequence += 1;
+        self.publish_state(state, Some(fence))?;
+        Ok(RunResult {
+            terminal,
+            head: state.head.clone(),
+        })
     }
 
     async fn fail_and_drain(
         &mut self,
-        machine: &mut SweepMachine,
-        sequence: &mut u64,
-        mut head: PublishedHead,
-        capsules: &BTreeMap<String, ArtifactReference>,
+        state: &mut RunState,
         tasks: &mut JoinSet<(String, Result<AcceptedResultCapsule, H::Error>)>,
         in_flight: &mut BTreeMap<String, DispatchIntent>,
     ) -> Result<(), DriverError> {
-        machine.require_recovery();
-        *sequence += 1;
-        head = self.publish_checkpoint(machine, *sequence, &head, None, capsules)?;
-        let _ = head;
+        state.machine.require_recovery();
+        state.sequence += 1;
+        let checkpoint = self.publish_state(state, None);
+        let host_failed = self.cancel_all_and_drain(tasks, in_flight).await;
+        if checkpoint.is_err() {
+            Err(DriverError::Checkpoint)
+        } else if host_failed {
+            Err(DriverError::Host)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn cancel_all_and_drain(
+        &mut self,
+        tasks: &mut JoinSet<(String, Result<AcceptedResultCapsule, H::Error>)>,
+        in_flight: &mut BTreeMap<String, DispatchIntent>,
+    ) -> bool {
+        let mut host_failed = false;
         for invocation_id in in_flight.keys().cloned().collect::<Vec<_>>() {
-            let _ = self.host.cancel_and_reap(invocation_id).await;
+            if self.host.cancel_and_reap(invocation_id).await.is_err() {
+                host_failed = true;
+            }
+        }
+        if host_failed {
+            tasks.abort_all();
         }
         while tasks.join_next().await.is_some() {}
         in_flight.clear();
+        host_failed
+    }
+
+    fn reconcile_effects(
+        &mut self,
+        state: &mut RunState,
+        cancellation_fence: Option<u64>,
+    ) -> Result<(), DriverError> {
+        if state.effects.prepared.is_empty() {
+            return Ok(());
+        }
+        let plan_valid = self.effects.validate_plan(&state.effects.prepared).is_ok();
+        let base_matches = self
+            .effects
+            .observed_base_ledger_digest()
+            .is_ok_and(|digest| digest == state.machine.request().base_ledger_digest);
+        if !plan_valid || !base_matches {
+            self.persist_recovery(state, cancellation_fence)?;
+            return Err(DriverError::RecoveryRequired);
+        }
+
+        for (index, entry) in state.effects.prepared.clone().iter().enumerate() {
+            let outcome = match self.effects.apply(entry) {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    self.persist_recovery(state, cancellation_fence)?;
+                    return Err(DriverError::RecoveryRequired);
+                }
+            };
+            if index < state.effects.applied_ids.len()
+                && outcome != EffectApplyOutcome::AlreadyApplied
+            {
+                self.persist_recovery(state, cancellation_fence)?;
+                return Err(DriverError::RecoveryRequired);
+            }
+            if index < state.effects.applied_ids.len() {
+                if state.effects.applied_ids[index] != entry.effect_id {
+                    self.persist_recovery(state, cancellation_fence)?;
+                    return Err(DriverError::RecoveryRequired);
+                }
+                continue;
+            }
+            state.effects.applied_ids.push(entry.effect_id.clone());
+            state.sequence += 1;
+            self.publish_state(state, cancellation_fence)?;
+        }
         Ok(())
     }
 
     fn ingest_capsule(
         &mut self,
-        machine: &mut SweepMachine,
-        capsules: &mut BTreeMap<String, ArtifactReference>,
-        sequence: &mut u64,
-        head: &PublishedHead,
+        state: &mut RunState,
         capsule: AcceptedResultCapsule,
-    ) -> Result<PublishedHead, DriverError> {
-        let mut next_machine = machine.clone();
+    ) -> Result<(), DriverError> {
+        let mut next_machine = state.machine.clone();
         next_machine
             .accept_capsule(&capsule)
             .map_err(|_| DriverError::RecoveryRequired)?;
         let assignment_id = capsule.result.common().2.to_owned();
         let reference = self.persist_capsule(&assignment_id, &capsule)?;
-        capsules.insert(assignment_id, reference);
-        *machine = next_machine;
-        *sequence += 1;
-        self.publish_checkpoint(machine, *sequence, head, None, capsules)
+        state.capsules.insert(assignment_id, reference);
+        state.machine = next_machine;
+        state.sequence += 1;
+        self.publish_state(state, None)
     }
 
     fn load_capsules(
@@ -432,6 +550,7 @@ where
         cancellation_fence: Option<u64>,
         parent_generation_digest: Option<String>,
         capsules: &BTreeMap<String, ArtifactReference>,
+        effects: &EffectProgress,
     ) -> Result<PublishedHead, DriverError> {
         let generation = checkpoint_generation(
             machine,
@@ -439,30 +558,41 @@ where
             parent_generation_digest,
             cancellation_fence,
             capsules,
+            effects,
         )?;
         self.checkpoints
             .create(generation)
             .map_err(|_| DriverError::Checkpoint)
     }
 
-    fn publish_checkpoint(
+    fn publish_state(
         &mut self,
-        machine: &SweepMachine,
-        sequence: u64,
-        prior: &PublishedHead,
+        state: &mut RunState,
         cancellation_fence: Option<u64>,
-        capsules: &BTreeMap<String, ArtifactReference>,
-    ) -> Result<PublishedHead, DriverError> {
+    ) -> Result<(), DriverError> {
         let generation = checkpoint_generation(
-            machine,
-            sequence,
-            Some(prior.generation_digest.clone()),
+            &state.machine,
+            state.sequence,
+            Some(state.head.generation_digest.clone()),
             cancellation_fence,
-            capsules,
+            &state.capsules,
+            &state.effects,
         )?;
-        self.checkpoints
-            .publish(&prior.generation_digest, generation)
-            .map_err(|_| DriverError::Checkpoint)
+        state.head = self
+            .checkpoints
+            .publish(&state.head.generation_digest, generation)
+            .map_err(|_| DriverError::Checkpoint)?;
+        Ok(())
+    }
+
+    fn persist_recovery(
+        &mut self,
+        state: &mut RunState,
+        cancellation_fence: Option<u64>,
+    ) -> Result<(), DriverError> {
+        state.machine.require_recovery();
+        state.sequence += 1;
+        self.publish_state(state, cancellation_fence)
     }
 }
 
@@ -472,6 +602,7 @@ fn checkpoint_generation(
     parent_generation_digest: Option<String>,
     cancellation_fence: Option<u64>,
     capsules: &BTreeMap<String, ArtifactReference>,
+    effects: &EffectProgress,
 ) -> Result<CheckpointGeneration, DriverError> {
     let request = machine.request();
     Ok(CheckpointGeneration {
@@ -484,17 +615,19 @@ fn checkpoint_generation(
         package_lock_digest: request.package_lock_digest.clone(),
         implementation_subject_digest: request.implementation_subject_digest.clone(),
         capability_contract_digest: request.capability_contract_digest.clone(),
+        worker_role_digest: request.worker_role_digest.clone(),
         executor_digest: request.executor_digest.clone(),
         scenario_digest: request.scenario_digest.clone(),
         repository_snapshot_digest: request.repository_snapshot_digest.clone(),
         row_manifest_digest: request.row_manifest_digest.clone(),
         base_ledger_digest: request.base_ledger_digest.clone(),
+        output_root_id: request.output_root_id.clone(),
         rows: machine
             .checkpoint_rows(capsules)
             .map_err(|_| DriverError::Machine)?,
         cancellation_fence,
-        prepared_effects: Vec::new(),
-        applied_effect_ids: Vec::new(),
+        prepared_effects: effects.prepared.clone(),
+        applied_effect_ids: effects.applied_ids.clone(),
     })
 }
 

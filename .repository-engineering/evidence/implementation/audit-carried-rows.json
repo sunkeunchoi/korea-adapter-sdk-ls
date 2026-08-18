@@ -1,0 +1,42 @@
+{
+  "schema_version": "v0",
+  "evidence_id": "audit-carried-rows-implementation",
+  "component_kind": "capability",
+  "component_id": "audit-carried-rows",
+  "subject_manifest": {
+    "schema_version": "v0",
+    "path": ".repository-engineering/implementation-subjects/audit-carried-rows.json",
+    "sha256": "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19",
+    "media_type": "application/json"
+  },
+  "scenario_catalog": {
+    "schema_version": "v0",
+    "path": ".repository-engineering/scenarios/audit-carried-rows/implementation.toml",
+    "sha256": "sha256:b4b3009f5350a2262bd634893f852f8d5e8417fb92546bdc4945a0dea25e932c",
+    "media_type": "application/toml"
+  },
+  "validation_basis": {
+    "schema_version": "v0",
+    "path": "tools/repository-engineering-runtime/tests/end_to_end.rs",
+    "sha256": "sha256:9cc08862aad567b31c339d90f26fb38797689c80a1d78f52f58c861988058cda",
+    "media_type": "text/x-rust"
+  },
+  "runtime_hosts": ["in_memory_fixture", "subprocess_fixture"],
+  "validated_scenarios": [
+    "complete-confirmed-corpus",
+    "complete-unverifiable-corpus",
+    "conflicting-terminal-replay",
+    "duplicate-row-id",
+    "empty-row-manifest",
+    "identical-terminal-replay",
+    "stale-record-digest",
+    "unavailable-required-source",
+    "wrong-assignment-id",
+    "wrong-attempt-id",
+    "wrong-invocation-id",
+    "wrong-success-row-id"
+  ],
+  "row_count": 26,
+  "closed_bundle_validated": true,
+  "closed_result_validator_used": true
+}

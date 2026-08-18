@@ -1,6 +1,6 @@
 {
   "schema_version": "v0",
-  "package_lock_id": "sha256:071cb5775c4ca8036616a604f2ee78e3db506662e81ef92555f8467269303dc7",
+  "package_lock_id": "sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c",
   "normative": {
     "package": {
       "schema_version": "v0",
@@ -17,13 +17,13 @@
     "migration_ledger": {
       "schema_version": "v0",
       "path": ".repository-engineering/migration-ledger.toml",
-      "sha256": "sha256:b37685c871bc29910b2fbb1852fd906a7fd2c4634f61971e8c4c2199d130003c",
+      "sha256": "sha256:f0ca6469a46d7993e83178dd5e0fb4414505bf45db608c04c56294fff44d8b70",
       "media_type": "application/toml"
     },
     "schema_registry": {
       "schema_version": "v0",
       "path": ".repository-engineering/schema-registry.json",
-      "sha256": "sha256:fd9fc965b8c09b830b2c511a651349c63067d97e9f46c11362cce11b6a02fcce",
+      "sha256": "sha256:3f25e70a6c8b60d6608c8f28d4c563761985bdd80bf9eaaff0b4d4cf2a364b0b",
       "media_type": "application/json"
     },
     "conformance_corpus": {
@@ -35,14 +35,14 @@
     "runtime_bundle": {
       "schema_version": "v0",
       "path": ".repository-engineering/runtime-bundle.json",
-      "sha256": "sha256:09144e4eb99e3c9a7e7ef05a424e55291ce2331cab790df153950fa9543d4575",
+      "sha256": "sha256:273b526acf4d740c794566d6657b0c1b7efb97641a3fb692905b9e1a5e8f82a1",
       "media_type": "application/json"
     },
     "implementation_subjects": [
       {
         "schema_version": "v0",
         "path": ".repository-engineering/implementation-subjects/audit-carried-rows.json",
-        "sha256": "sha256:be50a3304e4768d78e577a9c02e69d3964a21c9090d10a0c987580ece1fe0316",
+        "sha256": "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19",
         "media_type": "application/json"
       }
     ],
@@ -50,7 +50,7 @@
       {
         "schema_version": "v0",
         "path": ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
-        "sha256": "sha256:70ebd95b643e8ba54d76a4b72b1b635d84801b21a9722e74b88dc0051915cfeb",
+        "sha256": "sha256:827d5dcba3cdb7ca1afb24557e7a5f1d867b583103a615956d41580f0a425bc0",
         "media_type": "application/toml"
       }
     ],
@@ -58,7 +58,7 @@
       {
         "schema_version": "v0",
         "path": ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
-        "sha256": "sha256:2ee5183e394a65297b49f426af60d0cbd5bd0fcc867f4f50ff905a7b845023a3",
+        "sha256": "sha256:27e7350ec59efdb36496d7f3602ae5022a156a9602a6f120962307f5e3879b03",
         "media_type": "application/toml"
       }
     ],
@@ -77,7 +77,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:88983d6153e1576296b872e1eaf62fbbbcc5f384d32fa5d30f3eadb6afe4530a",
+      "sha256": "sha256:99d9912923eb7c5547575686b5988d9ae25c4af11de2d372af084b6a6983693a",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {
@@ -90,7 +90,7 @@
       {
         "schema_version": "v0",
         "path": ".github/workflows/repository-engineering-check.yml",
-        "sha256": "sha256:6f2d6164bf8dfae1dce339e5ef742f772b525f29badc107b6b7c7ee295f6856e",
+        "sha256": "sha256:7e82040f8a2d7a3329ec384916b432fb5b63bde2363ba154ddf1cc360a0ab759",
         "media_type": "application/yaml"
       }
     ]

@@ -92,6 +92,15 @@
       }
     },
     {
+      "schema_id": "urn:ls:repository-engineering:schema:v0:implementation-evidence",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/v0/implementation-evidence.schema.json",
+        "sha256": "sha256:2be2de08859068fe153ce549be79a0f2954c6c8ef99dd1861158cb6c5a695a6b",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
       "schema_id": "urn:ls:repository-engineering:schema:v0:implementation-subject-manifest",
       "artifact": {
         "schema_version": "v0",

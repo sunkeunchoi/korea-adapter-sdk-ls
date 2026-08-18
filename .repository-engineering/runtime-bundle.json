@@ -58,18 +58,6 @@
     },
     {
       "schema_version": "v0",
-      "path": ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
-      "sha256": "sha256:366fabada3d34a8dc3d3641148b1ff6e4a856337f98999cdfd8faa24aa8b358a",
-      "media_type": "application/toml"
-    },
-    {
-      "schema_version": "v0",
-      "path": ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
-      "sha256": "sha256:b4ff1216795545c24fe44f724e67d29adcd3b4bd0c41b9692f2348980cef57b9",
-      "media_type": "application/toml"
-    },
-    {
-      "schema_version": "v0",
       "path": ".repository-engineering/executors/audit-carried-rows.toml",
       "sha256": "sha256:c05f380924e0daf3e10274a003bef676a2d3c542fc7421c70251ee76ff2c6775",
       "media_type": "application/toml"
@@ -89,7 +77,7 @@
     {
       "schema_version": "v0",
       "path": ".repository-engineering/schema-registry.json",
-      "sha256": "sha256:fd9fc965b8c09b830b2c511a651349c63067d97e9f46c11362cce11b6a02fcce",
+      "sha256": "sha256:3f25e70a6c8b60d6608c8f28d4c563761985bdd80bf9eaaff0b4d4cf2a364b0b",
       "media_type": "application/json"
     },
     {
@@ -150,6 +138,12 @@
       "schema_version": "v0",
       "path": ".repository-engineering/schemas/v0/executor-descriptor.schema.json",
       "sha256": "sha256:3b3f97cb1ef9a039613ab35b82caa709b133c51219260debc2de779cd9206471",
+      "media_type": "application/schema+json"
+    },
+    {
+      "schema_version": "v0",
+      "path": ".repository-engineering/schemas/v0/implementation-evidence.schema.json",
+      "sha256": "sha256:2be2de08859068fe153ce549be79a0f2954c6c8ef99dd1861158cb6c5a695a6b",
       "media_type": "application/schema+json"
     },
     {

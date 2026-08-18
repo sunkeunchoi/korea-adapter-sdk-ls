@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use repository_engineering_runtime::bundle::{load_bundle, BundleError};
+use repository_engineering_runtime::contract::validate_portable_contract;
 
 struct TestDirectory(PathBuf);
 
@@ -59,6 +60,11 @@ fn copied_bundle_loads_without_repository_discovery() {
         .member(".repository-engineering/schema-registry.json")
         .is_some());
     assert!(loaded.member(".agents/skills/audit-row/SKILL.md").is_some());
+    let validated = validate_portable_contract(&loaded).unwrap();
+    assert_eq!(validated.scenario_ids.len(), 12);
+    assert!(loaded
+        .member(".repository-engineering/contracts/capabilities/audit-carried-rows.toml")
+        .is_none());
 }
 
 #[test]

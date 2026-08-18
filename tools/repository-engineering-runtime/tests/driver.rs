@@ -1,3 +1,6 @@
+#[path = "support/effect_store.rs"]
+mod effect_store;
+#[allow(dead_code)]
 #[path = "support/scripted_host.rs"]
 mod scripted_host;
 #[path = "support/subprocess_host.rs"]
@@ -5,10 +8,11 @@ mod subprocess_host;
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use effect_store::MemoryEffects;
 use repository_engineering_runtime::adapters::artifact_fs::ArtifactFs;
 use repository_engineering_runtime::adapters::checkpoint_fs::{
     CheckpointFs, LocalFsTrust, NoFault,
@@ -47,6 +51,35 @@ fn digest(byte: char) -> String {
     format!("sha256:{}", byte.to_string().repeat(64))
 }
 
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repository root")
+        .to_path_buf()
+}
+
+fn copied_bundle() -> TestDirectory {
+    let source = repository_root();
+    let target = TestDirectory::new("bundle");
+    let manifest_path = source.join(".repository-engineering/runtime-bundle.json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("bundle manifest"))
+            .expect("bundle JSON");
+    let destination_manifest = target.0.join(".repository-engineering/runtime-bundle.json");
+    fs::create_dir_all(destination_manifest.parent().expect("manifest parent"))
+        .expect("manifest parent directories");
+    fs::copy(manifest_path, destination_manifest).expect("copy manifest");
+    for member in manifest["members"].as_array().expect("bundle members") {
+        let relative = member["path"].as_str().expect("member path");
+        let destination = target.0.join(relative);
+        fs::create_dir_all(destination.parent().expect("member parent"))
+            .expect("member parent directories");
+        fs::copy(source.join(relative), destination).expect("copy member");
+    }
+    target
+}
+
 fn request(limit: usize, row_count: usize) -> RunRequest {
     RunRequest {
         schema_version: "v0".to_owned(),
@@ -56,11 +89,13 @@ fn request(limit: usize, row_count: usize) -> RunRequest {
         package_lock_digest: digest('1'),
         implementation_subject_digest: digest('2'),
         capability_contract_digest: digest('3'),
+        worker_role_digest: digest('9'),
         executor_digest: digest('4'),
         scenario_digest: digest('5'),
         repository_snapshot_digest: digest('6'),
         row_manifest_digest: digest('7'),
         base_ledger_digest: digest('8'),
+        output_root_id: "test-output-root".to_owned(),
         rows: (1..=row_count)
             .map(|index| RowInput {
                 row_id: format!("L{index}"),
@@ -75,12 +110,13 @@ fn driver(
     host: ScriptedHost,
     state: &TestDirectory,
     artifacts: &TestDirectory,
-) -> Driver<ScriptedHost, ArtifactFs, CheckpointFs> {
+) -> Driver<ScriptedHost, ArtifactFs, CheckpointFs, MemoryEffects> {
     Driver::new(
         host,
         ArtifactFs::new(&artifacts.0).expect("artifact store"),
         CheckpointFs::new(&state.0, LocalFsTrust::TrustedSingleHostUnix, NoFault)
             .expect("checkpoint store"),
+        MemoryEffects::new(digest('8')),
     )
 }
 
@@ -134,6 +170,21 @@ async fn cancellation_fences_late_results_and_drains_every_task() {
     assert_eq!(recovered.generation.phase, Phase::Cancelled);
     assert!(recovered.generation.cancellation_fence.is_some());
     assert!(!artifacts.0.join("capsules").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_errors_still_signal_and_drain_every_task() {
+    let state = TestDirectory::new("cancel-error-state");
+    let artifacts = TestDirectory::new("cancel-error-artifacts");
+    let host = ScriptedHost::new(Duration::from_secs(60)).failing_cancel();
+    let mut driver = driver(host.clone(), &state, &artifacts);
+    let (cancel, receiver) = tokio::sync::watch::channel(false);
+    let run = tokio::spawn(async move { driver.run(request(8, 2), receiver).await });
+    host.wait_for_started(2).await;
+    cancel.send(true).expect("cancel");
+    assert_eq!(run.await.expect("driver join"), Err(DriverError::Host));
+    assert_eq!(host.cancel_calls(), 2);
+    assert_eq!(host.active(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -230,9 +281,11 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
     let state = TestDirectory::new("subprocess-state");
     let artifacts = TestDirectory::new("subprocess-artifacts");
     let work = TestDirectory::new("subprocess-work");
+    let bundle = copied_bundle();
     let host = SubprocessHost::new(
         env!("CARGO_BIN_EXE_fixture-worker"),
         &work.0,
+        &bundle.0,
         Duration::from_secs(120),
     )
     .expect("subprocess host");
@@ -241,6 +294,7 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
         ArtifactFs::new(&artifacts.0).expect("artifacts"),
         CheckpointFs::new(&state.0, LocalFsTrust::TrustedSingleHostUnix, NoFault)
             .expect("checkpoints"),
+        MemoryEffects::new(digest('8')),
     );
     let (_cancel, receiver) = tokio::sync::watch::channel(false);
     let result = driver.run(request(8, 4), receiver).await.expect("run");
@@ -259,9 +313,11 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
         let state = TestDirectory::new("hostile-state");
         let artifacts = TestDirectory::new("hostile-artifacts");
         let work = TestDirectory::new("hostile-work");
+        let bundle = copied_bundle();
         let hostile = SubprocessHost::new(
             env!("CARGO_BIN_EXE_fixture-worker"),
             &work.0,
+            &bundle.0,
             Duration::from_millis(100),
         )
         .expect("hostile host")
@@ -271,6 +327,7 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
             ArtifactFs::new(&artifacts.0).expect("artifacts"),
             CheckpointFs::new(&state.0, LocalFsTrust::TrustedSingleHostUnix, NoFault)
                 .expect("checkpoints"),
+            MemoryEffects::new(digest('8')),
         );
         let (_cancel, receiver) = tokio::sync::watch::channel(false);
         assert_eq!(
@@ -283,9 +340,11 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
     let state = TestDirectory::new("subprocess-cancel-state");
     let artifacts = TestDirectory::new("subprocess-cancel-artifacts");
     let work = TestDirectory::new("subprocess-cancel-work");
+    let bundle = copied_bundle();
     let cancellable = SubprocessHost::new(
         env!("CARGO_BIN_EXE_fixture-worker"),
         &work.0,
+        &bundle.0,
         Duration::from_secs(120),
     )
     .expect("cancellable host")
@@ -295,6 +354,7 @@ async fn subprocess_workers_are_fresh_confined_bounded_and_reaped() {
         ArtifactFs::new(&artifacts.0).expect("artifacts"),
         CheckpointFs::new(&state.0, LocalFsTrust::TrustedSingleHostUnix, NoFault)
             .expect("checkpoints"),
+        MemoryEffects::new(digest('8')),
     );
     let (cancel, receiver) = tokio::sync::watch::channel(false);
     let run = tokio::spawn(async move { driver.run(request(8, 2), receiver).await });
@@ -347,11 +407,13 @@ fn generation(
         package_lock_digest: request.package_lock_digest.clone(),
         implementation_subject_digest: request.implementation_subject_digest.clone(),
         capability_contract_digest: request.capability_contract_digest.clone(),
+        worker_role_digest: request.worker_role_digest.clone(),
         executor_digest: request.executor_digest.clone(),
         scenario_digest: request.scenario_digest.clone(),
         repository_snapshot_digest: request.repository_snapshot_digest.clone(),
         row_manifest_digest: request.row_manifest_digest.clone(),
         base_ledger_digest: request.base_ledger_digest.clone(),
+        output_root_id: request.output_root_id.clone(),
         rows: machine
             .checkpoint_rows(&BTreeMap::new())
             .expect("checkpoint rows"),

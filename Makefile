@@ -1282,7 +1282,8 @@ docs-check:
 
 ## Validate authored repository-engineering inputs and assert projected artifacts are exact.
 repository-engineering-check:
-	cargo run -q -p ls-repository-engineering -- check
+	cargo +1.96.0 run --locked -q -p ls-repository-engineering -- check
+	cargo +1.96.0 test --locked --manifest-path tools/repository-engineering-runtime/Cargo.toml --all-targets
 
 # ---------------------------------------------------------------------------
 # API Drift Tracker — opt-in, and deliberately EXCLUDED from default gates

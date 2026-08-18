@@ -2,10 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
+use serde::Serialize;
+
 use crate::model::{
     valid_digest, valid_id, AcceptedResultCapsule, ArtifactReference, AuditRecord, AuditVerdict,
-    CheckpointGeneration, CheckpointRow, DispatchIntent, MachineError, Phase, RunRequest,
-    TerminalOutcome, TerminalRecord, TerminalRow,
+    CheckpointGeneration, CheckpointRow, DispatchIntent, EffectEntry, MachineError, Phase,
+    RunRequest, TerminalOutcome, TerminalRecord, TerminalRow,
 };
 
 const MAX_RECORD_BYTES: usize = 64 * 1024;
@@ -31,6 +33,16 @@ struct RuntimeRow {
     row_id: String,
     source_available: bool,
     status: RowStatus,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct RollUpReport {
+    schema_version: String,
+    attempt_id: String,
+    implementation_subject_digest: String,
+    base_ledger_digest: String,
+    rows: Vec<TerminalRow>,
 }
 
 #[derive(Debug, Clone)]
@@ -245,11 +257,13 @@ impl SweepMachine {
             || checkpoint.package_lock_digest != request.package_lock_digest
             || checkpoint.implementation_subject_digest != request.implementation_subject_digest
             || checkpoint.capability_contract_digest != request.capability_contract_digest
+            || checkpoint.worker_role_digest != request.worker_role_digest
             || checkpoint.executor_digest != request.executor_digest
             || checkpoint.scenario_digest != request.scenario_digest
             || checkpoint.repository_snapshot_digest != request.repository_snapshot_digest
             || checkpoint.row_manifest_digest != request.row_manifest_digest
             || checkpoint.base_ledger_digest != request.base_ledger_digest
+            || checkpoint.output_root_id != request.output_root_id
             || checkpoint.rows.len() != request.rows.len()
         {
             return Err(MachineError::InvalidRequest);
@@ -314,12 +328,9 @@ impl SweepMachine {
             Phase::Dispatching if machine.phase == Phase::Dispatching => {}
             Phase::RollingUp if machine.phase == Phase::RollingUp => {}
             Phase::GateComputed if machine.phase == Phase::RollingUp => {
-                machine.finish_roll_up(&checkpoint.base_ledger_digest)?;
+                machine.phase = Phase::GateComputed;
             }
-            Phase::Complete if machine.phase == Phase::RollingUp => {
-                machine.finish_roll_up(&checkpoint.base_ledger_digest)?;
-                let _ = machine.complete()?;
-            }
+            Phase::Complete if machine.phase == Phase::RollingUp => machine.phase = Phase::Complete,
             Phase::Cancelling | Phase::Cancelled | Phase::RecoveryRequired => {
                 machine.phase = checkpoint.phase.clone();
             }
@@ -418,6 +429,30 @@ impl SweepMachine {
         Ok(())
     }
 
+    pub fn prepare_roll_up_effects(&self) -> Result<Vec<EffectEntry>, MachineError> {
+        if self.phase != Phase::RollingUp {
+            return Err(MachineError::InvalidPhase);
+        }
+        let report = RollUpReport {
+            schema_version: "v0".to_owned(),
+            attempt_id: self.request.attempt_id.clone(),
+            implementation_subject_digest: self.request.implementation_subject_digest.clone(),
+            base_ledger_digest: self.request.base_ledger_digest.clone(),
+            rows: self.terminal_rows(),
+        };
+        let after_bytes = serde_json::to_vec(&report).map_err(|_| MachineError::RecordInvalid)?;
+        let effect_key = format!("{}:roll-up-report", self.request.attempt_id);
+        Ok(vec![EffectEntry {
+            schema_version: "v0".to_owned(),
+            effect_id: format!("roll-up-report-{:x}", Sha256::digest(effect_key.as_bytes())),
+            relative_target: format!("reports/{}.json", self.request.attempt_id),
+            expected_before_digest: None,
+            after_digest: digest_bytes(&after_bytes),
+            after_bytes,
+            base_ledger_digest: self.request.base_ledger_digest.clone(),
+        }])
+    }
+
     pub fn complete(&mut self) -> Result<TerminalRecord, MachineError> {
         if self.phase != Phase::GateComputed {
             return Err(MachineError::InvalidPhase);
@@ -446,6 +481,7 @@ fn validate_request(request: &RunRequest) -> Result<(), MachineError> {
         || request.rows.is_empty()
         || !valid_id(&request.attempt_id)
         || !valid_id(&request.idempotency_key)
+        || !valid_id(&request.output_root_id)
         || request
             .parent_attempt_id
             .as_deref()
@@ -454,6 +490,7 @@ fn validate_request(request: &RunRequest) -> Result<(), MachineError> {
             &request.package_lock_digest,
             &request.implementation_subject_digest,
             &request.capability_contract_digest,
+            &request.worker_role_digest,
             &request.executor_digest,
             &request.scenario_digest,
             &request.repository_snapshot_digest,
@@ -474,10 +511,12 @@ fn digest_bytes(bytes: &[u8]) -> String {
 
 fn dispatch_intent(request: &RunRequest, row_id: &str) -> DispatchIntent {
     DispatchIntent {
+        schema_version: "v0".to_owned(),
         attempt_id: request.attempt_id.clone(),
         invocation_id: format!("{}-{row_id}", request.attempt_id),
         assignment_id: row_id.to_owned(),
         row_id: row_id.to_owned(),
+        idempotency_key: format!("{}-{row_id}", request.attempt_id),
         worker_instance_id: format!("worker-{}-{row_id}", request.attempt_id),
     }
 }

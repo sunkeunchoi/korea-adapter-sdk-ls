@@ -282,18 +282,6 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         registry_reference.clone(),
         conformance_reference.clone(),
     ];
-    for registration in authored
-        .package
-        .declared_capability_contracts
-        .iter()
-        .chain(authored.package.declared_worker_roles.iter())
-    {
-        bundle_members.push(file_reference(
-            root,
-            &registration.path.0,
-            "application/toml",
-        )?);
-    }
     bundle_members.extend(schema_artifacts);
     bundle_members.extend(conformance_artifacts);
     bundle_members.extend(bundle_source_artifacts.iter().cloned());
@@ -859,7 +847,7 @@ mod tests {
             Some("Certified and successor-authoritative.".to_owned());
         let document = reference_document(&authored, "sha256:test");
         assert!(document.contains(
-            "Non-normative purpose text (not identity-bound and not lifecycle evidence): Certified and successor-authoritative.\n\nCanonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
+            "Non-normative purpose text (not identity-bound and not lifecycle evidence): Certified and successor-authoritative.\n\nCanonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
         ));
     }
 }

@@ -4,7 +4,7 @@ use ls_repository_engineering::generate::{check_projection_set, generate_project
 use ls_repository_engineering::inventory::load_authored_package;
 use ls_repository_engineering::repository::compose_repository;
 use ls_repository_engineering::schema::{
-    ArtifactReference, AuthorityState, EvidenceAvailability, RepositoryPath,
+    ArtifactReference, AuthorityState, EvidenceAvailability, MigrationState, RepositoryPath,
 };
 use ls_repository_engineering::validator::validate_semantic_package;
 use sha2::{Digest, Sha256};
@@ -36,7 +36,7 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
             .iter()
             .filter(|path| path.starts_with(".repository-engineering/schemas/v0/"))
             .count(),
-        21
+        22
     );
 
     for artifact in first
@@ -157,12 +157,12 @@ fn generated_reference_names_every_reviewed_row_and_separates_states() {
             .count(),
         2
     );
-    assert!(text.contains("successor implementation evidence `absent`"));
+    assert!(text.contains("successor implementation evidence `available_validated`"));
     assert!(text.contains("parity `unproved`"));
     assert!(text.contains("unavailable_unproved"));
     assert!(text.contains("Locator | Digest"));
     assert!(text.contains(
-        "Canonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
+        "Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
     ));
     assert!(!text.contains("successor-authoritative"));
 }
@@ -329,6 +329,21 @@ fn exactly_two_planned_rows_changed_and_every_other_row_matches_the_pre_wave_has
     );
 
     let mut protected = authored.ledger.clone();
+    let architecture = protected
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "instruction--architecture-md")
+        .unwrap();
+    assert_eq!(architecture.migration_state, MigrationState::Unported);
+    assert_eq!(architecture.current_authority, AuthorityState::Legacy);
+    assert_eq!(
+        architecture.source_digest.as_ref().unwrap().0,
+        "sha256:7a04049fe9366422db3c8e6525a4ef08b84be3dc0242706a98e4efa4ef95763f"
+    );
+    architecture.source_digest = Some(ls_repository_engineering::schema::Sha256Digest(
+        "sha256:636274dea047898a23d1ccab146a51f4f34e9e93e772b82fa9cfdbaba2b944ce"
+            .to_owned(),
+    ));
     protected.rows.retain(|row| {
         !matches!(
             row.logical_id.0.as_str(),
@@ -397,24 +412,36 @@ fn semantic_cross_record_validation_rejects_false_readiness_and_broken_links() {
     let artifact: ArtifactReference =
         authored.capability_contracts[0].knowledge_references[0].clone();
     let mut executor = authored.clone();
-    executor.capability_contracts[0].executor = Some(artifact.clone());
+    executor.capability_contracts[0].state.implementation =
+        ls_repository_engineering::schema::ImplementationState::Unported;
     assert_semantic_code(&executor, "semantic.executor.forbidden");
 
     let mut scenario = authored.clone();
+    scenario.capability_contracts[0].state.implementation =
+        ls_repository_engineering::schema::ImplementationState::Unported;
     scenario.capability_contracts[0]
         .scenario_references
         .push(artifact);
     assert_semantic_code(&scenario, "semantic.scenario_reference.forbidden");
 
-    let mut successor_evidence = authored.clone();
-    successor_evidence.capability_contracts[0]
+    let mut missing_successor_evidence = authored.clone();
+    missing_successor_evidence.capability_contracts[0]
         .evidence_status
         .as_mut()
         .unwrap()
-        .successor_implementation = EvidenceAvailability::AvailableValidated;
+        .successor_implementation = EvidenceAvailability::Absent;
     assert_semantic_code(
-        &successor_evidence,
+        &missing_successor_evidence,
         "semantic.evidence.successor_claim_forbidden",
+    );
+
+    let mut unimplemented_worker = authored.clone();
+    unimplemented_worker.worker_role_contracts[0]
+        .state
+        .implementation = ls_repository_engineering::schema::ImplementationState::Unported;
+    assert_semantic_code(
+        &unimplemented_worker,
+        "semantic.worker_role.not_implemented",
     );
 
     let mut duplicate_claim = authored.clone();

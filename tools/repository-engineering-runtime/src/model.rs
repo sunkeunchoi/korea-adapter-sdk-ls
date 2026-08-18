@@ -197,11 +197,13 @@ pub struct RunRequest {
     pub package_lock_digest: String,
     pub implementation_subject_digest: String,
     pub capability_contract_digest: String,
+    pub worker_role_digest: String,
     pub executor_digest: String,
     pub scenario_digest: String,
     pub repository_snapshot_digest: String,
     pub row_manifest_digest: String,
     pub base_ledger_digest: String,
+    pub output_root_id: String,
     pub rows: Vec<RowInput>,
     pub global_concurrency_limit: usize,
 }
@@ -222,10 +224,12 @@ pub enum Phase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DispatchIntent {
+    pub schema_version: String,
     pub attempt_id: String,
     pub invocation_id: String,
     pub assignment_id: String,
     pub row_id: String,
+    pub idempotency_key: String,
     pub worker_instance_id: String,
 }
 
@@ -251,6 +255,12 @@ pub struct EffectEntry {
     pub base_ledger_digest: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectApplyOutcome {
+    Applied,
+    AlreadyApplied,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointGeneration {
@@ -263,11 +273,13 @@ pub struct CheckpointGeneration {
     pub package_lock_digest: String,
     pub implementation_subject_digest: String,
     pub capability_contract_digest: String,
+    pub worker_role_digest: String,
     pub executor_digest: String,
     pub scenario_digest: String,
     pub repository_snapshot_digest: String,
     pub row_manifest_digest: String,
     pub base_ledger_digest: String,
+    pub output_root_id: String,
     pub rows: Vec<CheckpointRow>,
     pub cancellation_fence: Option<u64>,
     pub prepared_effects: Vec<EffectEntry>,

@@ -387,6 +387,7 @@ fn validate_generation(
         &generation.package_lock_digest,
         &generation.implementation_subject_digest,
         &generation.capability_contract_digest,
+        &generation.worker_role_digest,
         &generation.executor_digest,
         &generation.scenario_digest,
         &generation.repository_snapshot_digest,
@@ -395,6 +396,7 @@ fn validate_generation(
     ];
     if generation.schema_version != "v0"
         || !valid_id(&generation.attempt_id)
+        || !valid_id(&generation.output_root_id)
         || generation
             .parent_attempt_id
             .as_deref()
@@ -413,6 +415,7 @@ fn validate_generation(
             &generation.applied_effect_ids,
             &generation.base_ledger_digest,
         )
+        || !valid_effect_phase(generation)
         || previous.is_some_and(|prior| {
             !same_identity(generation, prior)
                 || !valid_phase_transition(&prior.phase, &generation.phase)
@@ -435,9 +438,11 @@ fn valid_rows(rows: &[CheckpointRow], attempt_id: &str) -> bool {
         valid_id(&row.row_id)
             && ids.insert(row.row_id.clone())
             && row.dispatch_intent.as_ref().is_none_or(|intent| {
-                intent.row_id == row.row_id
+                intent.schema_version == "v0"
+                    && intent.row_id == row.row_id
                     && intent.assignment_id == row.row_id
                     && intent.attempt_id == attempt_id
+                    && intent.idempotency_key == format!("{}-{}", attempt_id, row.row_id)
                     && valid_id(&intent.attempt_id)
                     && valid_id(&intent.invocation_id)
                     && valid_id(&intent.worker_instance_id)
@@ -481,7 +486,24 @@ fn valid_effects(entries: &[EffectEntry], applied: &[String], base_ledger_digest
     let mut applied_ids = BTreeSet::new();
     applied
         .iter()
-        .all(|id| applied_ids.insert(id.clone()) && ids.contains(id.as_str()))
+        .enumerate()
+        .all(|(index, id)| applied_ids.insert(id.clone()) && entries[index].effect_id == *id)
+}
+
+fn valid_effect_phase(generation: &CheckpointGeneration) -> bool {
+    use crate::model::Phase;
+
+    match generation.phase {
+        Phase::Discovering | Phase::Dispatching => {
+            generation.prepared_effects.is_empty() && generation.applied_effect_ids.is_empty()
+        }
+        Phase::RollingUp => true,
+        Phase::GateComputed | Phase::Complete => {
+            !generation.prepared_effects.is_empty()
+                && generation.applied_effect_ids.len() == generation.prepared_effects.len()
+        }
+        Phase::Cancelling | Phase::Cancelled | Phase::RecoveryRequired => true,
+    }
 }
 
 fn same_identity(left: &CheckpointGeneration, right: &CheckpointGeneration) -> bool {
@@ -490,11 +512,13 @@ fn same_identity(left: &CheckpointGeneration, right: &CheckpointGeneration) -> b
         && left.package_lock_digest == right.package_lock_digest
         && left.implementation_subject_digest == right.implementation_subject_digest
         && left.capability_contract_digest == right.capability_contract_digest
+        && left.worker_role_digest == right.worker_role_digest
         && left.executor_digest == right.executor_digest
         && left.scenario_digest == right.scenario_digest
         && left.repository_snapshot_digest == right.repository_snapshot_digest
         && left.row_manifest_digest == right.row_manifest_digest
         && left.base_ledger_digest == right.base_ledger_digest
+        && left.output_root_id == right.output_root_id
         && left
             .rows
             .iter()
@@ -525,7 +549,8 @@ fn valid_phase_transition(previous: &crate::model::Phase, next: &crate::model::P
         ) | (
             Phase::Cancelling,
             Phase::Cancelling | Phase::Cancelled | Phase::RecoveryRequired
-        ) | (Phase::Cancelled, Phase::Cancelled)
+        ) | (Phase::Complete, Phase::Complete | Phase::RecoveryRequired)
+            | (Phase::Cancelled, Phase::Cancelled)
             | (Phase::RecoveryRequired, Phase::RecoveryRequired)
     )
 }

@@ -28,23 +28,23 @@
     },
     {
       "path": ".repository-engineering/implementation-subjects/audit-carried-rows.json",
-      "sha256": "sha256:be50a3304e4768d78e577a9c02e69d3964a21c9090d10a0c987580ece1fe0316",
+      "sha256": "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19",
       "byte_length": "3233"
     },
     {
       "path": ".repository-engineering/package.lock.json",
-      "sha256": "sha256:0aa86dab79a19d80c2fcabff9af2864e3681d8679ce2318df2b1b3372caacbe2",
+      "sha256": "sha256:dc8457adb3a360478d7987515fa164f17d07f0fdc79b8c5c77918561df6193b7",
       "byte_length": "3580"
     },
     {
       "path": ".repository-engineering/runtime-bundle.json",
-      "sha256": "sha256:09144e4eb99e3c9a7e7ef05a424e55291ce2331cab790df153950fa9543d4575",
-      "byte_length": "9785"
+      "sha256": "sha256:273b526acf4d740c794566d6657b0c1b7efb97641a3fb692905b9e1a5e8f82a1",
+      "byte_length": "9530"
     },
     {
       "path": ".repository-engineering/schema-registry.json",
-      "sha256": "sha256:fd9fc965b8c09b830b2c511a651349c63067d97e9f46c11362cce11b6a02fcce",
-      "byte_length": "8054"
+      "sha256": "sha256:3f25e70a6c8b60d6608c8f28d4c563761985bdd80bf9eaaff0b4d4cf2a364b0b",
+      "byte_length": "8444"
     },
     {
       "path": ".repository-engineering/schemas/v0/artifact-reference.schema.json",
@@ -95,6 +95,11 @@
       "path": ".repository-engineering/schemas/v0/executor-descriptor.schema.json",
       "sha256": "sha256:3b3f97cb1ef9a039613ab35b82caa709b133c51219260debc2de779cd9206471",
       "byte_length": "1185"
+    },
+    {
+      "path": ".repository-engineering/schemas/v0/implementation-evidence.schema.json",
+      "sha256": "sha256:2be2de08859068fe153ce549be79a0f2954c6c8ef99dd1861158cb6c5a695a6b",
+      "byte_length": "2606"
     },
     {
       "path": ".repository-engineering/schemas/v0/implementation-subject-manifest.schema.json",
@@ -153,8 +158,8 @@
     },
     {
       "path": "docs/reference/repository-engineering-package.md",
-      "sha256": "sha256:81f0ea174535f96ba091ce167d889eed4e524a02ec55395152e7b136bd1c3d14",
-      "byte_length": "20172"
+      "sha256": "sha256:3427880a6569cb9118af2c8bc1577b1ed545ea4f5f26548331f2b2c3818a0cb6",
+      "byte_length": "20198"
     }
   ]
 }

@@ -17,6 +17,10 @@ root Cargo workspace *is* that context.
 The `.repository-engineering/` package and its `ls-repository-engineering` leaf
 crate are repository-level governance tooling shared across this layout. They do
 not introduce a third product context or change the one-way product dependency.
+The independently locked `tools/repository-engineering-runtime/` workspace is
+the package's inactive, host-neutral execution counterpart: it consumes a
+copied closed bundle and has no dependency on either product runtime, no active
+registry entry, and no authority over the legacy audit workflow.
 
 ## Where definitions live
 

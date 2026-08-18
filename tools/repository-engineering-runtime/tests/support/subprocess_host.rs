@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use repository_engineering_runtime::contract::validate_worker_result;
 use repository_engineering_runtime::model::{AcceptedResultCapsule, DispatchIntent};
 use repository_engineering_runtime::worker_host::{HostRecovery, WorkerHost};
 use serde::Deserialize;
@@ -44,6 +45,7 @@ struct State {
 pub struct SubprocessHost {
     executable: PathBuf,
     work_root: PathBuf,
+    bundle_root: PathBuf,
     timeout: Duration,
     mode: String,
     state: Arc<State>,
@@ -53,6 +55,7 @@ impl SubprocessHost {
     pub fn new(
         executable: impl AsRef<Path>,
         work_root: impl AsRef<Path>,
+        bundle_root: impl AsRef<Path>,
         timeout: Duration,
     ) -> Result<Self, SubprocessHostError> {
         let executable = executable
@@ -63,12 +66,17 @@ impl SubprocessHost {
             .as_ref()
             .canonicalize()
             .map_err(|_| SubprocessHostError::Boundary)?;
-        if !executable.is_file() || !work_root.is_dir() {
+        let bundle_root = bundle_root
+            .as_ref()
+            .canonicalize()
+            .map_err(|_| SubprocessHostError::Boundary)?;
+        if !executable.is_file() || !work_root.is_dir() || !bundle_root.is_dir() {
             return Err(SubprocessHostError::Boundary);
         }
         Ok(Self {
             executable,
             work_root,
+            bundle_root,
             timeout,
             mode: "success".to_owned(),
             state: Arc::new(State::default()),
@@ -129,6 +137,7 @@ impl WorkerHost for SubprocessHost {
             serde_json::to_string(&intent).map_err(|_| SubprocessHostError::Protocol)?;
         let mut child = Command::new(&self.executable)
             .arg(intent_json)
+            .arg(&self.bundle_root)
             .arg(&self.mode)
             .env_clear()
             .env("FIXTURE_ALLOWED", "1")
@@ -173,6 +182,9 @@ impl WorkerHost for SubprocessHost {
         }
         let capsule: AcceptedResultCapsule =
             serde_json::from_slice(&stdout).map_err(|_| SubprocessHostError::Protocol)?;
+        if !validate_worker_result(&capsule.result) {
+            return Err(SubprocessHostError::Protocol);
+        }
         let observation: WorkerObservation =
             serde_json::from_slice(&capsule.worker_instance_receipt_bytes)
                 .map_err(|_| SubprocessHostError::Protocol)?;

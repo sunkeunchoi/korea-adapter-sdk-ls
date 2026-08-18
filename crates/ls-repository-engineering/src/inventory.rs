@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::schema::{
     ArtifactReference, CapabilityContract, DeclaredContractRegistration, DiscoveryPolicy,
-    MigrationLedger, PackageManifest, RepositoryPath, Sha256Digest, StableId, WorkerRoleContract,
+    ImplementationComponentKind, ImplementationEvidence, ImplementationEvidenceReference,
+    MigrationLedger, PackageManifest, RepositoryPath, ScenarioCatalog, Sha256Digest, StableId,
+    WorkerRoleContract,
 };
 use crate::validator::{validate_first_slice_package, Finding};
 
@@ -236,6 +238,14 @@ fn validate_referenced_artifacts(
             validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
             validate_artifact_reference(root, tracked, &evidence.evidence)?;
             validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+            validate_implementation_evidence(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::Capability,
+                &capability.capability_id,
+                &capability.scenario_references,
+            )?;
         }
         for reference in &capability.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
@@ -273,10 +283,87 @@ fn validate_referenced_artifacts(
             validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
             validate_artifact_reference(root, tracked, &evidence.evidence)?;
             validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+            validate_implementation_evidence(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::WorkerRole,
+                &worker.role_id,
+                &worker.scenario_references,
+            )?;
         }
         for reference in &worker.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_implementation_evidence(
+    root: &Path,
+    tracked: &BTreeMap<String, String>,
+    reference: &ImplementationEvidenceReference,
+    expected_kind: ImplementationComponentKind,
+    expected_id: &StableId,
+    scenario_references: &[ArtifactReference],
+) -> Result<(), AuthoredError> {
+    let bytes = read_tracked_bytes(root, tracked, &reference.evidence.path)?;
+    let evidence: ImplementationEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_invalid",
+        })?;
+    let scenario_reference = scenario_references
+        .iter()
+        .find(|candidate| **candidate == evidence.scenario_catalog)
+        .ok_or_else(|| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_scenario_mismatch",
+        })?;
+    let scenario_bytes = read_tracked_bytes(root, tracked, &scenario_reference.path)?;
+    let scenario_text = std::str::from_utf8(&scenario_bytes).map_err(|_| AuthoredError {
+        path: PathBuf::from(&scenario_reference.path.0),
+        code: "authored.invalid_utf8",
+    })?;
+    let scenario: ScenarioCatalog = toml::from_str(scenario_text).map_err(|_| AuthoredError {
+        path: PathBuf::from(&scenario_reference.path.0),
+        code: "authored.implementation_evidence_scenario_invalid",
+    })?;
+    let mut expected_scenarios = scenario.positive_cases;
+    expected_scenarios.extend(scenario.negative_cases);
+    expected_scenarios.sort();
+    expected_scenarios.dedup();
+    let mut actual_scenarios = evidence.validated_scenarios.clone();
+    actual_scenarios.sort();
+    actual_scenarios.dedup();
+    let expected_hosts = match expected_kind {
+        ImplementationComponentKind::Capability => {
+            ["in_memory_fixture", "subprocess_fixture"].as_slice()
+        }
+        ImplementationComponentKind::WorkerRole => ["subprocess_fixture"].as_slice(),
+    };
+    if evidence.component_kind != expected_kind
+        || evidence.component_id != *expected_id
+        || reference.component_kind != expected_kind
+        || reference.component_id != *expected_id
+        || evidence.subject_manifest != reference.subject_manifest
+        || evidence.validation_basis != reference.validation_basis
+        || evidence.row_count != 26
+        || !evidence.closed_bundle_validated
+        || !evidence.closed_result_validator_used
+        || actual_scenarios != expected_scenarios
+        || evidence.validated_scenarios.len() != expected_scenarios.len()
+        || evidence
+            .runtime_hosts
+            .iter()
+            .map(|host| host.0.as_str())
+            .collect::<Vec<_>>()
+            != expected_hosts
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_binding_mismatch",
+        });
     }
     Ok(())
 }

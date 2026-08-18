@@ -302,6 +302,12 @@ fn loader_fixture() -> PathBuf {
         ".repository-engineering/migration-ledger.toml",
         ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
         ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
+        ".repository-engineering/executors/audit-carried-rows.toml",
+        ".repository-engineering/roles/decommission-row-auditor.toml",
+        ".repository-engineering/scenarios/audit-carried-rows/implementation.toml",
+        ".repository-engineering/implementation-subjects/audit-carried-rows.json",
+        ".repository-engineering/evidence/implementation/audit-carried-rows.json",
+        ".repository-engineering/evidence/implementation/decommission-row-auditor.json",
         ".agents/skills/audit-carried-rows/SKILL.md",
         ".agents/skills/audit-row/SKILL.md",
         ".agents/skills/audit-carried-rows/references/record-format.md",
@@ -309,6 +315,7 @@ fn loader_fixture() -> PathBuf {
         "docs/migration-source/audit/manifest.yaml",
         "docs/migration-source/audit/decommission-audit-report.md",
         "crates/ls-trackers/tests/decommission_audit.rs",
+        "tools/repository-engineering-runtime/tests/end_to_end.rs",
     ] {
         copy_fixture_path(&source, &root, relative);
     }

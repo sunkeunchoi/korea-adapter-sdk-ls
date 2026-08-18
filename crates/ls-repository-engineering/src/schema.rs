@@ -435,6 +435,23 @@ pub struct ImplementationEvidenceReference {
     pub validation_basis: ArtifactReference,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationEvidence {
+    pub schema_version: SchemaVersion,
+    pub evidence_id: StableId,
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub subject_manifest: ArtifactReference,
+    pub scenario_catalog: ArtifactReference,
+    pub validation_basis: ArtifactReference,
+    pub runtime_hosts: Vec<StableId>,
+    pub validated_scenarios: Vec<StableId>,
+    pub row_count: u16,
+    pub closed_bundle_validated: bool,
+    pub closed_result_validator_used: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalSourceStatus {
@@ -927,6 +944,7 @@ pub fn schema_catalog() -> BTreeMap<String, Value> {
     insert_schema::<DiscoveryPolicy>(&mut schemas, "discovery-policy");
     insert_schema::<ExactLock>(&mut schemas, "exact-lock");
     insert_schema::<ExecutorDescriptor>(&mut schemas, "executor-descriptor");
+    insert_schema::<ImplementationEvidence>(&mut schemas, "implementation-evidence");
     insert_schema::<ImplementationSubjectManifest>(&mut schemas, "implementation-subject-manifest");
     insert_schema::<MigrationLedger>(&mut schemas, "migration-ledger");
     insert_schema::<PackageManifest>(&mut schemas, "package-manifest");

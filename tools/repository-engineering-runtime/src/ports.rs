@@ -1,4 +1,6 @@
-use crate::model::{CheckpointGeneration, PublishedHead, RecoveredCheckpoint, TerminalRow};
+use crate::model::{
+    CheckpointGeneration, EffectApplyOutcome, EffectEntry, PublishedHead, RecoveredCheckpoint,
+};
 
 pub trait ArtifactStore {
     type Error;
@@ -22,6 +24,7 @@ pub trait CheckpointStore {
 pub trait EffectApplier {
     type Error;
 
-    fn prepare(&mut self, rows: &[TerminalRow]) -> Result<Vec<String>, Self::Error>;
-    fn apply(&mut self, effect_id: &str) -> Result<(), Self::Error>;
+    fn observed_base_ledger_digest(&self) -> Result<String, Self::Error>;
+    fn validate_plan(&self, entries: &[EffectEntry]) -> Result<(), Self::Error>;
+    fn apply(&mut self, entry: &EffectEntry) -> Result<EffectApplyOutcome, Self::Error>;
 }

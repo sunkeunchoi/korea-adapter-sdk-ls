@@ -5,16 +5,14 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::adapters::{canonical_root, confined_relative, ensure_real_parents, reject_symlink};
+use crate::adapters::{
+    canonical_root, confined_relative, ensure_real_parents, existing_real_path, reject_symlink,
+};
+pub use crate::model::EffectApplyOutcome as ApplyOutcome;
 use crate::model::{valid_digest, valid_id, EffectEntry};
+use crate::ports::EffectApplier;
 
 const MAX_EFFECT_BYTES: u64 = 4 * 1024 * 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApplyOutcome {
-    Applied,
-    AlreadyApplied,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectError {
@@ -42,12 +40,14 @@ impl From<io::Error> for EffectError {
 #[derive(Debug)]
 pub struct EffectFs {
     root: PathBuf,
+    base_ledger: PathBuf,
 }
 
 impl EffectFs {
     pub fn new(root: impl AsRef<Path>) -> Result<Self, EffectError> {
         Ok(Self {
             root: canonical_root(root.as_ref())?,
+            base_ledger: PathBuf::from(".repository-engineering/migration-ledger.toml"),
         })
     }
 
@@ -129,6 +129,25 @@ impl EffectFs {
             return Err(EffectError::InvalidEntry);
         }
         Ok(())
+    }
+}
+
+impl EffectApplier for EffectFs {
+    type Error = EffectError;
+
+    fn observed_base_ledger_digest(&self) -> Result<String, Self::Error> {
+        let target = existing_real_path(&self.root, &self.base_ledger)?;
+        reject_symlink(&target)?;
+        let bytes = read_optional_bounded(&target)?.ok_or(EffectError::StateConflict)?;
+        Ok(digest_bytes(&bytes))
+    }
+
+    fn validate_plan(&self, entries: &[EffectEntry]) -> Result<(), Self::Error> {
+        Self::validate_plan(self, entries)
+    }
+
+    fn apply(&mut self, entry: &EffectEntry) -> Result<ApplyOutcome, Self::Error> {
+        Self::apply(self, entry)
     }
 }
 

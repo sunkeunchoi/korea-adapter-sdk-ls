@@ -48,11 +48,13 @@ fn generation(sequence: u64, parent: Option<String>, phase: Phase) -> Checkpoint
         package_lock_digest: digest('1'),
         implementation_subject_digest: digest('2'),
         capability_contract_digest: digest('3'),
+        worker_role_digest: digest('9'),
         executor_digest: digest('4'),
         scenario_digest: digest('5'),
         repository_snapshot_digest: digest('6'),
         row_manifest_digest: digest('7'),
         base_ledger_digest: digest('8'),
+        output_root_id: "test-output-root".to_owned(),
         rows: vec![CheckpointRow {
             row_id: "L1".to_owned(),
             source_available: true,

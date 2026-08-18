@@ -3,7 +3,7 @@
 This page is generated from the inert, reviewed package declaration. It grants no runtime, credential, activation, authority-transfer, retirement, or publication authority.
 
 - Schema version: `v0`
-- Package lock identity: `sha256:071cb5775c4ca8036616a604f2ee78e3db506662e81ef92555f8467269303dc7`
+- Package lock identity: `sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c`
 - Activation eligibility: `none`
 - Declared capability contracts: `1`
 - Declared worker roles: `1`
@@ -20,9 +20,9 @@ Declaration, migration planning, implementation, certification, parity, activati
 
 Non-normative purpose text (not identity-bound and not lifecycle evidence): Audits every carried or discard row and produces credential-free per-row records plus a roll-up gate.
 
-Canonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; executor: absent; scenarios: 0.
+Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; executor: present; scenarios: 1.
 
-Evidence boundary: legacy evidence `available_validated` (1 artifact(s), 1 artifact set(s), 26 set member(s)); successor implementation evidence `absent`; parity `unproved`; certification `uncertified`; legacy evidence satisfies successor: `false`.
+Evidence boundary: legacy evidence `available_validated` (1 artifact(s), 1 artifact set(s), 26 set member(s)); successor implementation evidence `available_validated`; parity `unproved`; certification `uncertified`; legacy evidence satisfies successor: `false`.
 
 External source requirements:
 
@@ -46,7 +46,7 @@ Identity-bearing semantic provenance:
 
 Non-normative purpose text (not identity-bound and not lifecycle evidence): A fresh worker audits exactly one manifest row and returns a validated credential-free result.
 
-Canonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; terminal correlation: required.
+Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; terminal correlation: required.
 
 Identity-bearing semantic provenance:
 
@@ -61,7 +61,7 @@ Identity-bearing semantic provenance:
 | Logical ID | Source kind | Source locator | Disposition | Migration | Absence reason | Declaration | Implementation | Certification | Authority | Retirement | Replacement |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | capability--ask-matt | capability | `.agents/skills/ask-matt` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
-| capability--audit-carried-rows | capability | `.agents/skills/audit-carried-rows` | PORT | planned | parity_not_proven | declared | unported | uncertified | legacy | not_started | audit-carried-rows |
+| capability--audit-carried-rows | capability | `.agents/skills/audit-carried-rows` | PORT | planned | parity_not_proven | declared | implemented | uncertified | legacy | not_started | audit-carried-rows |
 | capability--audit-row | capability | `.agents/skills/audit-row` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
 | capability--code-review | capability | `.agents/skills/code-review` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
 | capability--codebase-design | capability | `.agents/skills/codebase-design` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
@@ -136,5 +136,5 @@ Identity-bearing semantic provenance:
 | instruction--user-guide-md | instruction_config | `USER_GUIDE.md` | MERGE | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
 | run-state-consumer--audit-carried-rows | ignored_state_consumer | `.compound-engineering/runs/audit-carried-rows` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
 | run-state-consumer--promote-trs | ignored_state_consumer | `.compound-engineering/runs/promote-trs` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |
-| worker-role--decommission-row-auditor | worker_role | `.claude/agents/decommission-row-auditor.md` | PORT | planned | parity_not_proven | declared | unported | uncertified | legacy | not_started | decommission-row-auditor |
+| worker-role--decommission-row-auditor | worker_role | `.claude/agents/decommission-row-auditor.md` | PORT | planned | parity_not_proven | declared | implemented | uncertified | legacy | not_started | decommission-row-auditor |
 | worker-role--tr-promoter | worker_role | `.claude/agents/tr-promoter.md` | PORT | unported | successor_not_implemented | absent | unported | uncertified | legacy | not_started | absent |

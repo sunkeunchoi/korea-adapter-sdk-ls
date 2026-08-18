@@ -20,11 +20,13 @@ evidence_obligations = [
 human_gates = ["attended-paper-readonly-session", "unverifiable-maintainer-acceptance"]
 legacy_authority_dependencies = ["capability--audit-row", "run-state-consumer--audit-carried-rows"]
 worker_roles = ["decommission-row-auditor"]
-scenario_references = []
+executor = { schema_version = "v0", path = ".repository-engineering/executors/audit-carried-rows.toml", sha256 = "sha256:c05f380924e0daf3e10274a003bef676a2d3c542fc7421c70251ee76ff2c6775", media_type = "application/toml" }
+scenario_references = [{ schema_version = "v0", path = ".repository-engineering/scenarios/audit-carried-rows/implementation.toml", sha256 = "sha256:b4b3009f5350a2262bd634893f852f8d5e8417fb92546bdc4945a0dea25e932c", media_type = "application/toml" }]
+implementation_evidence = { component_kind = "capability", component_id = "audit-carried-rows", subject_manifest = { schema_version = "v0", path = ".repository-engineering/implementation-subjects/audit-carried-rows.json", sha256 = "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19", media_type = "application/json" }, evidence = { schema_version = "v0", path = ".repository-engineering/evidence/implementation/audit-carried-rows.json", sha256 = "sha256:53a652cecdd77dc02038929f29294457c49e4a642beacb54228ea715bf12fe51", media_type = "application/json" }, validation_basis = { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/end_to_end.rs", sha256 = "sha256:9cc08862aad567b31c339d90f26fb38797689c80a1d78f52f58c861988058cda", media_type = "text/x-rust" } }
 
 [state]
 declaration = "declared"
-implementation = "unported"
+implementation = "implemented"
 certification = "uncertified"
 authority = "legacy"
 retirement = "not_started"
@@ -75,7 +77,7 @@ condition = "inconsistent_persisted_state"
 
 [evidence_status]
 legacy_status = "available_validated"
-successor_implementation = "absent"
+successor_implementation = "available_validated"
 parity = "unproved"
 certification = "uncertified"
 legacy_evidence_satisfies_successor = false

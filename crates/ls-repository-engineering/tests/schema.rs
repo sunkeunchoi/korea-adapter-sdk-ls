@@ -25,6 +25,7 @@ fn structural_catalog_is_closed_and_draft_2020_12() {
         "discovery-policy",
         "exact-lock",
         "executor-descriptor",
+        "implementation-evidence",
         "implementation-subject-manifest",
         "migration-ledger",
         "package-manifest",

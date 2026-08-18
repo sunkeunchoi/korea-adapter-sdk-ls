@@ -545,7 +545,8 @@ fn validate_capability_links<'a>(
         ledger,
         findings,
     );
-    if contract.executor.is_some() {
+    if contract.state.implementation == ImplementationState::Unported && contract.executor.is_some()
+    {
         findings.push(semantic_finding(
             id,
             "executor",
@@ -553,7 +554,9 @@ fn validate_capability_links<'a>(
             "remove_executor",
         ));
     }
-    if !contract.scenario_references.is_empty() {
+    if contract.state.implementation == ImplementationState::Unported
+        && !contract.scenario_references.is_empty()
+    {
         findings.push(semantic_finding(
             id,
             "scenario_references",
@@ -592,8 +595,12 @@ fn validate_capability_links<'a>(
             "complete_coordination_semantics",
         ));
     }
+    let expected_successor_evidence = match contract.state.implementation {
+        ImplementationState::Unported => EvidenceAvailability::Absent,
+        ImplementationState::Implemented => EvidenceAvailability::AvailableValidated,
+    };
     if contract.evidence_status.as_ref().is_none_or(|evidence| {
-        evidence.successor_implementation != EvidenceAvailability::Absent
+        evidence.successor_implementation != expected_successor_evidence
             || evidence.parity != ParityStatus::Unproved
             || evidence.certification != CertificationState::Uncertified
             || evidence.legacy_evidence_satisfies_successor
@@ -622,6 +629,18 @@ fn validate_capability_links<'a>(
                 "worker_roles",
                 "semantic.worker_role.unresolved",
                 "declare_and_plan_worker_role",
+            ));
+        }
+        if contract.state.implementation == ImplementationState::Implemented
+            && workers.get(role_id.0.as_str()).is_none_or(|worker| {
+                worker.state.implementation != ImplementationState::Implemented
+            })
+        {
+            findings.push(semantic_finding(
+                id,
+                "worker_roles",
+                "semantic.worker_role.not_implemented",
+                "implement_worker_role_first",
             ));
         }
     }

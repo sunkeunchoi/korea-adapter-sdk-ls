@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
 
+use repository_engineering_runtime::bundle::load_bundle;
+use repository_engineering_runtime::contract::{
+    validate_assignment, validate_portable_contract, validate_worker_result,
+};
 use repository_engineering_runtime::model::{
     AcceptedResultCapsule, ArtifactReference, AuditRecord, AuditSuccessPayload, AuditVerdict,
     DispatchIntent, WorkerResult,
@@ -18,6 +22,12 @@ struct Receipt {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     let intent: DispatchIntent = serde_json::from_str(&arguments.next().ok_or("missing intent")?)?;
+    if !validate_assignment(&intent) {
+        return Err("invalid assignment".into());
+    }
+    let bundle_root = arguments.next().ok_or("missing bundle root")?;
+    let bundle = load_bundle(std::path::Path::new(&bundle_root))?;
+    let _contract = validate_portable_contract(&bundle)?;
     let mode = arguments.next().unwrap_or_else(|| "success".to_owned());
     match mode.as_str() {
         "hang" => std::thread::sleep(std::time::Duration::from_secs(60)),
@@ -25,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             print!("{}", "x".repeat(512 * 1024));
             return Ok(());
         }
-        "success" => {}
+        "success" | "unverifiable" => {}
         _ => return Err("unknown mode".into()),
     }
 
@@ -41,10 +51,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cwd_empty,
         environment,
     })?;
+    let verdict = if mode == "unverifiable" {
+        AuditVerdict::Unverifiable
+    } else {
+        AuditVerdict::Confirmed
+    };
     let record_bytes = serde_json::to_vec(&AuditRecord {
         schema_version: "v0".to_owned(),
         row_id: intent.row_id.clone(),
-        verdict: AuditVerdict::Confirmed,
+        verdict,
     })?;
     let capsule = AcceptedResultCapsule {
         schema_version: "v0".to_owned(),
@@ -62,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             payload: AuditSuccessPayload {
                 row_id: intent.row_id.clone(),
-                verdict: AuditVerdict::Confirmed,
+                verdict,
                 record: ArtifactReference {
                     schema_version: "v0".to_owned(),
                     path: format!("records/{}.json", intent.row_id),
@@ -74,6 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         record_bytes: Some(record_bytes),
         worker_instance_receipt_bytes: receipt_bytes,
     };
+    if !validate_worker_result(&capsule.result) {
+        return Err("invalid worker result".into());
+    }
     serde_json::to_writer(std::io::stdout(), &capsule)?;
     Ok(())
 }

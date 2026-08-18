@@ -23,15 +23,17 @@ code plus the per-TR metadata under [`metadata/`](metadata/) — not this docume
 
 ---
 
-## Two workspaces
+## Three workspaces, two product contexts
 
-There are **two** Cargo workspaces here, one per bounded context
+There are **three** Cargo workspaces here. Two map to the product bounded
+contexts; the third is an inactive repository-governance runtime
 ([`CONTEXT-MAP.md`](CONTEXT-MAP.md), [ADR 0015](docs/adr/0015-two-projects-one-repository.md)):
 
 | Workspace | Context | Gate |
 |-----------|---------|------|
 | root (`crates/`) | SDK Project | `cargo test` + `make docs-check` |
 | `adapters/nautilus/` | Consuming Project | `make adapter-check` |
+| `tools/repository-engineering-runtime/` | repository governance, no product context | `make repository-engineering-check` |
 
 `adapters/nautilus/` **opts out** of the root workspace — its own manifest, its
 own pinned toolchain — so the root `cargo test` never builds it. The dependency
@@ -40,6 +42,13 @@ because the two build separately, a change on this side can redden it
 invisibly. That is what `make adapter-check` is for. Its internal structure is
 documented in [`adapters/nautilus/README.md`](adapters/nautilus/README.md); the
 rest of this document describes the root workspace.
+
+The standalone repository-engineering runtime consumes only a copied,
+digest-closed portable bundle. It owns no installation, credential, activation,
+or repository authority. Its implemented state means its coordinator, Worker
+Role bundle, strict validator, durable stores, and fixture-host protocol have
+passed the committed 26-row offline suite; it remains uncertified, inactive,
+and subordinate to the legacy authority.
 
 ## The root workspace
 
@@ -205,8 +214,9 @@ generated pages are the authoritative per-TR contract
    ▼
 ls-repository-engineering projects ──► schemas + conformance + exact lock + reference
    │  make repository-engineering-check asserts committed == projected
+   │  and tests the separately locked portable runtime
    ▼
-package remains inert; legacy sources keep authority
+package and runtime remain inactive; legacy sources keep authority
 ```
 
 A TR climbs the support ladder (Raw → Tracked → Implemented → Recommended)

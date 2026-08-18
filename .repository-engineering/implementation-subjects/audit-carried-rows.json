@@ -16,7 +16,7 @@
   "runtime_bundle": {
     "schema_version": "v0",
     "path": ".repository-engineering/runtime-bundle.json",
-    "sha256": "sha256:09144e4eb99e3c9a7e7ef05a424e55291ce2331cab790df153950fa9543d4575",
+    "sha256": "sha256:273b526acf4d740c794566d6657b0c1b7efb97641a3fb692905b9e1a5e8f82a1",
     "media_type": "application/json"
   },
   "scenario_catalog": {
@@ -65,14 +65,14 @@
     {
       "schema_version": "v0",
       "path": "tools/repository-engineering-runtime",
-      "sha256": "sha256:c448a54179facd25a39c7598b6d3c7db79c0d52d09ec42d87b53e2d83e8cd238",
+      "sha256": "sha256:d6598a15e73cad52ccb80c3804c2e8b1839594d0b8c18d5f1415e057f93f972c",
       "media_type": "application/vnd.rust.crate"
     }
   ],
   "schema_registry": {
     "schema_version": "v0",
     "path": ".repository-engineering/schema-registry.json",
-    "sha256": "sha256:fd9fc965b8c09b830b2c511a651349c63067d97e9f46c11362cce11b6a02fcce",
+    "sha256": "sha256:3f25e70a6c8b60d6608c8f28d4c563761985bdd80bf9eaaff0b4d4cf2a364b0b",
     "media_type": "application/json"
   },
   "conformance_corpus": {
