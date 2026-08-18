@@ -1,5 +1,7 @@
 check
 generate
+import_bounded_evidence
 schema_catalog
 validate_attempt_record
+validate_bounded_evidence
 validate_first_slice_package

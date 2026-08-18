@@ -265,6 +265,32 @@ pub fn validate_capability_contract_vocabulary(contract: &CapabilityContract) ->
             "implementation.evidence.before_implemented",
         ));
     }
+    if has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.component_id.0.as_str()),
+    ) || has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.evidence.path.0.as_str()),
+    ) || contract.bounded_evidence.iter().any(|evidence| {
+        evidence.component_kind != crate::schema::ImplementationComponentKind::Capability
+            || evidence.component_id != contract.capability_id
+            || evidence.global_parity_eligible
+    }) || (!contract.bounded_evidence.is_empty()
+        && !contract.evidence_status.as_ref().is_some_and(|status| {
+            status.parity == crate::schema::ParityStatus::Unproved
+                && status.certification == crate::schema::CertificationState::Uncertified
+        }))
+    {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "bounded_evidence",
+            "bounded_evidence.lifecycle_overclaim",
+        ));
+    }
     for requirement in &contract.external_source_requirements {
         if requirement.locator.is_some() || requirement.digest.is_some() {
             findings.push(contract_finding(
@@ -370,6 +396,27 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
             &contract.role_id.0,
             "implementation_evidence",
             "implementation.evidence.before_implemented",
+        ));
+    }
+    if has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.component_id.0.as_str()),
+    ) || has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.evidence.path.0.as_str()),
+    ) || contract.bounded_evidence.iter().any(|evidence| {
+        evidence.component_kind != crate::schema::ImplementationComponentKind::WorkerRole
+            || evidence.component_id != contract.role_id
+            || evidence.global_parity_eligible
+    }) {
+        findings.push(contract_finding(
+            &contract.role_id.0,
+            "bounded_evidence",
+            "bounded_evidence.lifecycle_overclaim",
         ));
     }
     validate_semantic_claims(

@@ -1,6 +1,6 @@
 {
   "schema_version": "v0",
-  "package_lock_id": "sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c",
+  "package_lock_id": "sha256:67abd1f5f68f4fba508f13d41d32ba7e306e01f21709c8dd42ada9db9f0b8c83",
   "normative": {
     "package": {
       "schema_version": "v0",
@@ -50,7 +50,7 @@
       {
         "schema_version": "v0",
         "path": ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
-        "sha256": "sha256:827d5dcba3cdb7ca1afb24557e7a5f1d867b583103a615956d41580f0a425bc0",
+        "sha256": "sha256:8169ac2dd519a1cf1ddb974daeb0e901fbc73a1fe81f7305b4c33c2716183218",
         "media_type": "application/toml"
       }
     ],
@@ -58,7 +58,7 @@
       {
         "schema_version": "v0",
         "path": ".repository-engineering/contracts/workers/decommission-row-auditor.toml",
-        "sha256": "sha256:27e7350ec59efdb36496d7f3602ae5022a156a9602a6f120962307f5e3879b03",
+        "sha256": "sha256:ee86179136cbf4c2e83073c801641b54f3bcb65546549a144a2956d39d5b2915",
         "media_type": "application/toml"
       }
     ],
@@ -77,7 +77,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:9d61a4efaedb9d1b022df47d764ecaa6f09d9e7753c5aa30ec417949874c8a96",
+      "sha256": "sha256:101ae89784c6b88b9a1d8682db7ceca10588dcf95bd425157658b9644f6e1587",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {

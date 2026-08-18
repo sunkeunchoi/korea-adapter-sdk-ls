@@ -3,7 +3,7 @@
 This page is generated from the inert, reviewed package declaration. It grants no runtime, credential, activation, authority-transfer, retirement, or publication authority.
 
 - Schema version: `v0`
-- Package lock identity: `sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c`
+- Package lock identity: `sha256:67abd1f5f68f4fba508f13d41d32ba7e306e01f21709c8dd42ada9db9f0b8c83`
 - Activation eligibility: `none`
 - Declared capability contracts: `1`
 - Declared worker roles: `1`
@@ -24,6 +24,14 @@ Canonical typed state: declaration `declared`, implementation `implemented`, cer
 
 Evidence boundary: legacy evidence `available_validated` (1 artifact(s), 1 artifact set(s), 26 set member(s)); successor implementation evidence `available_validated`; parity `unproved`; certification `uncertified`; legacy evidence satisfies successor: `false`.
 
+Bounded offline comparison `audit-carried-rows-bounded-v0`: agreement `true`; global parity eligible `false`. This evidence does not certify, activate, transfer authority, retire legacy behavior, or prove global parity.
+
+Compared legacy-observed dimensions: `row_coverage`, `verdict`, `row_completion`, `capability_blocking`, `roll_up`, `credential_rule`, `path_rule`.
+
+Successor-only conformance dimensions: `durability`, `cancellation`, `correlation`, `freshness`, `confinement`.
+
+Explicit exclusions: global parity, certification, runtime installation, activation and authority transfer, legacy ignored-state continuity, production host and model behavior, assurance-rung A3 paper-readonly evidence, timestamps, temporary paths, scheduling order, and host diagnostics, maintainer acceptance is not synthesized; the frozen corpus contains no assumption-accepted verdict.
+
 External source requirements:
 
 | Requirement | Status | Locator | Digest | Unavailable outcome | Worker verdict |
@@ -41,12 +49,13 @@ Identity-bearing semantic provenance:
 | external_source_requirements[*].status, external_source_requirements[*].locator, external_source_requirements[*].digest | unavailable_unproved | `{"source_kind":"external_source_requirement","requirement_id":"korea-broker-sdk-ls"}` |
 | evidence_status.legacy | legacy_observed | `{"source_kind":"legacy_artifact_set","artifact_set_id":"decommission-audit-record-corpus"}` |
 | evidence_status.successor, state, executor, scenario_references | successor_requirement | `{"source_kind":"successor_decision","decision_id":"inert-migration-boundary-v0"}` |
+| bounded_evidence | successor_requirement | `{"source_kind":"successor_decision","decision_id":"bounded-offline-comparison-v0"}` |
 
 ### Worker role `decommission-row-auditor`
 
 Non-normative purpose text (not identity-bound and not lifecycle evidence): A fresh worker audits exactly one manifest row and returns a validated credential-free result.
 
-Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; terminal correlation: required.
+Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive; terminal correlation: required; bounded offline evidence references: 1.
 
 Identity-bearing semantic provenance:
 
@@ -55,6 +64,7 @@ Identity-bearing semantic provenance:
 | assignment_fields, result_fields, fresh_context_required, concurrency, result_validation_required | legacy_observed | `{"source_kind":"knowledge_reference","path":".claude/agents/decommission-row-auditor.md"}; {"source_kind":"knowledge_reference","path":".agents/skills/audit-row/SKILL.md"}; {"source_kind":"knowledge_reference","path":".agents/skills/audit-carried-rows/references/record-format.md"}` |
 | terminal_result_correlation, cancellation_supported, idempotency_key_required | successor_requirement | `{"source_kind":"successor_decision","decision_id":"terminal-correlation-v0"}` |
 | state | successor_requirement | `{"source_kind":"successor_decision","decision_id":"inert-migration-boundary-v0"}` |
+| bounded_evidence | successor_requirement | `{"source_kind":"successor_decision","decision_id":"bounded-offline-comparison-v0"}` |
 
 ## Migration ledger
 

@@ -9,10 +9,10 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 use crate::schema::{
-    ArtifactReference, CapabilityContract, DeclaredContractRegistration, DiscoveryPolicy,
-    ImplementationComponentKind, ImplementationEvidence, ImplementationEvidenceReference,
-    MigrationLedger, PackageManifest, RepositoryPath, ScenarioCatalog, Sha256Digest, StableId,
-    WorkerRoleContract,
+    ArtifactReference, BoundedComparisonEvidence, BoundedEvidenceReference, CapabilityContract,
+    DeclaredContractRegistration, DiscoveryPolicy, ImplementationComponentKind,
+    ImplementationEvidence, ImplementationEvidenceReference, MigrationLedger, PackageManifest,
+    RepositoryPath, ScenarioCatalog, Sha256Digest, StableId, WorkerRoleContract,
 };
 use crate::validator::{validate_first_slice_package, Finding};
 
@@ -271,6 +271,15 @@ fn validate_referenced_artifacts(
                 }
             }
         }
+        for evidence in &capability.bounded_evidence {
+            validate_bounded_evidence_reference(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::Capability,
+                &capability.capability_id,
+            )?;
+        }
     }
     for worker in workers {
         if let Some(reference) = &worker.role_bundle {
@@ -292,11 +301,72 @@ fn validate_referenced_artifacts(
                 &worker.scenario_references,
             )?;
         }
+        for evidence in &worker.bounded_evidence {
+            validate_bounded_evidence_reference(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::WorkerRole,
+                &worker.role_id,
+            )?;
+        }
         for reference in &worker.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }
     }
     Ok(())
+}
+
+fn validate_bounded_evidence_reference(
+    root: &Path,
+    tracked: &BTreeMap<String, String>,
+    reference: &BoundedEvidenceReference,
+    expected_kind: ImplementationComponentKind,
+    expected_id: &StableId,
+) -> Result<(), AuthoredError> {
+    let digest_hex = reference
+        .evidence
+        .sha256
+        .0
+        .strip_prefix("sha256:")
+        .expect("typed digest has the required prefix");
+    let expected_path =
+        format!(".repository-engineering/evidence/bounded/audit-carried-rows/{digest_hex}.json");
+    if reference.evidence.path.0 != expected_path
+        || reference.evidence.media_type != "application/json"
+        || reference.comparator_policy.path.0
+            != ".repository-engineering/scenarios/audit-carried-rows/comparison-policy.toml"
+        || reference.comparator_policy.media_type != "application/toml"
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_path_invalid",
+        });
+    }
+    validate_artifact_reference(root, tracked, &reference.evidence)?;
+    validate_artifact_reference(root, tracked, &reference.comparator_policy)?;
+    let bytes = read_tracked_bytes(root, tracked, &reference.evidence.path)?;
+    let evidence: BoundedComparisonEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_invalid",
+        })?;
+    if reference.component_kind != expected_kind
+        || reference.component_id != *expected_id
+        || reference.comparator_policy != evidence.comparator_policy
+        || reference.wave1_package_lock_id != evidence.wave1_package_lock_id
+        || reference.global_parity_eligible
+        || evidence.global_parity_eligible
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_binding_mismatch",
+        });
+    }
+    crate::bounded_evidence::validate_bounded_evidence(root, &evidence).map_err(|_| AuthoredError {
+        path: PathBuf::from(&reference.evidence.path.0),
+        code: "authored.bounded_evidence_semantic_mismatch",
+    })
 }
 
 fn validate_implementation_evidence(

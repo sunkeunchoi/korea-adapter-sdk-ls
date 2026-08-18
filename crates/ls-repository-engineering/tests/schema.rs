@@ -1,7 +1,7 @@
 use ls_repository_engineering::schema::{
-    schema_catalog, ArtifactSetReference, AttemptRecord, AuthorityState, CapabilityContract,
-    CertificationState, ContractState, DeclarationState, ImplementationState, PackageManifest,
-    RetirementState, WorkerResult, WorkerRoleContract,
+    bounded_evidence_schema_catalog, schema_catalog, ArtifactSetReference, AttemptRecord,
+    AuthorityState, CapabilityContract, CertificationState, ContractState, DeclarationState,
+    ImplementationState, PackageManifest, RetirementState, WorkerResult, WorkerRoleContract,
 };
 use ls_repository_engineering::validator::{
     validate_attempt_record, validate_capability_contract_vocabulary,
@@ -49,6 +49,27 @@ fn structural_catalog_is_closed_and_draft_2020_12() {
             Some("https://json-schema.org/draft/2020-12/schema")
         );
         jsonschema::meta::validate(schema).expect("generated schema must meta-validate");
+    }
+}
+
+#[test]
+fn bounded_evidence_schemas_are_separate_from_the_implementation_subject_catalog() {
+    let catalog = bounded_evidence_schema_catalog();
+    assert_eq!(
+        catalog.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "bounded-comparison-evidence",
+            "bounded-evidence-reference",
+            "capability-contract-with-bounded-evidence",
+            "worker-role-contract-with-bounded-evidence",
+        ]
+    );
+    for schema in catalog.values() {
+        assert_eq!(
+            schema.get("$schema").and_then(serde_json::Value::as_str),
+            Some("https://json-schema.org/draft/2020-12/schema")
+        );
+        jsonschema::meta::validate(schema).expect("bounded schema must meta-validate");
     }
 }
 

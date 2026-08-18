@@ -83,7 +83,13 @@ pub fn capability_contract_semantic_digest(
     normalized.touched_paths.sort();
     normalized.evidence_obligations.sort();
     normalized.human_gates.sort();
+    normalized
+        .bounded_evidence
+        .sort_by(|left, right| left.component_id.cmp(&right.component_id));
     normalized.knowledge_references.sort_by_key(artifact_key);
+    normalized
+        .bounded_evidence
+        .sort_by(|left, right| left.component_id.cmp(&right.component_id));
     normalized.scenario_references.sort_by_key(artifact_key);
     normalized
         .external_source_requirements

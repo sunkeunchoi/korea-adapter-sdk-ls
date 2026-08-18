@@ -38,9 +38,14 @@ fn projections(alpha: &[u8]) -> ProjectionSet {
 }
 
 #[test]
-fn cli_surface_contains_only_generation_and_non_writing_check() {
+fn cli_surface_contains_only_projection_and_reviewed_bounded_import() {
     assert_eq!(parse_command(["generate"]).unwrap(), Command::Generate);
     assert_eq!(parse_command(["check"]).unwrap(), Command::Check);
+    assert_eq!(
+        parse_command(["import-bounded-evidence", "/tmp/evidence.json"]).unwrap(),
+        Command::ImportBoundedEvidence(PathBuf::from("/tmp/evidence.json"))
+    );
+    assert!(parse_command(["import-bounded-evidence"]).is_err());
     for forbidden in [
         "install", "activate", "execute", "publish", "retire", "identity",
     ] {

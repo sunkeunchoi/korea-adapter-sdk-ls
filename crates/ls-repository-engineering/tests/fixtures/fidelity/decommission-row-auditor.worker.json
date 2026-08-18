@@ -70,6 +70,26 @@
       "media_type": "text/x-rust"
     }
   },
+  "bounded_evidence": [
+    {
+      "component_kind": "worker_role",
+      "component_id": "decommission-row-auditor",
+      "evidence": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/evidence/bounded/audit-carried-rows/44883d95756f89e196caf39f17dda969a67cd5b0e2a79a8ed57284112316ff9c.json",
+        "sha256": "sha256:44883d95756f89e196caf39f17dda969a67cd5b0e2a79a8ed57284112316ff9c",
+        "media_type": "application/json"
+      },
+      "comparator_policy": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/scenarios/audit-carried-rows/comparison-policy.toml",
+        "sha256": "sha256:ffa8907da0a00cc0bb6142bcae380c0aaa41b4c5ab2422adbadf6d8c1ada72ea",
+        "media_type": "application/toml"
+      },
+      "wave1_package_lock_id": "sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c",
+      "global_parity_eligible": false
+    }
+  ],
   "knowledge_references": [
     {
       "schema_version": "v0",
@@ -112,6 +132,13 @@
       "status": "successor_requirement",
       "sources": [
         { "source_kind": "successor_decision", "decision_id": "inert-migration-boundary-v0" }
+      ]
+    },
+    {
+      "field_groups": ["bounded_evidence"],
+      "status": "successor_requirement",
+      "sources": [
+        { "source_kind": "successor_decision", "decision_id": "bounded-offline-comparison-v0" }
       ]
     }
   ]

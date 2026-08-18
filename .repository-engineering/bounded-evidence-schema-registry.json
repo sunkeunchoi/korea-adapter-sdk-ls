@@ -1,0 +1,41 @@
+{
+  "schema_version": "v0",
+  "entries": [
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:bounded:v0:bounded-comparison-evidence",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/bounded/v0/bounded-comparison-evidence.schema.json",
+        "sha256": "sha256:4d6edfaeca2e0e830febab5f676ea20a1b7e86068f0dbb4fdf525b92ddef76b2",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:bounded:v0:bounded-evidence-reference",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/bounded/v0/bounded-evidence-reference.schema.json",
+        "sha256": "sha256:25e9b38b969a822a17f426da1dd37333f9ef81302938b3cab015205f629e97f4",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:bounded:v0:capability-contract-with-bounded-evidence",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/bounded/v0/capability-contract-with-bounded-evidence.schema.json",
+        "sha256": "sha256:c665996d53a6352f4590ed66796c4f73a4b36a1fe8d2f86603abbd5b2209fb7a",
+        "media_type": "application/schema+json"
+      }
+    },
+    {
+      "schema_id": "urn:ls:repository-engineering:schema:bounded:v0:worker-role-contract-with-bounded-evidence",
+      "artifact": {
+        "schema_version": "v0",
+        "path": ".repository-engineering/schemas/bounded/v0/worker-role-contract-with-bounded-evidence.schema.json",
+        "sha256": "sha256:b054289418bd58c486669d9f07ca17febd573cbf75fd17049e9ebadf3ebf75fb",
+        "media_type": "application/schema+json"
+      }
+    }
+  ]
+}

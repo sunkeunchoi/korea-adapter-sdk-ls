@@ -452,6 +452,110 @@ pub struct ImplementationEvidence {
     pub closed_result_validator_used: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedEvidenceReference {
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub evidence: ArtifactReference,
+    pub comparator_policy: ArtifactReference,
+    pub wave1_package_lock_id: Sha256Digest,
+    pub global_parity_eligible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyClassification {
+    Behavioral,
+    Knowledge,
+    Discard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundedRollUp {
+    Unchanged,
+    RedispositionRequired,
+    UnchangedBlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedCaseResult {
+    pub case_id: StableId,
+    pub row_id: StableId,
+    pub classification: LegacyClassification,
+    pub legacy_verdict: AuditVerdict,
+    pub successor_verdict: AuditVerdict,
+    pub legacy_completed: bool,
+    pub successor_completed: bool,
+    pub legacy_blocking: bool,
+    pub successor_blocking: bool,
+    pub legacy_roll_up: BoundedRollUp,
+    pub successor_roll_up: BoundedRollUp,
+    pub legacy_credential_rule: bool,
+    pub successor_credential_rule: bool,
+    pub legacy_path_rule: bool,
+    pub successor_path_rule: bool,
+    pub agreement: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedConformanceResult {
+    pub dimension: StableId,
+    pub case_id: StableId,
+    pub passed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedAdapterFacts {
+    pub legacy_normalizer: StableId,
+    pub successor_normalizer: StableId,
+    pub successor_host: StableId,
+    pub configured_global_limit: usize,
+    pub effective_global_limit: usize,
+    pub output_mode: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedComparisonEvidence {
+    pub schema_version: SchemaVersion,
+    pub evidence_kind: StableId,
+    pub evidence_id: StableId,
+    pub comparator_policy: ArtifactReference,
+    pub case_catalog: ArtifactReference,
+    pub deterministic_invocation_id: StableId,
+    pub wave1_package_lock_id: Sha256Digest,
+    pub implementation_subject: ArtifactReference,
+    pub capability_contract: ArtifactReference,
+    pub worker_role_contract: ArtifactReference,
+    pub executor: ArtifactReference,
+    pub successor_scenario: ArtifactReference,
+    pub migration_source_manifest: ArtifactReference,
+    pub legacy_ledger: ArtifactReference,
+    pub legacy_report: ArtifactReference,
+    pub legacy_oracle: ArtifactReference,
+    pub legacy_artifact_set_digest: Sha256Digest,
+    pub legacy_corpus_digest: Sha256Digest,
+    pub successor_conformance_basis: Vec<ArtifactReference>,
+    pub adapter_facts: BoundedAdapterFacts,
+    pub expected_case_ids: Vec<StableId>,
+    pub observed_legacy_case_ids: Vec<StableId>,
+    pub observed_successor_case_ids: Vec<StableId>,
+    pub results: Vec<BoundedCaseResult>,
+    pub conformance: Vec<BoundedConformanceResult>,
+    pub compared_dimensions: Vec<StableId>,
+    pub successor_only_dimensions: Vec<StableId>,
+    pub exclusions: Vec<String>,
+    pub failures: Vec<StableId>,
+    pub cancellations: Vec<StableId>,
+    pub bounded_agreement: bool,
+    pub global_parity_eligible: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalSourceStatus {
@@ -562,6 +666,8 @@ pub struct CapabilityContract {
     pub executor: Option<ArtifactReference>,
     #[serde(default)]
     pub implementation_evidence: Option<ImplementationEvidenceReference>,
+    #[serde(default)]
+    pub bounded_evidence: Vec<BoundedEvidenceReference>,
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub external_source_requirements: Vec<ExternalSourceRequirement>,
@@ -664,6 +770,8 @@ pub struct WorkerRoleContract {
     pub scenario_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub implementation_evidence: Option<ImplementationEvidenceReference>,
+    #[serde(default)]
+    pub bounded_evidence: Vec<BoundedEvidenceReference>,
     #[serde(default)]
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
@@ -956,7 +1064,34 @@ pub fn schema_catalog() -> BTreeMap<String, Value> {
     insert_schema::<WorkerResult>(&mut schemas, "worker-result");
     insert_schema::<WorkerRoleBundle>(&mut schemas, "worker-role-bundle");
     insert_schema::<WorkerRoleContract>(&mut schemas, "worker-role-contract");
+    for name in ["capability-contract", "worker-role-contract"] {
+        strip_bounded_evidence_extension(
+            schemas
+                .get_mut(name)
+                .expect("implementation schema is present"),
+        );
+    }
     schemas
+}
+
+pub fn bounded_evidence_schema_catalog() -> BTreeMap<String, Value> {
+    let mut schemas = BTreeMap::new();
+    insert_schema::<BoundedComparisonEvidence>(&mut schemas, "bounded-comparison-evidence");
+    insert_schema::<BoundedEvidenceReference>(&mut schemas, "bounded-evidence-reference");
+    insert_schema::<CapabilityContract>(&mut schemas, "capability-contract-with-bounded-evidence");
+    insert_schema::<WorkerRoleContract>(&mut schemas, "worker-role-contract-with-bounded-evidence");
+    schemas
+}
+
+fn strip_bounded_evidence_extension(schema: &mut Value) {
+    schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("contract schema properties")
+        .remove("bounded_evidence");
+    if let Some(definitions) = schema.get_mut("$defs").and_then(Value::as_object_mut) {
+        definitions.remove("BoundedEvidenceReference");
+    }
 }
 
 fn insert_schema<T: JsonSchema>(schemas: &mut BTreeMap<String, Value>, name: &str) {

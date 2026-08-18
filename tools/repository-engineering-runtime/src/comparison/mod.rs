@@ -382,8 +382,6 @@ fn validate_policy(root: &Path, policy: &ComparisonPolicy) -> Result<(), Compari
     }
     for reference in [
         &policy.implementation_subject,
-        &policy.capability_contract,
-        &policy.worker_role_contract,
         &policy.executor,
         &policy.successor_scenario,
         &policy.migration_source_manifest,

@@ -20,9 +20,10 @@ use crate::inventory::{
 };
 use crate::lock::{build_lock, lock_bytes};
 use crate::schema::{
-    schema_catalog, ArtifactReference, BuildProvenance, ContractState, ExecutorDescriptor,
-    ImplementationSubjectManifest, NormativeLockClosure, RepositoryPath, RuntimeBundleManifest,
-    ScenarioCatalog, SchemaVersion, Sha256Digest, WorkerRoleBundle,
+    bounded_evidence_schema_catalog, schema_catalog, ArtifactReference, BoundedComparisonEvidence,
+    BuildProvenance, ContractState, ExecutorDescriptor, ImplementationSubjectManifest,
+    NormativeLockClosure, RepositoryPath, RuntimeBundleManifest, ScenarioCatalog, SchemaVersion,
+    Sha256Digest, WorkerRoleBundle,
 };
 use crate::validator::{validate_semantic_package, Finding};
 
@@ -30,6 +31,7 @@ const PACKAGE_PATH: &str = ".repository-engineering/package.toml";
 const DISCOVERY_PATH: &str = ".repository-engineering/discovery-policy.toml";
 const LEDGER_PATH: &str = ".repository-engineering/migration-ledger.toml";
 const REGISTRY_PATH: &str = ".repository-engineering/schema-registry.json";
+const BOUNDED_REGISTRY_PATH: &str = ".repository-engineering/bounded-evidence-schema-registry.json";
 const CONFORMANCE_MANIFEST_PATH: &str = ".repository-engineering/conformance/v0/manifest.json";
 const EXECUTOR_PATH: &str = ".repository-engineering/executors/audit-carried-rows.toml";
 const ROLE_BUNDLE_PATH: &str = ".repository-engineering/roles/decommission-row-auditor.toml";
@@ -140,6 +142,30 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     })?;
     let registry_reference = bytes_reference(REGISTRY_PATH, &registry_bytes, "application/json");
     projections.push(Projection::new(REGISTRY_PATH, registry_bytes.clone()));
+
+    let mut bounded_registry_entries = Vec::new();
+    for (name, mut schema) in bounded_evidence_schema_catalog() {
+        let schema_id = format!("urn:ls:repository-engineering:schema:bounded:v0:{name}");
+        schema
+            .as_object_mut()
+            .ok_or_else(|| RepositoryError::new("repository.schema.invalid"))?
+            .insert("$id".to_owned(), Value::String(schema_id.clone()));
+        let path = format!(".repository-engineering/schemas/bounded/v0/{name}.schema.json");
+        let bytes = pretty_json(&schema)?;
+        bounded_registry_entries.push(SchemaRegistryEntry {
+            schema_id,
+            artifact: bytes_reference(&path, &bytes, "application/schema+json"),
+        });
+        projections.push(Projection::new(path, bytes));
+    }
+    let bounded_registry_bytes = pretty_json(&SchemaRegistry {
+        schema_version: SchemaVersion::V0,
+        entries: bounded_registry_entries,
+    })?;
+    projections.push(Projection::new(
+        BOUNDED_REGISTRY_PATH,
+        bounded_registry_bytes,
+    ));
 
     let structural_path = ".repository-engineering/conformance/v0/structural.json";
     let mut structurally_validated = vec![
@@ -264,6 +290,21 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
             conformance_manifest_bytes.clone(),
         ),
     ]);
+    let bounded_conformance_path = ".repository-engineering/conformance/v0/bounded-evidence.json";
+    let bounded_conformance_bytes = pretty_json(&json!({
+        "schema_version": "v0",
+        "registry": BOUNDED_REGISTRY_PATH,
+        "rules": [
+            "bounded_evidence_requires_exact_nonempty_case_identity",
+            "bounded_evidence_requires_agreement_and_passing_conformance",
+            "bounded_evidence_is_lifecycle_neutral_and_never_global_parity_eligible",
+            "bounded_evidence_import_is_external_canonical_and_create_new"
+        ]
+    }))?;
+    projections.push(Projection::new(
+        bounded_conformance_path,
+        bounded_conformance_bytes,
+    ));
 
     let executor_reference = file_reference(root, EXECUTOR_PATH, "application/toml")?;
     let role_bundle_reference = file_reference(root, ROLE_BUNDLE_PATH, "application/toml")?;
@@ -403,7 +444,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     ));
     projections.push(Projection::new(
         REFERENCE_PATH,
-        reference_document(&authored, &exact_lock.package_lock_id.0).into_bytes(),
+        reference_document(root, &authored, &exact_lock.package_lock_id.0)?.into_bytes(),
     ));
 
     ProjectionSet::new(projections).map_err(|error| RepositoryError::new(error.code))
@@ -648,7 +689,11 @@ fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, RepositoryError> {
     Ok(bytes)
 }
 
-fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> String {
+fn reference_document(
+    root: &Path,
+    authored: &AuthoredPackage,
+    package_lock_id: &str,
+) -> Result<String, RepositoryError> {
     let mut rows: Vec<_> = authored.ledger.rows.iter().collect();
     rows.sort_by(|left, right| left.logical_id.cmp(&right.logical_id));
     let planned_rows = rows
@@ -697,6 +742,23 @@ fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> Stri
                 evidence.legacy_evidence_satisfies_successor,
             ));
         }
+        for reference in &contract.bounded_evidence {
+            let evidence = read_bounded_evidence(root, &reference.evidence)?;
+            document.push_str(&format!(
+                "\nBounded offline comparison `{}`: agreement `{}`; global parity eligible `{}`. This evidence does not certify, activate, transfer authority, retire legacy behavior, or prove global parity.\n\nCompared legacy-observed dimensions: {}.\n\nSuccessor-only conformance dimensions: {}.\n\nExplicit exclusions: {}.\n",
+                escape_markdown(&evidence.evidence_id.0),
+                evidence.bounded_agreement,
+                evidence.global_parity_eligible,
+                join_ids(&evidence.compared_dimensions),
+                join_ids(&evidence.successor_only_dimensions),
+                evidence
+                    .exclusions
+                    .iter()
+                    .map(|exclusion| escape_markdown(exclusion))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
         if !contract.external_source_requirements.is_empty() {
             document.push_str("\nExternal source requirements:\n\n| Requirement | Status | Locator | Digest | Unavailable outcome | Worker verdict |\n|---|---|---|---|---|---|\n");
             for requirement in &contract.external_source_requirements {
@@ -723,7 +785,7 @@ fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> Stri
     }
     for contract in &authored.worker_role_contracts {
         document.push_str(&format!(
-            "\n### Worker role `{}`\n\nNon-normative purpose text (not identity-bound and not lifecycle evidence): {}\n\nCanonical typed state: {}; activation: {}; terminal correlation: {}.\n",
+            "\n### Worker role `{}`\n\nNon-normative purpose text (not identity-bound and not lifecycle evidence): {}\n\nCanonical typed state: {}; activation: {}; terminal correlation: {}; bounded offline evidence references: {}.\n",
             escape_markdown(&contract.role_id.0),
             escape_markdown(contract.public_description.as_deref().unwrap_or("not provided")),
             state_summary(&contract.state),
@@ -733,6 +795,7 @@ fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> Stri
             } else {
                 "absent"
             },
+            contract.bounded_evidence.len(),
         ));
         append_claims(&mut document, &contract.semantic_claims);
     }
@@ -775,7 +838,25 @@ fn reference_document(authored: &AuthoredPackage, package_lock_id: &str) -> Stri
             escape_markdown(replacement),
         ));
     }
-    document
+    Ok(document)
+}
+
+fn read_bounded_evidence(
+    root: &Path,
+    reference: &ArtifactReference,
+) -> Result<BoundedComparisonEvidence, RepositoryError> {
+    let bytes = fs::read(root.join(&reference.path.0))
+        .map_err(|_| RepositoryError::new("repository.bounded_evidence.read_failed"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| RepositoryError::new("repository.bounded_evidence.invalid"))
+}
+
+fn join_ids(values: &[crate::schema::StableId]) -> String {
+    values
+        .iter()
+        .map(|value| format!("`{}`", escape_markdown(&value.0)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn replacement_state<'a>(
@@ -869,7 +950,7 @@ mod tests {
         let mut authored = load_authored_package(root).unwrap();
         authored.capability_contracts[0].public_description =
             Some("Certified and successor-authoritative.".to_owned());
-        let document = reference_document(&authored, "sha256:test");
+        let document = reference_document(root, &authored, "sha256:test").unwrap();
         assert!(document.contains(
             "Non-normative purpose text (not identity-bound and not lifecycle evidence): Certified and successor-authoritative.\n\nCanonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
         ));

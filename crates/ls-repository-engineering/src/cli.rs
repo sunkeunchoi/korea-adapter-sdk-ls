@@ -1,9 +1,12 @@
 //! Thin command parsing for deterministic package maintenance.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Generate,
     Check,
+    ImportBoundedEvidence(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +21,10 @@ where
     let command = match args.next().as_ref().map(AsRef::as_ref) {
         Some("generate") => Command::Generate,
         Some("check") => Command::Check,
+        Some("import-bounded-evidence") => {
+            let path = args.next().ok_or(CliError)?;
+            Command::ImportBoundedEvidence(PathBuf::from(path.as_ref()))
+        }
         _ => return Err(CliError),
     };
     if args.next().is_some() {
@@ -26,4 +33,5 @@ where
     Ok(command)
 }
 
-pub const HELP: &str = "Usage: ls-repository-engineering <generate|check>\n";
+pub const HELP: &str =
+    "Usage: ls-repository-engineering <generate|check|import-bounded-evidence PATH>\n";

@@ -38,6 +38,13 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
             .count(),
         22
     );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.starts_with(".repository-engineering/schemas/bounded/v0/"))
+            .count(),
+        4
+    );
 
     for artifact in first
         .artifacts()
@@ -159,6 +166,11 @@ fn generated_reference_names_every_reviewed_row_and_separates_states() {
     );
     assert!(text.contains("successor implementation evidence `available_validated`"));
     assert!(text.contains("parity `unproved`"));
+    assert!(text.contains("Bounded offline comparison `audit-carried-rows-bounded-v0`"));
+    assert!(text.contains("global parity eligible `false`"));
+    assert!(text.contains("Compared legacy-observed dimensions: `row_coverage`"));
+    assert!(text.contains("Successor-only conformance dimensions: `durability`"));
+    assert!(text.contains("Explicit exclusions: global parity"));
     assert!(text.contains("unavailable_unproved"));
     assert!(text.contains("Locator | Digest"));
     assert!(text.contains(
@@ -205,6 +217,14 @@ fn conformance_and_exact_lock_include_declared_contract_semantics() {
         assert!(rules.iter().any(|value| value == rule));
     }
 
+    let bounded: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/conformance/v0/bounded-evidence.json").bytes,
+    )
+    .unwrap();
+    assert!(bounded["rules"].as_array().unwrap().iter().any(
+        |rule| rule == "bounded_evidence_is_lifecycle_neutral_and_never_global_parity_eligible"
+    ));
+
     let exact_lock: serde_json::Value =
         serde_json::from_slice(&artifact(".repository-engineering/package.lock.json").bytes)
             .unwrap();
@@ -221,6 +241,21 @@ fn conformance_and_exact_lock_include_declared_contract_semantics() {
         normative["capability_contracts"][0]["path"],
         ".repository-engineering/contracts/capabilities/audit-carried-rows.toml"
     );
+}
+
+#[test]
+fn bounded_agreement_cannot_advance_global_parity() {
+    let root = repository_root();
+    let mut authored = load_authored_package(root).unwrap();
+    authored.capability_contracts[0]
+        .evidence_status
+        .as_mut()
+        .unwrap()
+        .parity = ls_repository_engineering::schema::ParityStatus::Proved;
+    let findings = validate_semantic_package(root, &authored);
+    assert!(findings
+        .iter()
+        .any(|finding| finding.code == "semantic.evidence.successor_claim_forbidden"));
 }
 
 #[test]
@@ -258,6 +293,11 @@ fn real_authored_pair_is_loaded_and_digest_bound_without_mutable_ledger_knowledg
         .terminal_result_correlation
         .as_ref()
         .is_some_and(|correlation| correlation.envelope_field.0 == "assignment_id"));
+    assert_eq!(capability.bounded_evidence.len(), 1);
+    assert_eq!(worker.bounded_evidence.len(), 1);
+    assert_ne!(capability.bounded_evidence[0], worker.bounded_evidence[0]);
+    assert!(!capability.bounded_evidence[0].global_parity_eligible);
+    assert!(!worker.bounded_evidence[0].global_parity_eligible);
 }
 
 #[test]
@@ -341,8 +381,7 @@ fn exactly_two_planned_rows_changed_and_every_other_row_matches_the_pre_wave_has
         "sha256:7a04049fe9366422db3c8e6525a4ef08b84be3dc0242706a98e4efa4ef95763f"
     );
     architecture.source_digest = Some(ls_repository_engineering::schema::Sha256Digest(
-        "sha256:636274dea047898a23d1ccab146a51f4f34e9e93e772b82fa9cfdbaba2b944ce"
-            .to_owned(),
+        "sha256:636274dea047898a23d1ccab146a51f4f34e9e93e772b82fa9cfdbaba2b944ce".to_owned(),
     ));
     protected.rows.retain(|row| {
         !matches!(

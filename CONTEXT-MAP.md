@@ -21,6 +21,9 @@ The independently locked `tools/repository-engineering-runtime/` workspace is
 the package's inactive, host-neutral execution counterpart: it consumes a
 copied closed bundle and has no dependency on either product runtime, no active
 registry entry, and no authority over the legacy audit workflow.
+Its read-only comparator writes only to a caller-owned external directory; the
+inert package can validate and create-new import that bounded payload, but the
+import surface cannot execute a capability or advance lifecycle authority.
 
 ## Where definitions live
 

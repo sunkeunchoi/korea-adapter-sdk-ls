@@ -1,0 +1,368 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AuditVerdict": {
+      "enum": [
+        "confirmed",
+        "refuted",
+        "unverifiable"
+      ],
+      "type": "string"
+    },
+    "BoundedAdapterFacts": {
+      "additionalProperties": false,
+      "properties": {
+        "configured_global_limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effective_global_limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "legacy_normalizer": {
+          "$ref": "#/$defs/StableId"
+        },
+        "output_mode": {
+          "$ref": "#/$defs/StableId"
+        },
+        "successor_host": {
+          "$ref": "#/$defs/StableId"
+        },
+        "successor_normalizer": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "legacy_normalizer",
+        "successor_normalizer",
+        "successor_host",
+        "configured_global_limit",
+        "effective_global_limit",
+        "output_mode"
+      ],
+      "type": "object"
+    },
+    "BoundedCaseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "agreement": {
+          "type": "boolean"
+        },
+        "case_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "classification": {
+          "$ref": "#/$defs/LegacyClassification"
+        },
+        "legacy_blocking": {
+          "type": "boolean"
+        },
+        "legacy_completed": {
+          "type": "boolean"
+        },
+        "legacy_credential_rule": {
+          "type": "boolean"
+        },
+        "legacy_path_rule": {
+          "type": "boolean"
+        },
+        "legacy_roll_up": {
+          "$ref": "#/$defs/BoundedRollUp"
+        },
+        "legacy_verdict": {
+          "$ref": "#/$defs/AuditVerdict"
+        },
+        "row_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "successor_blocking": {
+          "type": "boolean"
+        },
+        "successor_completed": {
+          "type": "boolean"
+        },
+        "successor_credential_rule": {
+          "type": "boolean"
+        },
+        "successor_path_rule": {
+          "type": "boolean"
+        },
+        "successor_roll_up": {
+          "$ref": "#/$defs/BoundedRollUp"
+        },
+        "successor_verdict": {
+          "$ref": "#/$defs/AuditVerdict"
+        }
+      },
+      "required": [
+        "case_id",
+        "row_id",
+        "classification",
+        "legacy_verdict",
+        "successor_verdict",
+        "legacy_completed",
+        "successor_completed",
+        "legacy_blocking",
+        "successor_blocking",
+        "legacy_roll_up",
+        "successor_roll_up",
+        "legacy_credential_rule",
+        "successor_credential_rule",
+        "legacy_path_rule",
+        "successor_path_rule",
+        "agreement"
+      ],
+      "type": "object"
+    },
+    "BoundedConformanceResult": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "dimension": {
+          "$ref": "#/$defs/StableId"
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dimension",
+        "case_id",
+        "passed"
+      ],
+      "type": "object"
+    },
+    "BoundedRollUp": {
+      "enum": [
+        "unchanged",
+        "redisposition_required",
+        "unchanged_blocked"
+      ],
+      "type": "string"
+    },
+    "LegacyClassification": {
+      "enum": [
+        "behavioral",
+        "knowledge",
+        "discard"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:bounded:v0:bounded-comparison-evidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "adapter_facts": {
+      "$ref": "#/$defs/BoundedAdapterFacts"
+    },
+    "bounded_agreement": {
+      "type": "boolean"
+    },
+    "cancellations": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "capability_contract": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "case_catalog": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "comparator_policy": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "compared_dimensions": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "conformance": {
+      "items": {
+        "$ref": "#/$defs/BoundedConformanceResult"
+      },
+      "type": "array"
+    },
+    "deterministic_invocation_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "evidence_kind": {
+      "$ref": "#/$defs/StableId"
+    },
+    "exclusions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "executor": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "expected_case_ids": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "failures": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "global_parity_eligible": {
+      "type": "boolean"
+    },
+    "implementation_subject": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "legacy_artifact_set_digest": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "legacy_corpus_digest": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "legacy_ledger": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "legacy_oracle": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "legacy_report": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "migration_source_manifest": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "observed_legacy_case_ids": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "observed_successor_case_ids": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/BoundedCaseResult"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "successor_conformance_basis": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "successor_only_dimensions": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "successor_scenario": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "wave1_package_lock_id": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "worker_role_contract": {
+      "$ref": "#/$defs/ArtifactReference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "evidence_id",
+    "comparator_policy",
+    "case_catalog",
+    "deterministic_invocation_id",
+    "wave1_package_lock_id",
+    "implementation_subject",
+    "capability_contract",
+    "worker_role_contract",
+    "executor",
+    "successor_scenario",
+    "migration_source_manifest",
+    "legacy_ledger",
+    "legacy_report",
+    "legacy_oracle",
+    "legacy_artifact_set_digest",
+    "legacy_corpus_digest",
+    "successor_conformance_basis",
+    "adapter_facts",
+    "expected_case_ids",
+    "observed_legacy_case_ids",
+    "observed_successor_case_ids",
+    "results",
+    "conformance",
+    "compared_dimensions",
+    "successor_only_dimensions",
+    "exclusions",
+    "failures",
+    "cancellations",
+    "bounded_agreement",
+    "global_parity_eligible"
+  ],
+  "title": "BoundedComparisonEvidence",
+  "type": "object"
+}

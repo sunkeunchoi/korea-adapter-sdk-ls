@@ -9,6 +9,7 @@ result_validation_required = true
 role_bundle = { schema_version = "v0", path = ".repository-engineering/roles/decommission-row-auditor.toml", sha256 = "sha256:740364c7e24919fffaa6dc521b161ab2c9f87b5bf0ecd107f688f7b51bb8aa60", media_type = "application/toml" }
 scenario_references = [{ schema_version = "v0", path = ".repository-engineering/scenarios/audit-carried-rows/implementation.toml", sha256 = "sha256:b4b3009f5350a2262bd634893f852f8d5e8417fb92546bdc4945a0dea25e932c", media_type = "application/toml" }]
 implementation_evidence = { component_kind = "worker_role", component_id = "decommission-row-auditor", subject_manifest = { schema_version = "v0", path = ".repository-engineering/implementation-subjects/audit-carried-rows.json", sha256 = "sha256:3359cdc5805dca3eeafff939652c8173be52557a0b509619e19e69ac103d0c19", media_type = "application/json" }, evidence = { schema_version = "v0", path = ".repository-engineering/evidence/implementation/decommission-row-auditor.json", sha256 = "sha256:e8882812ca2c430f5d01f4a33eb77c3a789e9c62eb8d977995d331ec4c33dd33", media_type = "application/json" }, validation_basis = { schema_version = "v0", path = "tools/repository-engineering-runtime/tests/end_to_end.rs", sha256 = "sha256:9cc08862aad567b31c339d90f26fb38797689c80a1d78f52f58c861988058cda", media_type = "text/x-rust" } }
+bounded_evidence = [{ component_kind = "worker_role", component_id = "decommission-row-auditor", evidence = { schema_version = "v0", path = ".repository-engineering/evidence/bounded/audit-carried-rows/44883d95756f89e196caf39f17dda969a67cd5b0e2a79a8ed57284112316ff9c.json", sha256 = "sha256:44883d95756f89e196caf39f17dda969a67cd5b0e2a79a8ed57284112316ff9c", media_type = "application/json" }, comparator_policy = { schema_version = "v0", path = ".repository-engineering/scenarios/audit-carried-rows/comparison-policy.toml", sha256 = "sha256:ffa8907da0a00cc0bb6142bcae380c0aaa41b4c5ab2422adbadf6d8c1ada72ea", media_type = "application/toml" }, wave1_package_lock_id = "sha256:82f8661328e0551c328114f4b7f3e5669fcccb805535ea7fddb3c27c516e5f7c", global_parity_eligible = false }]
 
 [state]
 declaration = "declared"
@@ -97,3 +98,11 @@ status = "successor_requirement"
 [[semantic_claims.sources]]
 source_kind = "successor_decision"
 decision_id = "inert-migration-boundary-v0"
+
+[[semantic_claims]]
+field_groups = ["bounded_evidence"]
+status = "successor_requirement"
+
+[[semantic_claims.sources]]
+source_kind = "successor_decision"
+decision_id = "bounded-offline-comparison-v0"

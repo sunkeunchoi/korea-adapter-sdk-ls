@@ -1,0 +1,10 @@
+{
+  "registry": ".repository-engineering/bounded-evidence-schema-registry.json",
+  "rules": [
+    "bounded_evidence_requires_exact_nonempty_case_identity",
+    "bounded_evidence_requires_agreement_and_passing_conformance",
+    "bounded_evidence_is_lifecycle_neutral_and_never_global_parity_eligible",
+    "bounded_evidence_import_is_external_canonical_and_create_new"
+  ],
+  "schema_version": "v0"
+}

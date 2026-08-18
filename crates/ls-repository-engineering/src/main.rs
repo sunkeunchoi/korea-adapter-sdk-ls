@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use ls_repository_engineering::bounded_evidence::import_bounded_evidence;
 use ls_repository_engineering::cli::Command;
 use ls_repository_engineering::generate::{check_projection_set, generate_projection_set};
 use ls_repository_engineering::repository::compose_repository;
@@ -52,6 +53,16 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Command::ImportBoundedEvidence(path) => match import_bounded_evidence(root, &path) {
+            Ok(reference) => println!("path={} sha256={}", reference.path.0, reference.sha256.0),
+            Err(error) => {
+                eprintln!(
+                        "path=.repository-engineering/evidence/bounded code={} remediation=repair_bounded_evidence",
+                        error
+                    );
+                std::process::exit(2);
+            }
+        },
     }
 }
 

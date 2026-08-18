@@ -2,6 +2,16 @@
   "schema_version": "v0",
   "artifacts": [
     {
+      "path": ".repository-engineering/bounded-evidence-schema-registry.json",
+      "sha256": "sha256:068a241bb0416166c9d9e5776c49ede541f72426f380140b339842ef5f7b2e14",
+      "byte_length": "1760"
+    },
+    {
+      "path": ".repository-engineering/conformance/v0/bounded-evidence.json",
+      "sha256": "sha256:5adecab8e5b18ad569332b19044343312953fdcedd03d79e4a3e2ed2deac8343",
+      "byte_length": "400"
+    },
+    {
       "path": ".repository-engineering/conformance/v0/cross-record.json",
       "sha256": "sha256:0e6b1019af6e77a30a568020fdf47311b96efe3594e58a1d72311f3cfee89ded",
       "byte_length": "710"
@@ -33,7 +43,7 @@
     },
     {
       "path": ".repository-engineering/package.lock.json",
-      "sha256": "sha256:d08d408fd7380c5147b2e7c41d14c035b74479127b23a0ab088634fc94d0e7c9",
+      "sha256": "sha256:585266ac9d67d6af259c68bc881319dab1d5f217747abc260ce041f47df55fc3",
       "byte_length": "3580"
     },
     {
@@ -45,6 +55,26 @@
       "path": ".repository-engineering/schema-registry.json",
       "sha256": "sha256:3f25e70a6c8b60d6608c8f28d4c563761985bdd80bf9eaaff0b4d4cf2a364b0b",
       "byte_length": "8444"
+    },
+    {
+      "path": ".repository-engineering/schemas/bounded/v0/bounded-comparison-evidence.schema.json",
+      "sha256": "sha256:4d6edfaeca2e0e830febab5f676ea20a1b7e86068f0dbb4fdf525b92ddef76b2",
+      "byte_length": "8398"
+    },
+    {
+      "path": ".repository-engineering/schemas/bounded/v0/bounded-evidence-reference.schema.json",
+      "sha256": "sha256:25e9b38b969a822a17f426da1dd37333f9ef81302938b3cab015205f629e97f4",
+      "byte_length": "1915"
+    },
+    {
+      "path": ".repository-engineering/schemas/bounded/v0/capability-contract-with-bounded-evidence.schema.json",
+      "sha256": "sha256:c665996d53a6352f4590ed66796c4f73a4b36a1fe8d2f86603abbd5b2209fb7a",
+      "byte_length": "19553"
+    },
+    {
+      "path": ".repository-engineering/schemas/bounded/v0/worker-role-contract-with-bounded-evidence.schema.json",
+      "sha256": "sha256:b054289418bd58c486669d9f07ca17febd573cbf75fd17049e9ebadf3ebf75fb",
+      "byte_length": "12036"
     },
     {
       "path": ".repository-engineering/schemas/v0/artifact-reference.schema.json",
@@ -158,8 +188,8 @@
     },
     {
       "path": "docs/reference/repository-engineering-package.md",
-      "sha256": "sha256:3427880a6569cb9118af2c8bc1577b1ed545ea4f5f26548331f2b2c3818a0cb6",
-      "byte_length": "20198"
+      "sha256": "sha256:1cfbcd9032063ff7dee6ae3c90fb83c67473959620749c1308986f9533b94329",
+      "byte_length": "21376"
     }
   ]
 }
