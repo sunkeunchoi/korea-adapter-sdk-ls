@@ -3,7 +3,7 @@
 This page is generated from the inert, reviewed package declaration. It grants no runtime, credential, activation, authority-transfer, retirement, or publication authority.
 
 - Schema version: `v0`
-- Package lock identity: `sha256:95f681563c8a117aa9081ba8845cc23ec519dafc7e29bc4c5f4db1547bee2250`
+- Package lock identity: `sha256:e6f25387dce6fcf5208ff09951840bac45cf16ecf23b4c9e2270cf76395a23e6`
 - Activation eligibility: `none`
 - Declared capability contracts: `1`
 - Declared worker roles: `1`

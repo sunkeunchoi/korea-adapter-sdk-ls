@@ -61,6 +61,12 @@
       "path": "docs/migration-source/audit/manifest.yaml",
       "sha256": "sha256:2c72d2cdd3e86c72b153732f516c866542328b4d72e8ed70e51b2a64cfbe32bf",
       "media_type": "application/yaml"
+    },
+    {
+      "schema_version": "v0",
+      "path": "tools/repository-engineering-runtime",
+      "sha256": "sha256:4e38e30a90edcae8a68efc159e379634219f100792d7e594dd35c6f8ae1f4f17",
+      "media_type": "application/vnd.rust.crate"
     }
   ],
   "schema_registry": {

@@ -262,7 +262,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     let executor_reference = file_reference(root, EXECUTOR_PATH, "application/toml")?;
     let role_bundle_reference = file_reference(root, ROLE_BUNDLE_PATH, "application/toml")?;
     let scenario_reference = file_reference(root, SCENARIO_PATH, "application/toml")?;
-    let mut source_artifacts: Vec<_> = authored
+    let mut bundle_source_artifacts: Vec<_> = authored
         .capability_contracts
         .iter()
         .flat_map(|contract| contract.knowledge_references.iter().cloned())
@@ -273,7 +273,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
                 .flat_map(|contract| contract.knowledge_references.iter().cloned()),
         )
         .collect();
-    sort_and_dedup_references(&mut source_artifacts)?;
+    sort_and_dedup_references(&mut bundle_source_artifacts)?;
 
     let mut bundle_members = vec![
         executor_reference.clone(),
@@ -296,7 +296,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     }
     bundle_members.extend(schema_artifacts);
     bundle_members.extend(conformance_artifacts);
-    bundle_members.extend(source_artifacts.iter().cloned());
+    bundle_members.extend(bundle_source_artifacts.iter().cloned());
     sort_and_dedup_references(&mut bundle_members)?;
     let runtime_bundle_bytes = pretty_json(&RuntimeBundleManifest {
         schema_version: SchemaVersion::V0,
@@ -310,6 +310,13 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
     );
     projections.push(Projection::new(RUNTIME_BUNDLE_PATH, runtime_bundle_bytes));
 
+    let mut subject_source_artifacts = bundle_source_artifacts;
+    subject_source_artifacts.push(tree_reference(
+        root,
+        "tools/repository-engineering-runtime",
+        "application/vnd.rust.crate",
+    )?);
+    sort_and_dedup_references(&mut subject_source_artifacts)?;
     let implementation_subject_bytes = pretty_json(&ImplementationSubjectManifest {
         schema_version: SchemaVersion::V0,
         subject_id: crate::schema::StableId("audit-carried-rows".to_owned()),
@@ -317,7 +324,7 @@ pub fn compose_repository(root: &Path) -> Result<ProjectionSet, RepositoryError>
         role_bundle: role_bundle_reference,
         runtime_bundle: runtime_bundle_reference.clone(),
         scenario_catalog: scenario_reference,
-        source_artifacts,
+        source_artifacts: subject_source_artifacts,
         schema_registry: registry_reference.clone(),
         conformance_corpus: conformance_reference.clone(),
     })?;
@@ -592,6 +599,9 @@ fn collect_regular_files(
             return Err(RepositoryError::new(
                 "repository.provenance.symlink_forbidden",
             ));
+        }
+        if metadata.is_dir() && entry.file_name() == "target" {
+            continue;
         }
         if metadata.is_dir() {
             collect_regular_files(base, &path, files)?;
