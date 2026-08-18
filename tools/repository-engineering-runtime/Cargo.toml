@@ -1,0 +1,19 @@
+[package]
+name = "repository-engineering-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[dependencies]
+libc = "=0.2.189"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+tokio = { version = "=1.52.3", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+toml = "=0.8.23"
+
+[dev-dependencies]

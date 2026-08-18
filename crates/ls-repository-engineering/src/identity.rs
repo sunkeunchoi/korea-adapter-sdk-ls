@@ -83,7 +83,14 @@ pub fn capability_contract_semantic_digest(
     normalized.touched_paths.sort();
     normalized.evidence_obligations.sort();
     normalized.human_gates.sort();
+    normalized
+        .bounded_evidence
+        .sort_by(|left, right| left.component_id.cmp(&right.component_id));
     normalized.knowledge_references.sort_by_key(artifact_key);
+    normalized
+        .bounded_evidence
+        .sort_by(|left, right| left.component_id.cmp(&right.component_id));
+    normalized.scenario_references.sort_by_key(artifact_key);
     normalized
         .external_source_requirements
         .sort_by(|left, right| left.requirement_id.cmp(&right.requirement_id));
@@ -194,6 +201,7 @@ pub(crate) fn normalize_normative(normative: &NormativeLockClosure) -> Normative
     let mut normalized = normative.clone();
     normalized.capability_contracts.sort_by_key(artifact_key);
     normalized.worker_role_contracts.sort_by_key(artifact_key);
+    normalized.implementation_subjects.sort_by_key(artifact_key);
     normalized.optional_components.sort_by_key(optional_key);
     normalized
 }

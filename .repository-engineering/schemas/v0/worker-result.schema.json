@@ -24,6 +24,34 @@
       ],
       "type": "object"
     },
+    "AuditSuccessPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "record": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "row_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "verdict": {
+          "$ref": "#/$defs/AuditVerdict"
+        }
+      },
+      "required": [
+        "row_id",
+        "verdict",
+        "record"
+      ],
+      "type": "object"
+    },
+    "AuditVerdict": {
+      "enum": [
+        "confirmed",
+        "refuted",
+        "unverifiable"
+      ],
+      "type": "string"
+    },
     "RepositoryPath": {
       "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
       "type": "string"
@@ -49,14 +77,17 @@
     {
       "additionalProperties": false,
       "properties": {
-        "artifacts": {
-          "items": {
-            "$ref": "#/$defs/ArtifactReference"
-          },
-          "type": "array"
-        },
         "assignment_id": {
           "$ref": "#/$defs/StableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "invocation_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "payload": {
+          "$ref": "#/$defs/AuditSuccessPayload"
         },
         "result": {
           "const": "succeeded",
@@ -64,13 +95,23 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
-        "artifacts"
+        "worker_instance_id",
+        "worker_instance_receipt",
+        "payload"
       ],
       "type": "object"
     },
@@ -78,6 +119,12 @@
       "additionalProperties": false,
       "properties": {
         "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "invocation_id": {
           "$ref": "#/$defs/StableId"
         },
         "reason": {
@@ -89,12 +136,22 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
+        "worker_instance_id",
+        "worker_instance_receipt",
         "reason"
       ],
       "type": "object"
@@ -103,6 +160,12 @@
       "additionalProperties": false,
       "properties": {
         "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "invocation_id": {
           "$ref": "#/$defs/StableId"
         },
         "reason": {
@@ -114,12 +177,22 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
+        "worker_instance_id",
+        "worker_instance_receipt",
         "reason"
       ],
       "type": "object"
@@ -128,6 +201,12 @@
       "additionalProperties": false,
       "properties": {
         "assignment_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "invocation_id": {
           "$ref": "#/$defs/StableId"
         },
         "policy_id": {
@@ -139,12 +218,22 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
+        "worker_instance_id",
+        "worker_instance_receipt",
         "policy_id"
       ],
       "type": "object"
@@ -155,7 +244,13 @@
         "assignment_id": {
           "$ref": "#/$defs/StableId"
         },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "error_code": {
+          "$ref": "#/$defs/StableId"
+        },
+        "invocation_id": {
           "$ref": "#/$defs/StableId"
         },
         "result": {
@@ -164,12 +259,22 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
+        "worker_instance_id",
+        "worker_instance_receipt",
         "error_code"
       ],
       "type": "object"
@@ -180,8 +285,14 @@
         "assignment_id": {
           "$ref": "#/$defs/StableId"
         },
+        "attempt_id": {
+          "$ref": "#/$defs/StableId"
+        },
         "checkpoint": {
           "$ref": "#/$defs/ArtifactReference"
+        },
+        "invocation_id": {
+          "$ref": "#/$defs/StableId"
         },
         "result": {
           "const": "recovery_required",
@@ -189,12 +300,22 @@
         },
         "schema_version": {
           "$ref": "#/$defs/SchemaVersion"
+        },
+        "worker_instance_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "worker_instance_receipt": {
+          "$ref": "#/$defs/ArtifactReference"
         }
       },
       "required": [
         "result",
         "schema_version",
+        "attempt_id",
+        "invocation_id",
         "assignment_id",
+        "worker_instance_id",
+        "worker_instance_receipt",
         "checkpoint"
       ],
       "type": "object"

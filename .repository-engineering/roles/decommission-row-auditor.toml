@@ -1,0 +1,17 @@
+schema_version = "v0"
+role_id = "decommission-row-auditor"
+assignment_schema = "audit-assignment"
+result_schema = "worker-result"
+knowledge_paths = [
+  ".claude/agents/decommission-row-auditor.md",
+  ".agents/skills/audit-row/SKILL.md",
+  ".agents/skills/audit-carried-rows/references/record-format.md",
+]
+record_format = ".agents/skills/audit-carried-rows/references/record-format.md"
+safety_rules = [
+  "credential_free",
+  "one_row_only",
+  "no_repository_mutation",
+  "closed_result",
+]
+verdicts = ["confirmed", "refuted", "unverifiable"]

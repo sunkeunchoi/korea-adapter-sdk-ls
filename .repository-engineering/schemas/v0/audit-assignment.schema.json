@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:audit-assignment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assignment_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "attempt_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "idempotency_key": {
+      "$ref": "#/$defs/StableId"
+    },
+    "invocation_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "row_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "worker_instance_id": {
+      "$ref": "#/$defs/StableId"
+    }
+  },
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "invocation_id",
+    "assignment_id",
+    "row_id",
+    "idempotency_key",
+    "worker_instance_id"
+  ],
+  "title": "AuditAssignment",
+  "type": "object"
+}

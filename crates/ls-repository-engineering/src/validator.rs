@@ -10,7 +10,8 @@ use crate::schema::{
     CertificationState, DeclarationState, DeclaredContractRegistration, DispatchConcurrency,
     EvidenceAvailability, FieldType, ImplementationState, MigrationState, OutcomeKind,
     PackageManifest, ParityStatus, RepositoryPath, RetirementState, SemanticClaim,
-    SemanticClaimSource, SemanticClaimStatus, TypedField, WorkerRoleContract,
+    SemanticClaimSource, SemanticClaimStatus, StableId, TypedField, WorkerResult,
+    WorkerRoleContract,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -235,6 +236,61 @@ pub fn validate_capability_contract_vocabulary(contract: &CapabilityContract) ->
             "capability.evidence_status.missing",
         ));
     }
+    if contract.state.implementation == ImplementationState::Implemented {
+        let evidence_valid = contract
+            .implementation_evidence
+            .as_ref()
+            .is_some_and(|evidence| {
+                evidence.component_kind == crate::schema::ImplementationComponentKind::Capability
+                    && evidence.component_id == contract.capability_id
+            });
+        let successor_valid = contract.evidence_status.as_ref().is_some_and(|evidence| {
+            evidence.successor_implementation == EvidenceAvailability::AvailableValidated
+        });
+        if contract.executor.is_none()
+            || contract.scenario_references.is_empty()
+            || !evidence_valid
+            || !successor_valid
+        {
+            findings.push(contract_finding(
+                &contract.capability_id.0,
+                "implementation_evidence",
+                "implementation.component_evidence.incomplete",
+            ));
+        }
+    } else if contract.implementation_evidence.is_some() {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "implementation_evidence",
+            "implementation.evidence.before_implemented",
+        ));
+    }
+    if has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.component_id.0.as_str()),
+    ) || has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.evidence.path.0.as_str()),
+    ) || contract.bounded_evidence.iter().any(|evidence| {
+        evidence.component_kind != crate::schema::ImplementationComponentKind::Capability
+            || evidence.component_id != contract.capability_id
+            || evidence.global_parity_eligible
+    }) || (!contract.bounded_evidence.is_empty()
+        && !contract.evidence_status.as_ref().is_some_and(|status| {
+            status.parity == crate::schema::ParityStatus::Unproved
+                && status.certification == crate::schema::CertificationState::Uncertified
+        }))
+    {
+        findings.push(contract_finding(
+            &contract.capability_id.0,
+            "bounded_evidence",
+            "bounded_evidence.lifecycle_overclaim",
+        ));
+    }
     for requirement in &contract.external_source_requirements {
         if requirement.locator.is_some() || requirement.digest.is_some() {
             findings.push(contract_finding(
@@ -317,6 +373,52 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
             "worker.terminal_correlation.missing",
         ));
     }
+    if contract.state.implementation == ImplementationState::Implemented {
+        let evidence_valid = contract
+            .implementation_evidence
+            .as_ref()
+            .is_some_and(|evidence| {
+                evidence.component_kind == crate::schema::ImplementationComponentKind::WorkerRole
+                    && evidence.component_id == contract.role_id
+            });
+        if contract.role_bundle.is_none()
+            || contract.scenario_references.is_empty()
+            || !evidence_valid
+        {
+            findings.push(contract_finding(
+                &contract.role_id.0,
+                "implementation_evidence",
+                "implementation.component_evidence.incomplete",
+            ));
+        }
+    } else if contract.implementation_evidence.is_some() {
+        findings.push(contract_finding(
+            &contract.role_id.0,
+            "implementation_evidence",
+            "implementation.evidence.before_implemented",
+        ));
+    }
+    if has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.component_id.0.as_str()),
+    ) || has_exact_or_case_folded_duplicate(
+        contract
+            .bounded_evidence
+            .iter()
+            .map(|evidence| evidence.evidence.path.0.as_str()),
+    ) || contract.bounded_evidence.iter().any(|evidence| {
+        evidence.component_kind != crate::schema::ImplementationComponentKind::WorkerRole
+            || evidence.component_id != contract.role_id
+            || evidence.global_parity_eligible
+    }) {
+        findings.push(contract_finding(
+            &contract.role_id.0,
+            "bounded_evidence",
+            "bounded_evidence.lifecycle_overclaim",
+        ));
+    }
     validate_semantic_claims(
         &contract.semantic_claims,
         &contract.role_id.0,
@@ -340,6 +442,82 @@ pub fn validate_worker_role_contract_vocabulary(contract: &WorkerRoleContract) -
     );
     findings.sort();
     findings.dedup();
+    findings
+}
+
+pub fn validate_worker_result_correlation(
+    result: &WorkerResult,
+    expected_attempt_id: &StableId,
+    expected_invocation_id: &StableId,
+    expected_assignment_id: &StableId,
+) -> Vec<Finding> {
+    let (attempt_id, invocation_id, assignment_id, success_row_id) = match result {
+        WorkerResult::Succeeded {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            payload,
+            ..
+        } => (
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            Some(&payload.row_id),
+        ),
+        WorkerResult::Held {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            ..
+        }
+        | WorkerResult::Cancelled {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            ..
+        }
+        | WorkerResult::PolicyViolated {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            ..
+        }
+        | WorkerResult::Failed {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            ..
+        }
+        | WorkerResult::RecoveryRequired {
+            attempt_id,
+            invocation_id,
+            assignment_id,
+            ..
+        } => (attempt_id, invocation_id, assignment_id, None),
+    };
+
+    let mut findings = Vec::new();
+    if attempt_id != expected_attempt_id
+        || invocation_id != expected_invocation_id
+        || assignment_id != expected_assignment_id
+    {
+        findings.push(finding(
+            "worker-result.json",
+            Some(expected_assignment_id.0.clone()),
+            "correlation",
+            "worker_result.correlation.mismatch",
+            "quarantine_terminal_result",
+        ));
+    }
+    if success_row_id.is_some_and(|row_id| row_id != assignment_id) {
+        findings.push(finding(
+            "worker-result.json",
+            Some(expected_assignment_id.0.clone()),
+            "payload.row_id",
+            "worker_result.success_row.mismatch",
+            "quarantine_terminal_result",
+        ));
+    }
     findings
 }
 
@@ -414,7 +592,8 @@ fn validate_capability_links<'a>(
         ledger,
         findings,
     );
-    if contract.executor.is_some() {
+    if contract.state.implementation == ImplementationState::Unported && contract.executor.is_some()
+    {
         findings.push(semantic_finding(
             id,
             "executor",
@@ -422,7 +601,9 @@ fn validate_capability_links<'a>(
             "remove_executor",
         ));
     }
-    if !contract.scenario_references.is_empty() {
+    if contract.state.implementation == ImplementationState::Unported
+        && !contract.scenario_references.is_empty()
+    {
         findings.push(semantic_finding(
             id,
             "scenario_references",
@@ -461,8 +642,12 @@ fn validate_capability_links<'a>(
             "complete_coordination_semantics",
         ));
     }
+    let expected_successor_evidence = match contract.state.implementation {
+        ImplementationState::Unported => EvidenceAvailability::Absent,
+        ImplementationState::Implemented => EvidenceAvailability::AvailableValidated,
+    };
     if contract.evidence_status.as_ref().is_none_or(|evidence| {
-        evidence.successor_implementation != EvidenceAvailability::Absent
+        evidence.successor_implementation != expected_successor_evidence
             || evidence.parity != ParityStatus::Unproved
             || evidence.certification != CertificationState::Uncertified
             || evidence.legacy_evidence_satisfies_successor
@@ -491,6 +676,18 @@ fn validate_capability_links<'a>(
                 "worker_roles",
                 "semantic.worker_role.unresolved",
                 "declare_and_plan_worker_role",
+            ));
+        }
+        if contract.state.implementation == ImplementationState::Implemented
+            && workers.get(role_id.0.as_str()).is_none_or(|worker| {
+                worker.state.implementation != ImplementationState::Implemented
+            })
+        {
+            findings.push(semantic_finding(
+                id,
+                "worker_roles",
+                "semantic.worker_role.not_implemented",
+                "implement_worker_role_first",
             ));
         }
     }
@@ -937,13 +1134,6 @@ pub fn validate_first_slice_contract_state(
             logical_id,
             "declaration",
             "declaration.absent.forbidden",
-        ));
-    }
-    if state.implementation != ImplementationState::Unported {
-        findings.push(contract_finding(
-            logical_id,
-            "implementation",
-            "implementation.forbidden",
         ));
     }
     if state.certification != CertificationState::Uncertified {

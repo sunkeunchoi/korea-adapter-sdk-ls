@@ -4,7 +4,7 @@ use ls_repository_engineering::generate::{check_projection_set, generate_project
 use ls_repository_engineering::inventory::load_authored_package;
 use ls_repository_engineering::repository::compose_repository;
 use ls_repository_engineering::schema::{
-    ArtifactReference, AuthorityState, EvidenceAvailability, RepositoryPath,
+    ArtifactReference, AuthorityState, EvidenceAvailability, MigrationState, RepositoryPath,
 };
 use ls_repository_engineering::validator::validate_semantic_package;
 use sha2::{Digest, Sha256};
@@ -36,7 +36,14 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
             .iter()
             .filter(|path| path.starts_with(".repository-engineering/schemas/v0/"))
             .count(),
-        14
+        22
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.starts_with(".repository-engineering/schemas/bounded/v0/"))
+            .count(),
+        4
     );
 
     for artifact in first
@@ -47,6 +54,84 @@ fn real_package_projects_a_complete_deterministic_closed_set() {
         let schema: serde_json::Value = serde_json::from_slice(&artifact.bytes).unwrap();
         assert!(schema["$id"].as_str().unwrap().contains(":v0:"));
         assert!(all_references_are_local(&schema));
+    }
+}
+
+#[test]
+fn portable_runtime_bundle_is_closed_and_subject_bound() {
+    let projections = compose_repository(repository_root()).unwrap();
+    let artifact = |path: &str| {
+        projections
+            .artifacts()
+            .iter()
+            .find(|artifact| artifact.relative_path == path)
+            .unwrap_or_else(|| panic!("missing generated artifact {path}"))
+    };
+
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&artifact(".repository-engineering/runtime-bundle.json").bytes)
+            .unwrap();
+    let members = bundle["members"].as_array().unwrap();
+    assert!(!members.is_empty());
+    for member in members {
+        let path = member["path"].as_str().unwrap();
+        assert!(!path.starts_with('/'));
+        assert!(!path.contains(".."));
+        assert!(!path.starts_with(".compound-engineering/runs/"));
+    }
+    for required in [
+        ".repository-engineering/executors/audit-carried-rows.toml",
+        ".repository-engineering/roles/decommission-row-auditor.toml",
+        ".repository-engineering/scenarios/audit-carried-rows/implementation.toml",
+        ".repository-engineering/schema-registry.json",
+        ".repository-engineering/conformance/v0/manifest.json",
+        ".repository-engineering/conformance/v0/runtime-semantics.json",
+    ] {
+        assert!(members.iter().any(|member| member["path"] == required));
+    }
+
+    let subject: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/implementation-subjects/audit-carried-rows.json").bytes,
+    )
+    .unwrap();
+    assert_eq!(subject["subject_id"], "audit-carried-rows");
+    assert_eq!(
+        subject["runtime_bundle"]["path"],
+        ".repository-engineering/runtime-bundle.json"
+    );
+    assert!(subject.get("evidence").is_none());
+    assert!(subject.get("lifecycle").is_none());
+
+    let lock: serde_json::Value =
+        serde_json::from_slice(&artifact(".repository-engineering/package.lock.json").bytes)
+            .unwrap();
+    assert_eq!(
+        lock["normative"]["runtime_bundle"]["path"],
+        ".repository-engineering/runtime-bundle.json"
+    );
+    assert_eq!(
+        lock["normative"]["implementation_subjects"][0]["path"],
+        ".repository-engineering/implementation-subjects/audit-carried-rows.json"
+    );
+}
+
+#[test]
+fn portable_descriptors_are_host_neutral() {
+    for path in [
+        ".repository-engineering/executors/audit-carried-rows.toml",
+        ".repository-engineering/roles/decommission-row-auditor.toml",
+    ] {
+        let text = std::fs::read_to_string(repository_root().join(path)).unwrap();
+        let lowered = text.to_ascii_lowercase();
+        for forbidden in [
+            "command =",
+            "agent =",
+            "credential =",
+            "installation =",
+            "/users/",
+        ] {
+            assert!(!lowered.contains(forbidden), "{path} contains {forbidden}");
+        }
     }
 }
 
@@ -79,12 +164,17 @@ fn generated_reference_names_every_reviewed_row_and_separates_states() {
             .count(),
         2
     );
-    assert!(text.contains("successor implementation evidence `absent`"));
+    assert!(text.contains("successor implementation evidence `available_validated`"));
     assert!(text.contains("parity `unproved`"));
+    assert!(text.contains("Bounded offline comparison `audit-carried-rows-bounded-v0`"));
+    assert!(text.contains("global parity eligible `false`"));
+    assert!(text.contains("Compared legacy-observed dimensions: `row_coverage`"));
+    assert!(text.contains("Successor-only conformance dimensions: `durability`"));
+    assert!(text.contains("Explicit exclusions: global parity"));
     assert!(text.contains("unavailable_unproved"));
     assert!(text.contains("Locator | Digest"));
     assert!(text.contains(
-        "Canonical typed state: declaration `declared`, implementation `unported`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
+        "Canonical typed state: declaration `declared`, implementation `implemented`, certification `uncertified`, authority `legacy`, retirement `not_started`; activation: inactive"
     ));
     assert!(!text.contains("successor-authoritative"));
 }
@@ -127,6 +217,14 @@ fn conformance_and_exact_lock_include_declared_contract_semantics() {
         assert!(rules.iter().any(|value| value == rule));
     }
 
+    let bounded: serde_json::Value = serde_json::from_slice(
+        &artifact(".repository-engineering/conformance/v0/bounded-evidence.json").bytes,
+    )
+    .unwrap();
+    assert!(bounded["rules"].as_array().unwrap().iter().any(
+        |rule| rule == "bounded_evidence_is_lifecycle_neutral_and_never_global_parity_eligible"
+    ));
+
     let exact_lock: serde_json::Value =
         serde_json::from_slice(&artifact(".repository-engineering/package.lock.json").bytes)
             .unwrap();
@@ -143,6 +241,21 @@ fn conformance_and_exact_lock_include_declared_contract_semantics() {
         normative["capability_contracts"][0]["path"],
         ".repository-engineering/contracts/capabilities/audit-carried-rows.toml"
     );
+}
+
+#[test]
+fn bounded_agreement_cannot_advance_global_parity() {
+    let root = repository_root();
+    let mut authored = load_authored_package(root).unwrap();
+    authored.capability_contracts[0]
+        .evidence_status
+        .as_mut()
+        .unwrap()
+        .parity = ls_repository_engineering::schema::ParityStatus::Proved;
+    let findings = validate_semantic_package(root, &authored);
+    assert!(findings
+        .iter()
+        .any(|finding| finding.code == "semantic.evidence.successor_claim_forbidden"));
 }
 
 #[test]
@@ -180,6 +293,11 @@ fn real_authored_pair_is_loaded_and_digest_bound_without_mutable_ledger_knowledg
         .terminal_result_correlation
         .as_ref()
         .is_some_and(|correlation| correlation.envelope_field.0 == "assignment_id"));
+    assert_eq!(capability.bounded_evidence.len(), 1);
+    assert_eq!(worker.bounded_evidence.len(), 1);
+    assert_ne!(capability.bounded_evidence[0], worker.bounded_evidence[0]);
+    assert!(!capability.bounded_evidence[0].global_parity_eligible);
+    assert!(!worker.bounded_evidence[0].global_parity_eligible);
 }
 
 #[test]
@@ -251,6 +369,20 @@ fn exactly_two_planned_rows_changed_and_every_other_row_matches_the_pre_wave_has
     );
 
     let mut protected = authored.ledger.clone();
+    let architecture = protected
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "instruction--architecture-md")
+        .unwrap();
+    assert_eq!(architecture.migration_state, MigrationState::Unported);
+    assert_eq!(architecture.current_authority, AuthorityState::Legacy);
+    assert_eq!(
+        architecture.source_digest.as_ref().unwrap().0,
+        "sha256:7a04049fe9366422db3c8e6525a4ef08b84be3dc0242706a98e4efa4ef95763f"
+    );
+    architecture.source_digest = Some(ls_repository_engineering::schema::Sha256Digest(
+        "sha256:636274dea047898a23d1ccab146a51f4f34e9e93e772b82fa9cfdbaba2b944ce".to_owned(),
+    ));
     protected.rows.retain(|row| {
         !matches!(
             row.logical_id.0.as_str(),
@@ -319,24 +451,36 @@ fn semantic_cross_record_validation_rejects_false_readiness_and_broken_links() {
     let artifact: ArtifactReference =
         authored.capability_contracts[0].knowledge_references[0].clone();
     let mut executor = authored.clone();
-    executor.capability_contracts[0].executor = Some(artifact.clone());
+    executor.capability_contracts[0].state.implementation =
+        ls_repository_engineering::schema::ImplementationState::Unported;
     assert_semantic_code(&executor, "semantic.executor.forbidden");
 
     let mut scenario = authored.clone();
+    scenario.capability_contracts[0].state.implementation =
+        ls_repository_engineering::schema::ImplementationState::Unported;
     scenario.capability_contracts[0]
         .scenario_references
         .push(artifact);
     assert_semantic_code(&scenario, "semantic.scenario_reference.forbidden");
 
-    let mut successor_evidence = authored.clone();
-    successor_evidence.capability_contracts[0]
+    let mut missing_successor_evidence = authored.clone();
+    missing_successor_evidence.capability_contracts[0]
         .evidence_status
         .as_mut()
         .unwrap()
-        .successor_implementation = EvidenceAvailability::AvailableValidated;
+        .successor_implementation = EvidenceAvailability::Absent;
     assert_semantic_code(
-        &successor_evidence,
+        &missing_successor_evidence,
         "semantic.evidence.successor_claim_forbidden",
+    );
+
+    let mut unimplemented_worker = authored.clone();
+    unimplemented_worker.worker_role_contracts[0]
+        .state
+        .implementation = ls_repository_engineering::schema::ImplementationState::Unported;
+    assert_semantic_code(
+        &unimplemented_worker,
+        "semantic.worker_role.not_implemented",
     );
 
     let mut duplicate_claim = authored.clone();

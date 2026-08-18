@@ -420,6 +420,144 @@ pub struct EvidenceStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ImplementationComponentKind {
+    Capability,
+    WorkerRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationEvidenceReference {
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub subject_manifest: ArtifactReference,
+    pub evidence: ArtifactReference,
+    pub validation_basis: ArtifactReference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationEvidence {
+    pub schema_version: SchemaVersion,
+    pub evidence_id: StableId,
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub subject_manifest: ArtifactReference,
+    pub scenario_catalog: ArtifactReference,
+    pub validation_basis: ArtifactReference,
+    pub runtime_hosts: Vec<StableId>,
+    pub validated_scenarios: Vec<StableId>,
+    pub row_count: u16,
+    pub closed_bundle_validated: bool,
+    pub closed_result_validator_used: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedEvidenceReference {
+    pub component_kind: ImplementationComponentKind,
+    pub component_id: StableId,
+    pub evidence: ArtifactReference,
+    pub comparator_policy: ArtifactReference,
+    pub wave1_package_lock_id: Sha256Digest,
+    pub global_parity_eligible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyClassification {
+    Behavioral,
+    Knowledge,
+    Discard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundedRollUp {
+    Unchanged,
+    RedispositionRequired,
+    UnchangedBlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedCaseResult {
+    pub case_id: StableId,
+    pub row_id: StableId,
+    pub classification: LegacyClassification,
+    pub legacy_verdict: AuditVerdict,
+    pub successor_verdict: AuditVerdict,
+    pub legacy_completed: bool,
+    pub successor_completed: bool,
+    pub legacy_blocking: bool,
+    pub successor_blocking: bool,
+    pub legacy_roll_up: BoundedRollUp,
+    pub successor_roll_up: BoundedRollUp,
+    pub legacy_credential_rule: bool,
+    pub successor_credential_rule: bool,
+    pub legacy_path_rule: bool,
+    pub successor_path_rule: bool,
+    pub agreement: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedConformanceResult {
+    pub dimension: StableId,
+    pub case_id: StableId,
+    pub passed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedAdapterFacts {
+    pub legacy_normalizer: StableId,
+    pub successor_normalizer: StableId,
+    pub successor_host: StableId,
+    pub configured_global_limit: usize,
+    pub effective_global_limit: usize,
+    pub output_mode: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoundedComparisonEvidence {
+    pub schema_version: SchemaVersion,
+    pub evidence_kind: StableId,
+    pub evidence_id: StableId,
+    pub comparator_policy: ArtifactReference,
+    pub case_catalog: ArtifactReference,
+    pub deterministic_invocation_id: StableId,
+    pub wave1_package_lock_id: Sha256Digest,
+    pub implementation_subject: ArtifactReference,
+    pub capability_contract: ArtifactReference,
+    pub worker_role_contract: ArtifactReference,
+    pub executor: ArtifactReference,
+    pub successor_scenario: ArtifactReference,
+    pub migration_source_manifest: ArtifactReference,
+    pub legacy_ledger: ArtifactReference,
+    pub legacy_report: ArtifactReference,
+    pub legacy_oracle: ArtifactReference,
+    pub legacy_artifact_set_digest: Sha256Digest,
+    pub legacy_corpus_digest: Sha256Digest,
+    pub successor_conformance_basis: Vec<ArtifactReference>,
+    pub adapter_facts: BoundedAdapterFacts,
+    pub expected_case_ids: Vec<StableId>,
+    pub observed_legacy_case_ids: Vec<StableId>,
+    pub observed_successor_case_ids: Vec<StableId>,
+    pub results: Vec<BoundedCaseResult>,
+    pub conformance: Vec<BoundedConformanceResult>,
+    pub compared_dimensions: Vec<StableId>,
+    pub successor_only_dimensions: Vec<StableId>,
+    pub exclusions: Vec<String>,
+    pub failures: Vec<StableId>,
+    pub cancellations: Vec<StableId>,
+    pub bounded_agreement: bool,
+    pub global_parity_eligible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ExternalSourceStatus {
     UnavailableUnproved,
 }
@@ -526,6 +664,10 @@ pub struct CapabilityContract {
     pub evidence_status: Option<EvidenceStatus>,
     pub human_gates: Vec<StableId>,
     pub executor: Option<ArtifactReference>,
+    #[serde(default)]
+    pub implementation_evidence: Option<ImplementationEvidenceReference>,
+    #[serde(default)]
+    pub bounded_evidence: Vec<BoundedEvidenceReference>,
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub external_source_requirements: Vec<ExternalSourceRequirement>,
@@ -562,6 +704,53 @@ pub struct TerminalResultCorrelation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct AuditAssignment {
+    pub schema_version: SchemaVersion,
+    pub attempt_id: StableId,
+    pub invocation_id: StableId,
+    pub assignment_id: StableId,
+    pub row_id: StableId,
+    pub idempotency_key: StableId,
+    pub worker_instance_id: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutorDescriptor {
+    pub schema_version: SchemaVersion,
+    pub executor_id: StableId,
+    pub capability_id: StableId,
+    pub worker_role_id: StableId,
+    pub phases: Vec<StableId>,
+    pub effective_concurrency_cap: u16,
+    pub state_owner: StableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRoleBundle {
+    pub schema_version: SchemaVersion,
+    pub role_id: StableId,
+    pub assignment_schema: StableId,
+    pub result_schema: StableId,
+    pub knowledge_paths: Vec<RepositoryPath>,
+    pub record_format: RepositoryPath,
+    pub safety_rules: Vec<StableId>,
+    pub verdicts: Vec<AuditVerdict>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioCatalog {
+    pub schema_version: SchemaVersion,
+    pub catalog_id: StableId,
+    pub capability_id: StableId,
+    pub positive_cases: Vec<StableId>,
+    pub negative_cases: Vec<StableId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkerRoleContract {
     pub schema_version: SchemaVersion,
     pub role_id: StableId,
@@ -576,6 +765,14 @@ pub struct WorkerRoleContract {
     pub result_validation_required: bool,
     pub terminal_result_correlation: Option<TerminalResultCorrelation>,
     #[serde(default)]
+    pub role_bundle: Option<ArtifactReference>,
+    #[serde(default)]
+    pub scenario_references: Vec<ArtifactReference>,
+    #[serde(default)]
+    pub implementation_evidence: Option<ImplementationEvidenceReference>,
+    #[serde(default)]
+    pub bounded_evidence: Vec<BoundedEvidenceReference>,
+    #[serde(default)]
     pub knowledge_references: Vec<ArtifactReference>,
     #[serde(default)]
     pub semantic_claims: Vec<SemanticClaim>,
@@ -586,34 +783,74 @@ pub struct WorkerRoleContract {
 pub enum WorkerResult {
     Succeeded {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
-        artifacts: Vec<ArtifactReference>,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
+        payload: AuditSuccessPayload,
     },
     Held {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         reason: StableId,
     },
     Cancelled {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         reason: StableId,
     },
     PolicyViolated {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         policy_id: StableId,
     },
     Failed {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         error_code: StableId,
     },
     RecoveryRequired {
         schema_version: SchemaVersion,
+        attempt_id: StableId,
+        invocation_id: StableId,
         assignment_id: StableId,
+        worker_instance_id: StableId,
+        worker_instance_receipt: ArtifactReference,
         checkpoint: ArtifactReference,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditVerdict {
+    Confirmed,
+    Refuted,
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuditSuccessPayload {
+    pub row_id: StableId,
+    pub verdict: AuditVerdict,
+    pub record: ArtifactReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -666,9 +903,33 @@ pub struct NormativeLockClosure {
     pub migration_ledger: ArtifactReference,
     pub schema_registry: ArtifactReference,
     pub conformance_corpus: ArtifactReference,
+    pub runtime_bundle: ArtifactReference,
+    pub implementation_subjects: Vec<ArtifactReference>,
     pub capability_contracts: Vec<ArtifactReference>,
     pub worker_role_contracts: Vec<ArtifactReference>,
     pub optional_components: Vec<OptionalComponent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBundleManifest {
+    pub schema_version: SchemaVersion,
+    pub bundle_id: StableId,
+    pub members: Vec<ArtifactReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationSubjectManifest {
+    pub schema_version: SchemaVersion,
+    pub subject_id: StableId,
+    pub executor: ArtifactReference,
+    pub role_bundle: ArtifactReference,
+    pub runtime_bundle: ArtifactReference,
+    pub scenario_catalog: ArtifactReference,
+    pub source_artifacts: Vec<ArtifactReference>,
+    pub schema_registry: ArtifactReference,
+    pub conformance_corpus: ArtifactReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -782,20 +1043,55 @@ pub struct VersionSetFixtureInput {
 pub fn schema_catalog() -> BTreeMap<String, Value> {
     let mut schemas = BTreeMap::new();
     insert_schema::<ArtifactReference>(&mut schemas, "artifact-reference");
+    insert_schema::<AuditAssignment>(&mut schemas, "audit-assignment");
+    insert_schema::<AuditSuccessPayload>(&mut schemas, "audit-success-payload");
     insert_schema::<AttemptCheckpoint>(&mut schemas, "attempt-checkpoint");
     insert_schema::<AttemptEvent>(&mut schemas, "attempt-event");
     insert_schema::<AttemptRecord>(&mut schemas, "attempt-record");
     insert_schema::<CapabilityContract>(&mut schemas, "capability-contract");
     insert_schema::<DiscoveryPolicy>(&mut schemas, "discovery-policy");
     insert_schema::<ExactLock>(&mut schemas, "exact-lock");
+    insert_schema::<ExecutorDescriptor>(&mut schemas, "executor-descriptor");
+    insert_schema::<ImplementationEvidence>(&mut schemas, "implementation-evidence");
+    insert_schema::<ImplementationSubjectManifest>(&mut schemas, "implementation-subject-manifest");
     insert_schema::<MigrationLedger>(&mut schemas, "migration-ledger");
     insert_schema::<PackageManifest>(&mut schemas, "package-manifest");
     insert_schema::<RuntimeInstallationState>(&mut schemas, "runtime-installation-state");
+    insert_schema::<RuntimeBundleManifest>(&mut schemas, "runtime-bundle-manifest");
+    insert_schema::<ScenarioCatalog>(&mut schemas, "scenario-catalog");
     insert_schema::<StateMigrationHandoff>(&mut schemas, "state-migration-handoff");
     insert_schema::<VersionSetFixtureInput>(&mut schemas, "version-set-fixture-input");
     insert_schema::<WorkerResult>(&mut schemas, "worker-result");
+    insert_schema::<WorkerRoleBundle>(&mut schemas, "worker-role-bundle");
     insert_schema::<WorkerRoleContract>(&mut schemas, "worker-role-contract");
+    for name in ["capability-contract", "worker-role-contract"] {
+        strip_bounded_evidence_extension(
+            schemas
+                .get_mut(name)
+                .expect("implementation schema is present"),
+        );
+    }
     schemas
+}
+
+pub fn bounded_evidence_schema_catalog() -> BTreeMap<String, Value> {
+    let mut schemas = BTreeMap::new();
+    insert_schema::<BoundedComparisonEvidence>(&mut schemas, "bounded-comparison-evidence");
+    insert_schema::<BoundedEvidenceReference>(&mut schemas, "bounded-evidence-reference");
+    insert_schema::<CapabilityContract>(&mut schemas, "capability-contract-with-bounded-evidence");
+    insert_schema::<WorkerRoleContract>(&mut schemas, "worker-role-contract-with-bounded-evidence");
+    schemas
+}
+
+fn strip_bounded_evidence_extension(schema: &mut Value) {
+    schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("contract schema properties")
+        .remove("bounded_evidence");
+    if let Some(definitions) = schema.get_mut("$defs").and_then(Value::as_object_mut) {
+        definitions.remove("BoundedEvidenceReference");
+    }
 }
 
 fn insert_schema<T: JsonSchema>(schemas: &mut BTreeMap<String, Value>, name: &str) {

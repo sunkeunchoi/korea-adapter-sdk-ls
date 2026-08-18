@@ -16,6 +16,15 @@ The versioned, machine-readable envelope that describes one engineering capabili
 ### Worker Role Contract
 The versioned envelope for a fresh-context worker role: its typed assignment and result, concurrency class, cancellation behavior, idempotency expectations, and result-validation rules. It describes a portable role rather than selecting a particular agent protocol or runtime.
 
+### Implementation Subject
+The evidence-free immutable identity of a repository-engineering implementation: executor descriptor, portable Worker Role bundle, closed runtime bundle, scenario catalog, schemas, conformance corpus, source artifacts, and runtime source tree. Evidence references and lifecycle fields are deliberately outside this identity, so adding proof or changing a declaration cannot create a self-referential digest.
+
+### Implementation Evidence
+A digest-bound, component-specific record that the implementation subject passed its complete offline implementation scenarios through the named fixture hosts and strict validators. For `audit-carried-rows`, `implemented` means the coordinator and portable Worker Role protocol are callable and pass the committed 26-row suite. It does not mean a production host exists, audit reasoning is certified, legacy parity is proven, the capability is active, or authority has transferred.
+
+### Bounded Offline Evidence
+A content-addressed, scope-explicit comparison of a frozen nonempty legacy-observed corpus with successor semantics, plus separately named successor-only conformance checks. It binds the landed implementation subject and predecessor package lock, records every compared dimension and exclusion, and always sets `global_parity_eligible` to false. It cannot satisfy certification, activation, authority transfer, retirement, or global parity.
+
 ### Migration Ledger
 The exhaustive disposition record for the repository's existing capabilities, aliases, workers, state consumers, instruction references, and cleanup assumptions. Every discovered source has exactly one reviewed disposition and keeps its legacy authority explicit until a later parity and cutover gate transfers or retires it.
 

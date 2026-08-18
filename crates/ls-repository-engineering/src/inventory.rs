@@ -9,8 +9,10 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 use crate::schema::{
-    ArtifactReference, CapabilityContract, DeclaredContractRegistration, DiscoveryPolicy,
-    MigrationLedger, PackageManifest, RepositoryPath, Sha256Digest, StableId, WorkerRoleContract,
+    ArtifactReference, BoundedComparisonEvidence, BoundedEvidenceReference, CapabilityContract,
+    DeclaredContractRegistration, DiscoveryPolicy, ImplementationComponentKind,
+    ImplementationEvidence, ImplementationEvidenceReference, MigrationLedger, PackageManifest,
+    RepositoryPath, ScenarioCatalog, Sha256Digest, StableId, WorkerRoleContract,
 };
 use crate::validator::{validate_first_slice_package, Finding};
 
@@ -226,6 +228,25 @@ fn validate_referenced_artifacts(
     workers: &[WorkerRoleContract],
 ) -> Result<(), AuthoredError> {
     for capability in capabilities {
+        if let Some(reference) = &capability.executor {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        for reference in &capability.scenario_references {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        if let Some(evidence) = &capability.implementation_evidence {
+            validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
+            validate_artifact_reference(root, tracked, &evidence.evidence)?;
+            validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+            validate_implementation_evidence(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::Capability,
+                &capability.capability_id,
+                &capability.scenario_references,
+            )?;
+        }
         for reference in &capability.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }
@@ -250,11 +271,169 @@ fn validate_referenced_artifacts(
                 }
             }
         }
+        for evidence in &capability.bounded_evidence {
+            validate_bounded_evidence_reference(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::Capability,
+                &capability.capability_id,
+            )?;
+        }
     }
     for worker in workers {
+        if let Some(reference) = &worker.role_bundle {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        for reference in &worker.scenario_references {
+            validate_artifact_reference(root, tracked, reference)?;
+        }
+        if let Some(evidence) = &worker.implementation_evidence {
+            validate_artifact_reference(root, tracked, &evidence.subject_manifest)?;
+            validate_artifact_reference(root, tracked, &evidence.evidence)?;
+            validate_artifact_reference(root, tracked, &evidence.validation_basis)?;
+            validate_implementation_evidence(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::WorkerRole,
+                &worker.role_id,
+                &worker.scenario_references,
+            )?;
+        }
+        for evidence in &worker.bounded_evidence {
+            validate_bounded_evidence_reference(
+                root,
+                tracked,
+                evidence,
+                ImplementationComponentKind::WorkerRole,
+                &worker.role_id,
+            )?;
+        }
         for reference in &worker.knowledge_references {
             validate_artifact_reference(root, tracked, reference)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_bounded_evidence_reference(
+    root: &Path,
+    tracked: &BTreeMap<String, String>,
+    reference: &BoundedEvidenceReference,
+    expected_kind: ImplementationComponentKind,
+    expected_id: &StableId,
+) -> Result<(), AuthoredError> {
+    let digest_hex = reference
+        .evidence
+        .sha256
+        .0
+        .strip_prefix("sha256:")
+        .expect("typed digest has the required prefix");
+    let expected_path =
+        format!(".repository-engineering/evidence/bounded/audit-carried-rows/{digest_hex}.json");
+    if reference.evidence.path.0 != expected_path
+        || reference.evidence.media_type != "application/json"
+        || reference.comparator_policy.path.0
+            != ".repository-engineering/scenarios/audit-carried-rows/comparison-policy.toml"
+        || reference.comparator_policy.media_type != "application/toml"
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_path_invalid",
+        });
+    }
+    validate_artifact_reference(root, tracked, &reference.evidence)?;
+    validate_artifact_reference(root, tracked, &reference.comparator_policy)?;
+    let bytes = read_tracked_bytes(root, tracked, &reference.evidence.path)?;
+    let evidence: BoundedComparisonEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_invalid",
+        })?;
+    if reference.component_kind != expected_kind
+        || reference.component_id != *expected_id
+        || reference.comparator_policy != evidence.comparator_policy
+        || reference.wave1_package_lock_id != evidence.wave1_package_lock_id
+        || reference.global_parity_eligible
+        || evidence.global_parity_eligible
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.bounded_evidence_binding_mismatch",
+        });
+    }
+    crate::bounded_evidence::validate_bounded_evidence(root, &evidence).map_err(|_| AuthoredError {
+        path: PathBuf::from(&reference.evidence.path.0),
+        code: "authored.bounded_evidence_semantic_mismatch",
+    })
+}
+
+fn validate_implementation_evidence(
+    root: &Path,
+    tracked: &BTreeMap<String, String>,
+    reference: &ImplementationEvidenceReference,
+    expected_kind: ImplementationComponentKind,
+    expected_id: &StableId,
+    scenario_references: &[ArtifactReference],
+) -> Result<(), AuthoredError> {
+    let bytes = read_tracked_bytes(root, tracked, &reference.evidence.path)?;
+    let evidence: ImplementationEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_invalid",
+        })?;
+    let scenario_reference = scenario_references
+        .iter()
+        .find(|candidate| **candidate == evidence.scenario_catalog)
+        .ok_or_else(|| AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_scenario_mismatch",
+        })?;
+    let scenario_bytes = read_tracked_bytes(root, tracked, &scenario_reference.path)?;
+    let scenario_text = std::str::from_utf8(&scenario_bytes).map_err(|_| AuthoredError {
+        path: PathBuf::from(&scenario_reference.path.0),
+        code: "authored.invalid_utf8",
+    })?;
+    let scenario: ScenarioCatalog = toml::from_str(scenario_text).map_err(|_| AuthoredError {
+        path: PathBuf::from(&scenario_reference.path.0),
+        code: "authored.implementation_evidence_scenario_invalid",
+    })?;
+    let mut expected_scenarios = scenario.positive_cases;
+    expected_scenarios.extend(scenario.negative_cases);
+    expected_scenarios.sort();
+    expected_scenarios.dedup();
+    let mut actual_scenarios = evidence.validated_scenarios.clone();
+    actual_scenarios.sort();
+    actual_scenarios.dedup();
+    let expected_hosts = match expected_kind {
+        ImplementationComponentKind::Capability => {
+            ["in_memory_fixture", "subprocess_fixture"].as_slice()
+        }
+        ImplementationComponentKind::WorkerRole => ["subprocess_fixture"].as_slice(),
+    };
+    if evidence.component_kind != expected_kind
+        || evidence.component_id != *expected_id
+        || reference.component_kind != expected_kind
+        || reference.component_id != *expected_id
+        || evidence.subject_manifest != reference.subject_manifest
+        || evidence.validation_basis != reference.validation_basis
+        || evidence.row_count != 26
+        || !evidence.closed_bundle_validated
+        || !evidence.closed_result_validator_used
+        || actual_scenarios != expected_scenarios
+        || evidence.validated_scenarios.len() != expected_scenarios.len()
+        || evidence
+            .runtime_hosts
+            .iter()
+            .map(|host| host.0.as_str())
+            .collect::<Vec<_>>()
+            != expected_hosts
+    {
+        return Err(AuthoredError {
+            path: PathBuf::from(&reference.evidence.path.0),
+            code: "authored.implementation_evidence_binding_mismatch",
+        });
     }
     Ok(())
 }

@@ -1,0 +1,19 @@
+schema_version = "v0"
+catalog_id = "audit-carried-rows-implementation"
+capability_id = "audit-carried-rows"
+positive_cases = [
+  "complete-confirmed-corpus",
+  "complete-unverifiable-corpus",
+  "identical-terminal-replay",
+]
+negative_cases = [
+  "empty-row-manifest",
+  "duplicate-row-id",
+  "wrong-attempt-id",
+  "wrong-invocation-id",
+  "wrong-assignment-id",
+  "wrong-success-row-id",
+  "stale-record-digest",
+  "conflicting-terminal-replay",
+  "unavailable-required-source",
+]

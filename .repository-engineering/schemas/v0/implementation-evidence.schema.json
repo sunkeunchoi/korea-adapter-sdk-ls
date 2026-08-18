@@ -1,0 +1,119 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "ImplementationComponentKind": {
+      "enum": [
+        "capability",
+        "worker_role"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:implementation-evidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "closed_bundle_validated": {
+      "type": "boolean"
+    },
+    "closed_result_validator_used": {
+      "type": "boolean"
+    },
+    "component_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "component_kind": {
+      "$ref": "#/$defs/ImplementationComponentKind"
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "row_count": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "runtime_hosts": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "scenario_catalog": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "subject_manifest": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "validated_scenarios": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "validation_basis": {
+      "$ref": "#/$defs/ArtifactReference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "component_kind",
+    "component_id",
+    "subject_manifest",
+    "scenario_catalog",
+    "validation_basis",
+    "runtime_hosts",
+    "validated_scenarios",
+    "row_count",
+    "closed_bundle_validated",
+    "closed_result_validator_used"
+  ],
+  "title": "ImplementationEvidence",
+  "type": "object"
+}

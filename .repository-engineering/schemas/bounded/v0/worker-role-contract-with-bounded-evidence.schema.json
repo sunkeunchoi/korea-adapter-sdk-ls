@@ -1,0 +1,540 @@
+{
+  "$defs": {
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RepositoryPath"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "sha256",
+        "media_type"
+      ],
+      "type": "object"
+    },
+    "AuthorityState": {
+      "enum": [
+        "legacy",
+        "successor"
+      ],
+      "type": "string"
+    },
+    "BoundedEvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "comparator_policy": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "component_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "component_kind": {
+          "$ref": "#/$defs/ImplementationComponentKind"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "global_parity_eligible": {
+          "type": "boolean"
+        },
+        "wave1_package_lock_id": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "component_kind",
+        "component_id",
+        "evidence",
+        "comparator_policy",
+        "wave1_package_lock_id",
+        "global_parity_eligible"
+      ],
+      "type": "object"
+    },
+    "CertificationState": {
+      "enum": [
+        "uncertified",
+        "certified"
+      ],
+      "type": "string"
+    },
+    "ConcurrencyClass": {
+      "enum": [
+        "serial",
+        "bounded_parallel"
+      ],
+      "type": "string"
+    },
+    "ContractState": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AuthorityState"
+        },
+        "certification": {
+          "$ref": "#/$defs/CertificationState"
+        },
+        "declaration": {
+          "$ref": "#/$defs/DeclarationState"
+        },
+        "implementation": {
+          "$ref": "#/$defs/ImplementationState"
+        },
+        "retirement": {
+          "$ref": "#/$defs/RetirementState"
+        }
+      },
+      "required": [
+        "declaration",
+        "implementation",
+        "certification",
+        "authority",
+        "retirement"
+      ],
+      "type": "object"
+    },
+    "CorrelationRule": {
+      "enum": [
+        "all_equal"
+      ],
+      "type": "string"
+    },
+    "DeclarationState": {
+      "enum": [
+        "declared",
+        "absent"
+      ],
+      "type": "string"
+    },
+    "FieldType": {
+      "enum": [
+        "string",
+        "boolean",
+        "integer_string",
+        "artifact_reference",
+        "stable_id"
+      ],
+      "type": "string"
+    },
+    "ImplementationComponentKind": {
+      "enum": [
+        "capability",
+        "worker_role"
+      ],
+      "type": "string"
+    },
+    "ImplementationEvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "component_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "component_kind": {
+          "$ref": "#/$defs/ImplementationComponentKind"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "subject_manifest": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "validation_basis": {
+          "$ref": "#/$defs/ArtifactReference"
+        }
+      },
+      "required": [
+        "component_kind",
+        "component_id",
+        "subject_manifest",
+        "evidence",
+        "validation_basis"
+      ],
+      "type": "object"
+    },
+    "ImplementationState": {
+      "enum": [
+        "unported",
+        "implemented"
+      ],
+      "type": "string"
+    },
+    "OutcomeKind": {
+      "enum": [
+        "succeeded",
+        "held",
+        "cancelled",
+        "policy_violated",
+        "failed",
+        "recovery_required"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "RetirementState": {
+      "enum": [
+        "not_started",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "SemanticClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "field_groups": {
+          "items": {
+            "$ref": "#/$defs/SemanticFieldPath"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/SemanticClaimSource"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/SemanticClaimStatus"
+        }
+      },
+      "required": [
+        "field_groups",
+        "status",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "SemanticClaimSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/RepositoryPath"
+            },
+            "source_kind": {
+              "const": "knowledge_reference",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/RepositoryPath"
+            },
+            "role_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "worker_knowledge_reference",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "role_id",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "logical_ids": {
+              "items": {
+                "$ref": "#/$defs/StableId"
+              },
+              "type": "array"
+            },
+            "source_kind": {
+              "const": "migration_ledger_rows",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "logical_ids"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_set_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "legacy_artifact_set",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "artifact_set_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "decision_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "successor_decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "requirement_id": {
+              "$ref": "#/$defs/StableId"
+            },
+            "source_kind": {
+              "const": "external_source_requirement",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_kind",
+            "requirement_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SemanticClaimStatus": {
+      "enum": [
+        "legacy_observed",
+        "successor_requirement",
+        "unavailable_unproved"
+      ],
+      "type": "string"
+    },
+    "SemanticFieldPath": {
+      "pattern": "^[a-z][a-z0-9_.*\\[\\]]{0,255}$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "TerminalResultCorrelation": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment_field": {
+          "$ref": "#/$defs/StableId"
+        },
+        "correlation": {
+          "$ref": "#/$defs/CorrelationRule"
+        },
+        "envelope_field": {
+          "$ref": "#/$defs/StableId"
+        },
+        "required_variants": {
+          "items": {
+            "$ref": "#/$defs/OutcomeKind"
+          },
+          "type": "array"
+        },
+        "success_payload_field": {
+          "$ref": "#/$defs/StableId"
+        }
+      },
+      "required": [
+        "assignment_field",
+        "envelope_field",
+        "success_payload_field",
+        "required_variants",
+        "correlation"
+      ],
+      "type": "object"
+    },
+    "TypedField": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StableId"
+          },
+          "type": "array"
+        },
+        "field_type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "name": {
+          "$ref": "#/$defs/StableId"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "field_type",
+        "required"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:bounded:v0:worker-role-contract-with-bounded-evidence",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assignment_fields": {
+      "items": {
+        "$ref": "#/$defs/TypedField"
+      },
+      "type": "array"
+    },
+    "bounded_evidence": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BoundedEvidenceReference"
+      },
+      "type": "array"
+    },
+    "cancellation_supported": {
+      "type": "boolean"
+    },
+    "concurrency": {
+      "$ref": "#/$defs/ConcurrencyClass"
+    },
+    "fresh_context_required": {
+      "type": "boolean"
+    },
+    "idempotency_key_required": {
+      "type": "boolean"
+    },
+    "implementation_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImplementationEvidenceReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "knowledge_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "public_description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "result_fields": {
+      "items": {
+        "$ref": "#/$defs/TypedField"
+      },
+      "type": "array"
+    },
+    "result_validation_required": {
+      "type": "boolean"
+    },
+    "role_bundle": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "role_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "scenario_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "semantic_claims": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SemanticClaim"
+      },
+      "type": "array"
+    },
+    "state": {
+      "$ref": "#/$defs/ContractState"
+    },
+    "terminal_result_correlation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TerminalResultCorrelation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "role_id",
+    "state",
+    "assignment_fields",
+    "result_fields",
+    "fresh_context_required",
+    "concurrency",
+    "cancellation_supported",
+    "idempotency_key_required",
+    "result_validation_required"
+  ],
+  "title": "WorkerRoleContract",
+  "type": "object"
+}

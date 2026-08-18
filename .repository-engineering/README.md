@@ -6,9 +6,11 @@ workers, and ignored run-state consumers remain legacy-authoritative.
 
 Human-authored inputs are `package.toml`, `discovery-policy.toml`,
 `migration-ledger.toml`, and registered files below `contracts/`. Rust types are
-the schema authority. The generated `schemas/v0/`, `schema-registry.json`,
-`conformance/v0/`, `package.lock.json`, `generated-set.json`, and reference
-documentation are projections; do not edit them by hand.
+the schema authority. The generated runtime schema registry, separate bounded-
+evidence schema registry, conformance artifacts, exact lock, generated-set
+manifest, and reference documentation are projections; do not edit them by
+hand. Bounded comparison payloads enter only through the reviewed
+`import-bounded-evidence` command from a caller-owned external path.
 
 Declared contract registries are not active registries. A registered Capability
 Contract or Worker Role Contract is discoverable authored data only. It grants
@@ -27,12 +29,12 @@ truthful outcomes. The `promote-trs` / `tr-promoter` pair is deliberately not in
 this wave: its paper credentials, publication, and automatic-merge behavior
 must be decomposed under separate authority and evidence contracts.
 
-The two declarations are still `unported`, `uncertified`, legacy-authoritative,
-and without executors or scenarios. Their ledger rows are only `planned` with
-`parity_not_proven`. Evidence obligations and human gates describe future work;
-they are not evidence. The committed report and record corpus are validated
-legacy evidence only and cannot satisfy successor implementation, parity, or
-certification.
+The two declarations are `implemented` but remain `uncertified`, inactive, and
+legacy-authoritative. Their ledger rows are still only `planned` with
+`parity_not_proven`. The imported bounded offline comparison covers the exact
+26-row legacy-observed corpus plus successor-only conformance dimensions; it is
+explicitly ineligible for global parity and cannot certify, activate, transfer
+authority, or retire either declaration.
 
 ### Mutable-ledger knowledge-reference policy
 
@@ -59,7 +61,8 @@ review; it must not be handled as an automatic digest re-pin.
 - Credential scoping, terminal correlation, cancellation, idempotency, and inert
   successor state are explicit successor requirements, not observed parity.
 - The report, manifest-defined record corpus, and committed validator establish
-  legacy evidence status only. Successor evidence remains absent.
+  legacy evidence status. Separate implementation and bounded comparison
+  evidence establish only their named scopes, never certification or parity.
 
 Host-specific names may appear in legacy-only paths, digest-bound references,
 provenance, or the unavailable-source declaration. Operational successor fields

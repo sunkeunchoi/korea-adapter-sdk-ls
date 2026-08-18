@@ -27,6 +27,11 @@ fn normative() -> NormativeLockClosure {
         migration_ledger: artifact(".repository-engineering/migration-ledger.toml", '3'),
         schema_registry: artifact(".repository-engineering/schemas/v0/registry.json", '4'),
         conformance_corpus: artifact(".repository-engineering/conformance/v0/manifest.json", '5'),
+        runtime_bundle: artifact(".repository-engineering/runtime-bundle.json", 'a'),
+        implementation_subjects: vec![artifact(
+            ".repository-engineering/implementation-subjects/audit-carried-rows.json",
+            'b',
+        )],
         capability_contracts: vec![artifact(
             ".repository-engineering/contracts/capabilities/audit-carried-rows.toml",
             '8',

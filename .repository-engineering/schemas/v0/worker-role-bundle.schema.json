@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "AuditVerdict": {
+      "enum": [
+        "confirmed",
+        "refuted",
+        "unverifiable"
+      ],
+      "type": "string"
+    },
+    "RepositoryPath": {
+      "pattern": "^[A-Za-z0-9._/-]{1,1024}$",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "enum": [
+        "v0"
+      ],
+      "type": "string"
+    },
+    "StableId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "$id": "urn:ls:repository-engineering:schema:v0:worker-role-bundle",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assignment_schema": {
+      "$ref": "#/$defs/StableId"
+    },
+    "knowledge_paths": {
+      "items": {
+        "$ref": "#/$defs/RepositoryPath"
+      },
+      "type": "array"
+    },
+    "record_format": {
+      "$ref": "#/$defs/RepositoryPath"
+    },
+    "result_schema": {
+      "$ref": "#/$defs/StableId"
+    },
+    "role_id": {
+      "$ref": "#/$defs/StableId"
+    },
+    "safety_rules": {
+      "items": {
+        "$ref": "#/$defs/StableId"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SchemaVersion"
+    },
+    "verdicts": {
+      "items": {
+        "$ref": "#/$defs/AuditVerdict"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "role_id",
+    "assignment_schema",
+    "result_schema",
+    "knowledge_paths",
+    "record_format",
+    "safety_rules",
+    "verdicts"
+  ],
+  "title": "WorkerRoleBundle",
+  "type": "object"
+}

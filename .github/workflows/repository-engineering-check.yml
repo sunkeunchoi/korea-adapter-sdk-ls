@@ -16,8 +16,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust 1.96
-        run: rustup toolchain install 1.96.0 --profile minimal
+        run: rustup toolchain install 1.96.0 --profile minimal --component clippy
       - name: Test repository engineering package
         run: cargo +1.96.0 test --locked -p ls-repository-engineering
-      - name: Check committed projections
-        run: cargo +1.96.0 run --locked -q -p ls-repository-engineering -- check
+      - name: Check package and standalone runtime
+        run: make repository-engineering-check
+      - name: Lint repository engineering package
+        run: cargo +1.96.0 clippy --locked -p ls-repository-engineering --all-targets -- -D warnings
+      - name: Lint standalone runtime
+        run: cargo +1.96.0 clippy --locked --manifest-path tools/repository-engineering-runtime/Cargo.toml --all-targets -- -D warnings

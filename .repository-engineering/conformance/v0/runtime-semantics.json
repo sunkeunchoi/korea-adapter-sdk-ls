@@ -1,0 +1,96 @@
+{
+  "cases": [
+    {
+      "case_id": "valid-audit-assignment",
+      "expected": "accept",
+      "input": {
+        "assignment_id": "L1",
+        "attempt_id": "attempt-1",
+        "idempotency_key": "attempt-1-L1",
+        "invocation_id": "invocation-1",
+        "row_id": "L1",
+        "schema_version": "v0",
+        "worker_instance_id": "worker-1"
+      },
+      "kind": "audit_assignment"
+    },
+    {
+      "case_id": "valid-audit-success",
+      "expected": "accept",
+      "input": {
+        "assignment_id": "L1",
+        "attempt_id": "attempt-1",
+        "invocation_id": "invocation-1",
+        "payload": {
+          "record": {
+            "media_type": "application/json",
+            "path": "records/L1.yaml",
+            "schema_version": "v0",
+            "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "row_id": "L1",
+          "verdict": "unverifiable"
+        },
+        "result": "succeeded",
+        "schema_version": "v0",
+        "worker_instance_id": "worker-1",
+        "worker_instance_receipt": {
+          "media_type": "application/json",
+          "path": "receipts/worker-1.json",
+          "schema_version": "v0",
+          "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "kind": "worker_result"
+    },
+    {
+      "case_id": "missing-attempt-id",
+      "expected": "reject",
+      "input": {
+        "assignment_id": "L1",
+        "invocation_id": "invocation-1",
+        "reason": "source-unavailable",
+        "result": "held",
+        "schema_version": "v0",
+        "worker_instance_id": "worker-1",
+        "worker_instance_receipt": {
+          "media_type": "application/json",
+          "path": "receipts/worker-1.json",
+          "schema_version": "v0",
+          "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "kind": "worker_result"
+    },
+    {
+      "case_id": "mismatched-success-row",
+      "expected": "reject",
+      "input": {
+        "assignment_id": "L1",
+        "attempt_id": "attempt-1",
+        "invocation_id": "invocation-1",
+        "payload": {
+          "record": {
+            "media_type": "application/json",
+            "path": "records/L1.yaml",
+            "schema_version": "v0",
+            "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "row_id": "L2",
+          "verdict": "unverifiable"
+        },
+        "result": "succeeded",
+        "schema_version": "v0",
+        "worker_instance_id": "worker-1",
+        "worker_instance_receipt": {
+          "media_type": "application/json",
+          "path": "receipts/worker-1.json",
+          "schema_version": "v0",
+          "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "kind": "worker_result"
+    }
+  ],
+  "schema_version": "v0"
+}

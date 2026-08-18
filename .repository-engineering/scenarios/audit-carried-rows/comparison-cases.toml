@@ -1,0 +1,237 @@
+schema_version = "v0"
+catalog_id = "audit-carried-rows-legacy-observed-v0"
+
+[[cases]]
+case_id = "L1"
+row_id = "L1"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L1.yaml", sha256 = "sha256:6445b2b6755917d432e4476d9b57a08d866d54f4e6c65e49df4f1581157d0a43", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L2"
+row_id = "L2"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L2.yaml", sha256 = "sha256:12abe92228de5598b14ac6032b583f83c18eac334596f141bfc35a046578bfd3", media_type = "application/yaml" }
+expected_classification = "behavioral"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L3"
+row_id = "L3"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L3.yaml", sha256 = "sha256:0339b6f56890aa95248d37c2067b56a3259b551f8611f278703b014538f7aaa6", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L4"
+row_id = "L4"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L4.yaml", sha256 = "sha256:a3072374d704678c32e53dc3af3e8ef731c6406f829f874bfbc6e876c54cb324", media_type = "application/yaml" }
+expected_classification = "behavioral"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L5"
+row_id = "L5"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L5.yaml", sha256 = "sha256:89c55c140fdba55d1f2dae92472cde8465684f22ee6339bf2ccfe3914306e916", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L6"
+row_id = "L6"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L6.yaml", sha256 = "sha256:15316f9d3b8be67a5e6b6e76cc139c8fbf49ce2955edde366b857aa894507a57", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L7"
+row_id = "L7"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L7.yaml", sha256 = "sha256:ff91fdfe9c93cf12165d5d45d8eb1edb442627d7475226fe9a9a55b00101d623", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L8"
+row_id = "L8"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L8.yaml", sha256 = "sha256:8bcd24be72c053458626f46053747b31cb3cebda9e7843cf745895d2d2706d4a", media_type = "application/yaml" }
+expected_classification = "behavioral"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L9"
+row_id = "L9"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L9.yaml", sha256 = "sha256:933d2aa8643248a55b9bb7d2d12e616161907483377cad3062ca8ff98661a302", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L10"
+row_id = "L10"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L10.yaml", sha256 = "sha256:9f8de51200225b958585766aaf53a6e1e7c5ae6fa615a99a13dfda5f5cc2b58c", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L11"
+row_id = "L11"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L11.yaml", sha256 = "sha256:7f684c59f01d941584f0e4b8e960a8f71dcebb0bf1d590fab280fd46b9900976", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L12"
+row_id = "L12"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L12.yaml", sha256 = "sha256:fe8660332e3cc69dcf51c017c7f1b903dba9417581f1f53bf3c26a96fea4994a", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L13"
+row_id = "L13"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L13.yaml", sha256 = "sha256:f83da623089b17fa83a3b27cfd84b539eb061ffd753f916855133dc1f0a62ffd", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L14"
+row_id = "L14"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L14.yaml", sha256 = "sha256:4f1d1efc9b71e9f071eb2c187d50b62f8046c96488097c376a7c378af01dcfeb", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L15"
+row_id = "L15"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L15.yaml", sha256 = "sha256:7d1531d4f069d3a3b8362659093256118031d9523e021d4025043ec849fe8656", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L16"
+row_id = "L16"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L16.yaml", sha256 = "sha256:653dc0e7b484d749be720047e53a5e3e7fd7d73cb20c308a2f1695ddf54a674b", media_type = "application/yaml" }
+expected_classification = "behavioral"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L17"
+row_id = "L17"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L17.yaml", sha256 = "sha256:d21ef95b1e1d9689b4b1ab61b147fe126311a539c77e3b6908e1f015c1f12027", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L18"
+row_id = "L18"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L18.yaml", sha256 = "sha256:0343630af4d9be07cdbd8a0d92c2dbf36fbef46a48116030e1fe3ab2c937abbe", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L19"
+row_id = "L19"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L19.yaml", sha256 = "sha256:23ac79e4d7b556f3da5d1ee8ffc1fb5ebfaa3c07878f04e99be6c321d9b39516", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L20"
+row_id = "L20"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L20.yaml", sha256 = "sha256:3c1fcb45aefa00b1af684deba3ac8beda308427c03001ee24f05ab4b3dfe4a74", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L21"
+row_id = "L21"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L21.yaml", sha256 = "sha256:31f2cce3d36eb3f65a3b15a0a33593047d1ef1f871a573093c2d3d65fdf8651f", media_type = "application/yaml" }
+expected_classification = "discard"
+expected_verdict = "confirmed"
+expected_disposition = "discard"
+source_available = true
+
+[[cases]]
+case_id = "L22"
+row_id = "L22"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L22.yaml", sha256 = "sha256:4f539b655578ce2790c9d99bef688377842aa410741e2c858918d36e4522f6f1", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L23"
+row_id = "L23"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L23.yaml", sha256 = "sha256:902616ff85017b61cbada36d6e149c8d63fe9769872ae41dad42dc627a3e7798", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L24"
+row_id = "L24"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L24.yaml", sha256 = "sha256:6f23197908e7a60138889e1ebea40318838b93b7ef6dfd768d6b8a256bca93e8", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+
+[[cases]]
+case_id = "L25"
+row_id = "L25"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L25.yaml", sha256 = "sha256:a8f688b3920dee0d08cc614aa97f92ad3f71be061dd60bcfd9c48776e619e729", media_type = "application/yaml" }
+expected_classification = "discard"
+expected_verdict = "confirmed"
+expected_disposition = "discard"
+source_available = true
+
+[[cases]]
+case_id = "L26"
+row_id = "L26"
+legacy_record = { schema_version = "v0", path = "docs/migration-source/audit/records/L26.yaml", sha256 = "sha256:b2870bd83a6c21db5f965c2d1d7fbbb72f06226210f01bdad0ae6b73de46c5ce", media_type = "application/yaml" }
+expected_classification = "knowledge"
+expected_verdict = "confirmed"
+expected_disposition = "carried"
+source_available = true
+

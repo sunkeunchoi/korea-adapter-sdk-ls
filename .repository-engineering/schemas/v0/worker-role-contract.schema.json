@@ -96,6 +96,41 @@
       ],
       "type": "string"
     },
+    "ImplementationComponentKind": {
+      "enum": [
+        "capability",
+        "worker_role"
+      ],
+      "type": "string"
+    },
+    "ImplementationEvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "component_id": {
+          "$ref": "#/$defs/StableId"
+        },
+        "component_kind": {
+          "$ref": "#/$defs/ImplementationComponentKind"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "subject_manifest": {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        "validation_basis": {
+          "$ref": "#/$defs/ArtifactReference"
+        }
+      },
+      "required": [
+        "component_kind",
+        "component_id",
+        "subject_manifest",
+        "evidence",
+        "validation_basis"
+      ],
+      "type": "object"
+    },
     "ImplementationState": {
       "enum": [
         "unported",
@@ -371,6 +406,17 @@
     "idempotency_key_required": {
       "type": "boolean"
     },
+    "implementation_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImplementationEvidenceReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "knowledge_references": {
       "default": [],
       "items": {
@@ -393,8 +439,26 @@
     "result_validation_required": {
       "type": "boolean"
     },
+    "role_bundle": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "role_id": {
       "$ref": "#/$defs/StableId"
+    },
+    "scenario_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "type": "array"
     },
     "schema_version": {
       "$ref": "#/$defs/SchemaVersion"
