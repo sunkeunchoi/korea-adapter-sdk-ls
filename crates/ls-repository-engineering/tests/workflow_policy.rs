@@ -56,7 +56,9 @@ fn workflow_is_pull_request_only_read_only_and_immutable() {
     assert!(text.contains(
         "cargo +1.96.0 clippy --locked --manifest-path tools/repository-engineering-runtime/Cargo.toml"
     ));
-    assert!(text.contains("rustup toolchain install 1.96.0 --profile minimal"));
+    assert!(text.contains(
+        "rustup toolchain install 1.96.0 --profile minimal --component clippy"
+    ));
     assert!(!text.contains("push:"));
     assert!(!text.contains("id-token"));
     assert!(!text.contains("secrets."));

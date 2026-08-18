@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust 1.96
-        run: rustup toolchain install 1.96.0 --profile minimal
+        run: rustup toolchain install 1.96.0 --profile minimal --component clippy
       - name: Test repository engineering package
         run: cargo +1.96.0 test --locked -p ls-repository-engineering
       - name: Check package and standalone runtime
