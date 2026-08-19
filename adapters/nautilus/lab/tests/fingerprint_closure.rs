@@ -248,7 +248,7 @@ fn cargo_dependency_evidence_has_no_undeclared_repository_input() {
 #[test]
 fn ls_core_build_watch_evidence_has_no_undeclared_repository_input() {
     let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
-    let output = current_ls_core_build_output(&lab_dependency_evidence());
+    let output = ls_core_build_outputs(&lab_dependency_evidence());
     let watched = rerun_paths(&output, &repo_root.join("crates/ls-core"));
     assert!(
         !watched.is_empty(),
@@ -259,6 +259,39 @@ fn ls_core_build_watch_evidence_has_no_undeclared_repository_input() {
         uncovered.is_empty(),
         "ls-core embeds undeclared repository inputs: {uncovered:?}"
     );
+}
+
+#[test]
+fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let profile_dir = temp.path().join("debug");
+    let fingerprint_dir = profile_dir.join(".fingerprint");
+    let sdk_dir = fingerprint_dir.join("ls-sdk-current");
+    let core_dir = fingerprint_dir.join("ls-core-current");
+    std::fs::create_dir_all(&sdk_dir).unwrap();
+    std::fs::create_dir_all(&core_dir).unwrap();
+    std::fs::write(
+        sdk_dir.join("dep-lib-ls_sdk"),
+        encoded_cargo_dep_info(&[(0, "src/lib.rs"), (0, "src/client.rs")]),
+    )
+    .unwrap();
+    std::fs::write(
+        core_dir.join("dep-lib-ls_core"),
+        encoded_cargo_dep_info(&[
+            (0, "src/lib.rs"),
+            (1, "debug/build/ls-core-current/out/embedded_metadata.rs"),
+        ]),
+    )
+    .unwrap();
+
+    let evidence = dependency_evidence_for_binary(
+        &profile_dir.join("lab-research"),
+        &temp.path().join("repo"),
+    );
+
+    assert!(evidence.contains("crates/ls-sdk/src/client.rs"));
+    assert!(evidence.contains("crates/ls-core/src/lib.rs"));
+    assert!(evidence.contains("embedded_metadata.rs"));
 }
 
 #[test]
@@ -303,18 +336,162 @@ fn synthetic_build_script_watch_evidence_exposes_an_undeclared_data_input() {
 
 fn lab_dependency_evidence() -> String {
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_lab-research"));
+    dependency_evidence_for_binary(&binary, &nautilus_ls_lab::fingerprint::compiled_repo_root())
+}
+
+fn dependency_evidence_for_binary(binary: &Path, repo_root: &Path) -> String {
     let dependency_file = binary.with_extension("d");
-    std::fs::read_to_string(&dependency_file)
-        .unwrap_or_else(|error| panic!("read {}: {error}", dependency_file.display()))
+    if std::env::var_os("LAB_TEST_FORCE_CARGO_FINGERPRINT_EVIDENCE").is_none() {
+        match std::fs::read_to_string(&dependency_file) {
+            Ok(evidence) => return evidence,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("read {}: {error}", dependency_file.display()),
+        }
+    }
+    cargo_fingerprint_dependency_evidence(binary, repo_root)
+}
+
+fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> String {
+    let profile_dir = binary.parent().expect("lab binary has a profile directory");
+    let target_dir = profile_dir
+        .parent()
+        .expect("profile has a target directory");
+    let fingerprint_dir = profile_dir.join(".fingerprint");
+    let mut evidence = String::new();
+    let mut found_packages = BTreeSet::new();
+
+    for entry in std::fs::read_dir(&fingerprint_dir)
+        .unwrap_or_else(|error| panic!("read {}: {error}", fingerprint_dir.display()))
+    {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let (package, dep_info_name) = if name.starts_with("ls-sdk-") {
+            ("ls-sdk", "dep-lib-ls_sdk")
+        } else if name.starts_with("ls-core-") {
+            ("ls-core", "dep-lib-ls_core")
+        } else {
+            continue;
+        };
+        let dep_info_path = entry.path().join(dep_info_name);
+        let raw = match std::fs::read(&dep_info_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => panic!("read {}: {error}", dep_info_path.display()),
+        };
+        found_packages.insert(package);
+        let package_root = repo_root.join("crates").join(package);
+        for (path_type, path) in decode_cargo_dep_info(&raw, &dep_info_path) {
+            let absolute = if path.is_absolute() {
+                path
+            } else if path_type == 1 {
+                target_dir.join(path)
+            } else {
+                package_root.join(path)
+            };
+            evidence.push_str(&absolute.to_string_lossy());
+            evidence.push('\n');
+        }
+    }
+
+    assert_eq!(
+        found_packages,
+        BTreeSet::from(["ls-core", "ls-sdk"]),
+        "Cargo fingerprint evidence must include root ls-core and ls-sdk"
+    );
+    evidence
+}
+
+fn decode_cargo_dep_info(raw: &[u8], source: &Path) -> Vec<(u8, PathBuf)> {
+    let mut remaining = raw;
+    let decoded = (|| {
+        if take_u32(&mut remaining)? != 1 || take_u8(&mut remaining)? != u8::MAX {
+            return None;
+        }
+        if take_u8(&mut remaining)? != 1 {
+            return None;
+        }
+        let file_count = take_u32(&mut remaining)?;
+        let mut paths = Vec::with_capacity(file_count);
+        for _ in 0..file_count {
+            let path_type = take_u8(&mut remaining)?;
+            if path_type > 1 {
+                return None;
+            }
+            let path = std::str::from_utf8(take_bytes(&mut remaining)?).ok()?;
+            let has_checksum = take_u8(&mut remaining)? != 0;
+            if has_checksum {
+                take_u64(&mut remaining)?;
+                take_bytes(&mut remaining)?;
+            }
+            paths.push((path_type, PathBuf::from(path)));
+        }
+        let environment_count = take_u32(&mut remaining)?;
+        for _ in 0..environment_count {
+            std::str::from_utf8(take_bytes(&mut remaining)?).ok()?;
+            if take_u8(&mut remaining)? != 0 {
+                std::str::from_utf8(take_bytes(&mut remaining)?).ok()?;
+            }
+        }
+        remaining.is_empty().then_some(paths)
+    })();
+    decoded.unwrap_or_else(|| {
+        panic!(
+            "unsupported or corrupt Cargo dep-info: {}",
+            source.display()
+        )
+    })
+}
+
+fn take_u8(bytes: &mut &[u8]) -> Option<u8> {
+    let value = *bytes.first()?;
+    *bytes = &bytes[1..];
+    Some(value)
+}
+
+fn take_u32(bytes: &mut &[u8]) -> Option<usize> {
+    let value = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+    *bytes = &bytes[4..];
+    Some(value)
+}
+
+fn take_u64(bytes: &mut &[u8]) -> Option<u64> {
+    let value = u64::from_le_bytes(bytes.get(..8)?.try_into().ok()?);
+    *bytes = &bytes[8..];
+    Some(value)
+}
+
+fn take_bytes<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let length = take_u32(bytes)?;
+    let value = bytes.get(..length)?;
+    *bytes = &bytes[length..];
+    Some(value)
+}
+
+fn encoded_cargo_dep_info(paths: &[(u8, &str)]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&1_u32.to_le_bytes());
+    encoded.push(u8::MAX);
+    encoded.push(1);
+    encoded.extend_from_slice(&(paths.len() as u32).to_le_bytes());
+    for (path_type, path) in paths {
+        encoded.push(*path_type);
+        encoded.extend_from_slice(&(path.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(path.as_bytes());
+        encoded.push(0);
+    }
+    encoded.extend_from_slice(&0_u32.to_le_bytes());
+    encoded
 }
 
 fn repository_dependency_paths(evidence: &str, repo_root: &Path) -> BTreeSet<PathBuf> {
     evidence
         .replace("\\\n", " ")
         .split_whitespace()
-        .filter_map(|token| {
-            repository_relative_path(Path::new(token.trim_end_matches(':')), repo_root)
-        })
+        .map(|token| PathBuf::from(token.trim_end_matches(':')))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|token| repository_relative_path(&token, repo_root))
         .collect()
 }
 
@@ -369,26 +546,30 @@ fn repository_relative_path(path: &Path, repo_root: &Path) -> Option<PathBuf> {
     Some(normalized)
 }
 
-fn current_ls_core_build_output(dependency_evidence: &str) -> String {
-    let mut outputs = dependency_evidence
+fn ls_core_build_outputs(dependency_evidence: &str) -> String {
+    let outputs = dependency_evidence
         .replace("\\\n", " ")
         .split_whitespace()
         .map(|token| PathBuf::from(token.trim_end_matches(':')))
         .filter(|path| path.ends_with("out/embedded_metadata.rs"))
         .filter_map(|generated| generated.parent()?.parent().map(|dir| dir.join("output")))
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        outputs.len(),
-        1,
-        "current lab dep-info must identify exactly one ls-core build output: {outputs:?}"
+    let mut evidence = String::new();
+    for output_path in outputs {
+        match std::fs::read_to_string(&output_path) {
+            Ok(output) => {
+                evidence.push_str(&output);
+                evidence.push('\n');
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("read ls-core output {}: {error}", output_path.display()),
+        }
+    }
+    assert!(
+        !evidence.is_empty(),
+        "Cargo dependency evidence must identify at least one available ls-core build output"
     );
-    let output_path = outputs.pop_first().unwrap();
-    std::fs::read_to_string(&output_path).unwrap_or_else(|error| {
-        panic!(
-            "read current ls-core output {}: {error}",
-            output_path.display()
-        )
-    })
+    evidence
 }
 
 fn find_build_output_with_line(package_prefix: &str, required_line: &str) -> String {

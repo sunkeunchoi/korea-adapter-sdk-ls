@@ -126,8 +126,10 @@ required to remove that final TOCTOU residual.
 Do not trust the inventory merely because its own tests are green. Compare it to
 independent evidence:
 
-- Cargo's generated dependency file for repository-local `ls-sdk`/`ls-core`
-  source inputs;
+- Cargo's generated dependency evidence for repository-local `ls-sdk`/`ls-core`
+  source inputs. Prefer the built binary's `.d` sidecar when present, but fall
+  back to Cargo's versioned, typed `.fingerprint/**/dep-lib-*` records because
+  artifact caches do not guarantee that convenience sidecar survives;
 - `ls-core` build-script output for rebuild-watched embedded metadata;
 - explicit checks for manifests, lockfile, and toolchain inputs those oracles do
   not own.
