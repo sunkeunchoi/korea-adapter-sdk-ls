@@ -1975,10 +1975,10 @@ fn dispatch() -> anyhow::Result<ExitCode> {
             ),
         },
         Some("fingerprint") => {
-            // U1/KTD5: print the binary's embedded lab-source fingerprint. A
+            // Print the binary's embedded declared build-input fingerprint. A
             // structured line (not free-text), so it renders verbatim; the
             // orchestrator (U7) parses `fingerprint: <hex>` from a freshly built
-            // binary and requires it to match the recomputed tree hash.
+            // binary and requires it to match the approved inventory hash.
             print_lines(&[format!("fingerprint: {}", crate::fingerprint::EMBEDDED)]);
             Ok(ExitCode::SUCCESS)
         }

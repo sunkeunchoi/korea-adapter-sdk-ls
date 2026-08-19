@@ -77,8 +77,8 @@ sha2 = "0.10"
 tempfile = "3"
 
 [build-dependencies]
-# The build fingerprint (KTD5, U1) hashes the lab source tree at compile time;
-# the runtime module shares the identical walk-and-hash via `include!`.
+# The declared build-input fingerprint shares inventory, validation, hashing,
+# and Cargo watch projection with the runtime module via `include!`.
 sha2 = "0.10"
 
 [dev-dependencies]

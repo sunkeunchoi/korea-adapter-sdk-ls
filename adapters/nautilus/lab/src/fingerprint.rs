@@ -1,92 +1,55 @@
-//! The lab-source build fingerprint (KTD5, U1) — runtime side.
+//! Runtime access to the declared lab build-input fingerprint.
 //!
-//! [`EMBEDDED`] is the digest `build.rs` computed over `src/**` + `Cargo.toml`
-//! at compile time. [`recompute_from_dir`] runs the *identical* walk-and-hash at
-//! run time (the two share [`compute_lab_fingerprint`] verbatim via `include!`,
-//! so they cannot drift). The orchestrator (U7) requires a freshly built binary
-//! to report an `EMBEDDED` that matches the recomputed tree hash before any
-//! backtest runs — a stale binary that still carries an old tree's digest halts
-//! instead of silently backtesting old code.
-//!
-//! This covers the *full* lab source, closing the `strategy_code_hash`-only gap
-//! (that hash fingerprints `orb.rs` alone — past staleness surfaced through
-//! params code, not the strategy file).
+//! The compatibility name [`EMBEDDED`] remains `LAB_SRC_FINGERPRINT`, but the
+//! value now certifies the declared root SDK/core build-input inventory rather
+//! than only `lab/src/**` and the lab manifest.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 include!("../fingerprint_core.rs");
 
-/// The fingerprint `build.rs` embedded at compile time (hex SHA-256 over the lab
-/// `src/**` tree plus `Cargo.toml`).
+/// The declared lab build-input fingerprint embedded by `build.rs`.
 pub const EMBEDDED: &str = env!("LAB_SRC_FINGERPRINT");
 
-/// Recompute the lab-source fingerprint from a source directory + its
-/// `Cargo.toml` at run time. Equals [`EMBEDDED`] for the tree the running binary
-/// was built from; a mismatch means the binary is stale relative to `src_dir`.
+/// Recompute the production fingerprint from the repository containing this
+/// compiled crate. No process environment variable can redirect this trust root.
+pub fn recompute() -> std::io::Result<String> {
+    recompute_from_root(&compiled_repo_root())
+}
+
+/// Recompute against an explicit complete repository fixture.
 ///
-/// # Errors
-///
-/// If any file under `src_dir` (or `cargo_toml`) cannot be read.
-pub fn recompute_from_dir(src_dir: &Path, cargo_toml: &Path) -> std::io::Result<String> {
-    compute_lab_fingerprint(src_dir, cargo_toml)
+/// Production callers use [`recompute`]. This seam exists for unit and
+/// process-boundary tests that need to mutate an isolated declared closure.
+pub fn recompute_from_root(repo_root: &Path) -> std::io::Result<String> {
+    compute_declared_fingerprint(repo_root)
+}
+
+/// Return the fixed repository root derived from the compiled lab manifest.
+pub fn compiled_repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("lab manifest is under adapters/nautilus/lab")
+        .to_path_buf()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The crate's own source tree (resolved at test-compile time).
-    fn crate_src_and_toml() -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        (root.join("src"), root.join("Cargo.toml"))
-    }
-
     #[test]
-    fn embedded_is_64_hex() {
+    fn embedded_is_sha256_hex() {
         assert_eq!(EMBEDDED.len(), 64, "SHA-256 hex is 64 chars: {EMBEDDED}");
-        assert!(EMBEDDED.chars().all(|c| c.is_ascii_hexdigit()), "{EMBEDDED}");
+        assert!(EMBEDDED
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
     }
 
     #[test]
-    fn recompute_from_the_current_tree_equals_embedded() {
-        let (src, toml) = crate_src_and_toml();
-        let live = recompute_from_dir(&src, &toml).unwrap();
-        assert_eq!(live, EMBEDDED, "recompute of the current tree matches the embedded value");
-    }
-
-    #[test]
-    fn a_one_byte_change_in_any_src_file_moves_the_fingerprint() {
-        let (src, toml) = crate_src_and_toml();
-        let base = recompute_from_dir(&src, &toml).unwrap();
-
-        // Copy the tree into a tempdir, flip one byte in a src file, recompute.
-        let tmp = tempfile::TempDir::new().unwrap();
-        let tmp_src = tmp.path().join("src");
-        copy_tree(&src, &tmp_src).unwrap();
-        std::fs::copy(&toml, tmp.path().join("Cargo.toml")).unwrap();
-
-        let target = tmp_src.join("lib.rs");
-        let mut bytes = std::fs::read(&target).unwrap();
-        bytes.push(b'\n'); // one appended byte
-        std::fs::write(&target, &bytes).unwrap();
-
-        let mutated = recompute_from_dir(&tmp_src, &tmp.path().join("Cargo.toml")).unwrap();
-        assert_ne!(mutated, base, "a one-byte src edit changes the fingerprint");
-    }
-
-    fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(to)?;
-        for entry in std::fs::read_dir(from)? {
-            let entry = entry?;
-            let dest = to.join(entry.file_name());
-            if entry.path().is_dir() {
-                copy_tree(&entry.path(), &dest)?;
-            } else {
-                std::fs::copy(entry.path(), &dest)?;
-            }
-        }
-        Ok(())
+    fn current_declared_inputs_equal_the_embedded_value() {
+        assert_eq!(recompute().unwrap(), EMBEDDED);
     }
 }
