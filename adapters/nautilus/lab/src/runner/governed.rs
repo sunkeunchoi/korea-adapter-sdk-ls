@@ -13,8 +13,7 @@
 //! Test seams (KTD6): `LS_GOVERNED_BUILD_CMD` substitutes the build, and
 //! `LS_GOVERNED_CHILD_BIN` substitutes the child binary, so the stage machine is
 //! proven with stubs; the real `cargo build` path is exercised attended, not by
-//! CI. `LS_GOVERNED_SRC_DIR` / `LS_GOVERNED_CARGO_TOML` point the fingerprint
-//! recompute at a fixture tree (to simulate a stale parent).
+//! CI. Production fingerprint resolution is fixed to the compiled repository.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -66,20 +65,40 @@ impl GovernedOutcome {
 /// On an I/O failure recomputing the fingerprint, spawning a stage, or reading a
 /// manifest. Every *gate* halt is an outcome (typed exit), not an error.
 pub fn run_governed_cli() -> anyhow::Result<GovernedOutcome> {
+    run_governed_with_fingerprint_root(
+        &fingerprint::compiled_repo_root(),
+        fingerprint::EMBEDDED,
+    )
+}
+
+/// Test-only process seam used by the integration-test helper. Production CLI
+/// entry points always call [`run_governed_cli`] and therefore cannot redirect
+/// the compiled repository anchor.
+#[doc(hidden)]
+pub fn run_governed_with_fingerprint_root(
+    repo_root: &Path,
+    embedded: &str,
+) -> anyhow::Result<GovernedOutcome> {
     let mut lines = Vec::new();
 
     // --- 1. Parent self-check (KTD6): the code class R7 distrusts never writes a
     // gate verdict, so the parent halts as stale BEFORE any diagnose. ---
-    let (src_dir, cargo_toml) = governed_src_paths();
-    let tree_hash = fingerprint::recompute_from_dir(&src_dir, &cargo_toml)
-        .map_err(|e| anyhow::anyhow!("recomputing lab-source fingerprint: {e}"))?;
-    if tree_hash != fingerprint::EMBEDDED {
+    let approved = match fingerprint::recompute_from_root(repo_root) {
+        Ok(current) => current,
+        Err(error) => {
+            return Ok(GovernedOutcome::held(
+                GateExit::StaleBinary,
+                format!("declared build-input inventory is not trustworthy: {error}"),
+                lines,
+            ));
+        }
+    };
+    if approved != embedded {
         return Ok(GovernedOutcome::held(
             GateExit::StaleBinary,
             format!(
                 "parent binary is stale: embedded {} != source tree {} — rebuild before governing",
-                fingerprint::EMBEDDED,
-                tree_hash
+                embedded, approved
             ),
             lines,
         ));
@@ -132,15 +151,39 @@ pub fn run_governed_cli() -> anyhow::Result<GovernedOutcome> {
     }
     lines.push("build OK".to_string());
 
+    // The pre-diagnosis digest is the authorization for this turn. A build that
+    // incorporated a concurrent mutation is still unapproved and must stop
+    // before even interrogating a reporter binary.
+    let post_build = match fingerprint::recompute_from_root(repo_root) {
+        Ok(current) => current,
+        Err(error) => {
+            return Ok(GovernedOutcome::held(
+                GateExit::StaleBinary,
+                format!("post-build fingerprint inventory is not trustworthy: {error}"),
+                lines,
+            ));
+        }
+    };
+    if post_build != approved {
+        return Ok(GovernedOutcome::held(
+            GateExit::StaleBinary,
+            format!(
+                "declared build inputs changed during the foreground build: approved {approved} != post-build {post_build}"
+            ),
+            lines,
+        ));
+    }
+    lines.push("post-build fingerprint OK".to_string());
+
     // --- 4. Built-binary fingerprint check (KTD6, AE2): interrogate the BUILT
     // binary, not the process that ran the build. ---
     let child_bin = child_bin_path();
     let reported = read_child_fingerprint(&child_bin)?;
-    if reported != tree_hash {
+    if reported != approved {
         return Ok(GovernedOutcome::held(
             GateExit::StaleBinary,
             format!(
-                "built binary fingerprint {reported} != source tree {tree_hash} — refusing to \
+                "built binary fingerprint {reported} != approved source tree {approved} — refusing to \
                  backtest a stale binary"
             ),
             lines,
@@ -152,6 +195,7 @@ pub fn run_governed_cli() -> anyhow::Result<GovernedOutcome> {
     let out = Command::new(&child_bin)
         .arg("turn")
         .env("LS_GOVERNED_CHILD", "1")
+        .env("LS_GOVERNED_APPROVED_FINGERPRINT", &approved)
         .output()
         .map_err(|e| anyhow::anyhow!("spawning the child flip {}: {e}", child_bin.display()))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -187,6 +231,42 @@ pub fn run_governed_cli() -> anyhow::Result<GovernedOutcome> {
 ///
 /// On an I/O failure running the flip or reading a manifest.
 pub fn run_governed_child_cli() -> anyhow::Result<ExitCode> {
+    run_governed_child_with_fingerprint_root(
+        &fingerprint::compiled_repo_root(),
+        fingerprint::EMBEDDED,
+    )
+}
+
+/// Test-only process seam paired with [`run_governed_with_fingerprint_root`].
+/// The approval check below remains the first action of the decider path.
+#[doc(hidden)]
+pub fn run_governed_child_with_fingerprint_root(
+    repo_root: &Path,
+    embedded: &str,
+) -> anyhow::Result<ExitCode> {
+    let approved = std::env::var("LS_GOVERNED_APPROVED_FINGERPRINT").unwrap_or_default();
+    let current = fingerprint::recompute_from_root(repo_root);
+    let stale_reason = match current {
+        Ok(current) if !approved.is_empty() && approved == embedded && current == approved => None,
+        Ok(_) if approved.is_empty() => {
+            Some("decider fingerprint is stale: no approved fingerprint was provided".to_string())
+        }
+        Ok(_) if approved != embedded => Some(
+            "decider fingerprint is stale: approved fingerprint does not match this binary"
+                .to_string(),
+        ),
+        Ok(_) => Some(
+            "decider fingerprint is stale: declared build inputs changed after approval".to_string(),
+        ),
+        Err(error) => Some(format!(
+            "decider fingerprint inventory is not trustworthy: {error}"
+        )),
+    };
+    if let Some(reason) = stale_reason {
+        println!("HELD {reason}");
+        return Ok(GateExit::StaleBinary.exit_code());
+    }
+
     nautilus_ls::scrub::install();
     let code_turn = std::env::var("LS_TURN_CODE_BUMP")
         .map(|v| !v.trim().is_empty() && v.trim() != "0")
@@ -248,7 +328,7 @@ pub fn run_governed_child_cli() -> anyhow::Result<ExitCode> {
 /// The KEEP-rule verdict on the size-invariant return-on-risk crux (the loop's
 /// documented KEEP rule): KEEP when the new run's return-on-risk strictly exceeds
 /// the prior head's and risk-cap dominance holds; else REVERT. The verdict line's
-/// hash is the new run's lab-source fingerprint.
+/// hash is the new run's declared build-input fingerprint.
 fn decide_keep_or_revert(
     data_home: &Path,
     prior: Option<&(String, crate::artifacts::manifest::Manifest)>,
@@ -313,36 +393,12 @@ fn stage_log(stage: &str) {
 // Stage seams + path resolution
 // ===========================================================================
 
-/// The source dir + Cargo.toml the fingerprint recompute reads. Seamed by
-/// `LS_GOVERNED_SRC_DIR` / `LS_GOVERNED_CARGO_TOML` (tests point at a fixture tree
-/// to simulate a stale parent); defaults to the baked crate paths.
-fn governed_src_paths() -> (PathBuf, PathBuf) {
-    let src = std::env::var("LS_GOVERNED_SRC_DIR")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
-    let toml = std::env::var("LS_GOVERNED_CARGO_TOML")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"));
-    (src, toml)
-}
-
-/// The cwd the build command runs from — the standalone workspace root
-/// (`adapters/nautilus`). Seamed by `LS_GOVERNED_BUILD_CWD`.
+/// The fixed cwd for governed builds: the standalone adapter workspace.
 fn build_cwd() -> PathBuf {
-    std::env::var("LS_GOVERNED_BUILD_CWD")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .expect("lab crate has a parent (the workspace root)")
-                .to_path_buf()
-        })
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("lab crate has a parent (the standalone adapter workspace)")
+        .to_path_buf()
 }
 
 /// The child binary path. Seamed by `LS_GOVERNED_CHILD_BIN` (tests point at a stub

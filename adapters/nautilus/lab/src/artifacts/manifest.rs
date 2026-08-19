@@ -55,13 +55,11 @@ pub struct Manifest {
     /// code changes, so two runs claiming the same version but differing in code are
     /// still distinguishable from the manifests alone (AE1).
     pub strategy_code_hash: String,
-    /// The full-lab-source build fingerprint (KTD5, U1): a hash over `src/**` +
-    /// `Cargo.toml`, embedded by `build.rs` and recorded here so a run is
-    /// attributable to the exact binary tree that produced it. Unlike
-    /// [`Self::strategy_code_hash`] (which covers `orb.rs` alone), this covers
-    /// params/runner code too — past staleness surfaced through params code, not
-    /// the strategy file. `None` on a run whose binary predates the fingerprint;
-    /// absent from prior manifests, hence the `serde(default)`.
+    /// The declared build-input fingerprint embedded by `build.rs` and recorded
+    /// here so a run is attributable to the certified root SDK/core boundary.
+    /// The historical field name remains stable. `None` on a run whose binary
+    /// predates the fingerprint; absent from prior manifests, hence the
+    /// `serde(default)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lab_src_fingerprint: Option<String>,
     /// The ingest checkpoint's content hash, ridden along as a secondary informational
@@ -126,7 +124,7 @@ pub struct DailyManifestParts<'a> {
     pub catalog_fingerprint: String,
     /// The per-session selection-sequence hash ([`universe_sequence_hash`]).
     pub universe_hash: String,
-    /// The running binary's embedded lab-source fingerprint.
+    /// The running binary's embedded declared build-input fingerprint.
     pub lab_src_fingerprint: Option<String>,
     /// The ingest checkpoint's content hash.
     pub checkpoint_hash: Option<String>,

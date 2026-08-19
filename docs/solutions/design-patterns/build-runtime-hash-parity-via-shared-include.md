@@ -1,163 +1,150 @@
 ---
-title: "Guarantee build-time vs run-time hash parity by sharing the walk-and-hash source via include!"
+title: "Guarantee build/runtime fingerprint parity with one shared declared-input inventory"
 date: 2026-07-16
+last_updated: 2026-08-19
 category: design-patterns
-module: adapters/nautilus/lab (build.rs, fingerprint_core.rs, src/fingerprint.rs) — the lab-source build fingerprint
+module: adapters/nautilus/lab (build.rs, fingerprint_core.rs, src/fingerprint.rs) — the declared lab build-input fingerprint
 problem_type: design_pattern
 component: development_workflow
 severity: medium
 applies_when:
-  - "A binary must prove at run time that it was built from the source tree it is currently looking at (anti-stale-binary check)"
-  - "You compute a fingerprint/hash of source (or any inputs) in build.rs AND recompute the same fingerprint at run time to compare them"
-  - "Two hashes that must be byte-identical are produced by two separately-compiled code paths (a build script vs the crate's own library)"
+  - "A binary must prove at runtime that it was built from the authoritative inputs it is currently using"
+  - "A build script embeds a fingerprint and runtime code recomputes it"
+  - "Path dependencies or build-script data can change the binary without changing the package's own source"
 tags:
   - build-fingerprint
   - stale-binary
   - build-script
   - include-macro
   - hash-parity
+  - input-inventory
   - strategy-loop
 ---
 
 ## Context
 
-The lab's governed strategy turn must refuse to run a **stale binary** — one whose
-compiled code no longer matches the source tree the operator is editing. Past
-staleness bit the strategy loop twice (2026-07-12, 2026-07-15): a background build
-from the wrong directory left an old binary that silently backtested old strategy
-code, and the existing `strategy_code_hash` covered only `orb.rs`, so a change in
-*params* code slipped through.
+The lab's governed strategy turn must refuse a stale binary. The original guard
+hashed `lab/src/**` plus `lab/Cargo.toml` in shared build/runtime code. Sharing the
+walk-and-hash algorithm prevented byte-level drift, but it did not make the input
+boundary complete. The lab also compiles root path dependencies `crates/ls-sdk`
+and `crates/ls-core`; `ls-core/build.rs` embeds root metadata. Those inputs could
+change the binary while the old digest stayed equal, producing a false green.
 
-The fix is a fingerprint over the **whole** `lab/src/**` tree (plus `Cargo.toml`):
-`build.rs` embeds it as an env constant at compile time, and the running binary
-recomputes the same walk-and-hash from the source dir at run time; the orchestrator
-requires the two to match before any backtest. This only works if the two hashes
-are **guaranteed identical for an unchanged tree** — and they are produced by two
-*separately compiled* code paths (the build script and the crate library), which is
-exactly where a subtle drift (different separator, sort order, or newline handling)
-would reintroduce the stale-binary class it is meant to close.
+There were two related lifecycle gaps. Cargo rebuild watches duplicated the hash
+input list, and the governed parent reused its pre-build tree digest after a
+foreground build. A correct hash algorithm could therefore coexist with stale
+embedding or with an unapproved mutation during the parent/build/child handoff.
 
 ## Guidance
 
-**Put the walk-and-hash logic in ONE standalone source file and `include!` it into
-both the build script and the runtime module.** Do not re-implement it in each —
-share the literal source so the two implementations *cannot* drift.
+Put the inventory, validation, deterministic traversal, hashing, and Cargo watch
+projection in one dependency-light source file and `include!` it from both the
+build script and runtime module. Sharing only the hash loop is insufficient; every
+consumer must derive from the same typed entries.
 
-- Place the shared file at the crate root (e.g. `fingerprint_core.rs`), NOT under
-  `src/`, so it is not itself part of the hashed tree (avoids a self-reference
-  paradox and keeps the hash input set stable).
-- The shared file references only `std` + one hashing crate (e.g. `sha2`), and
-  assumes the including scope brought those names into scope *before* the
-  `include!`. It must not reference any crate-internal type — a build script cannot
-  see the crate's own compiled library.
-- Add `sha2` (or the hashing crate) to BOTH `[build-dependencies]` and
-  `[dependencies]`.
-- In `build.rs`, resolve the tree root from `CARGO_MANIFEST_DIR` (build-script cwd
-  is not guaranteed), emit `cargo:rustc-env=<NAME>=<hex>`, and add
-  `cargo:rerun-if-changed=` lines covering every hash input (`src`, `Cargo.toml`,
-  the shared file, `build.rs` itself) so a stale embedded value can never survive
-  an edit.
-- Expose the embedded value at run time as `pub const EMBEDDED: &str =
-  env!("<NAME>");` and a `recompute_from_dir(src, cargo_toml)` that calls the same
-  shared function. Tests resolve the crate's own tree via
-  `env!("CARGO_MANIFEST_DIR")`.
+Each entry carries:
+
+- a stable logical label;
+- a repository-relative path;
+- a node kind (`File` or `Tree`).
+
+The digest frames the inventory version, entry count, label, node kind, logical
+path, tree member kind/path, and file bytes with explicit lengths. Entries and
+tree members are sorted before hashing. Absolute checkout paths never enter the
+digest, so relocating an identical repository does not change the result.
+
+Validation is fail-closed. Reject missing or unreadable inputs, file/tree type
+mismatches, symlinks, special nodes, duplicate labels, duplicate normalized paths,
+and overlapping file/tree declarations. Do not skip an input and continue with a
+partial certification boundary.
+
+Cargo watches are a projection of the validated inventory:
+
+```rust
+let fingerprint = compute_declared_fingerprint(repo_root)?;
+println!("cargo:rustc-env=LAB_SRC_FINGERPRINT={fingerprint}");
+for path in watch_paths_from_root(repo_root)? {
+    println!("cargo:rerun-if-changed={}", path.display());
+}
+```
+
+Production runtime recomputation resolves the repository from the compiled
+`CARGO_MANIFEST_DIR`. Do not accept environment variables that redirect the trust
+root. Tests inject a complete temporary repository root directly into the shared
+library seam.
+
+## Certified Boundary
+
+`LAB_SRC_FINGERPRINT` remains the compatibility name, but it now means the
+declared lab build-input fingerprint. It covers:
+
+- `adapters/nautilus/lab/src/**`, `Cargo.toml`, `build.rs`, and
+  `fingerprint_core.rs`;
+- root `Cargo.toml`;
+- `crates/ls-sdk/src/**` and its manifest;
+- `crates/ls-core/src/**`, its manifest, and its build script;
+- `metadata/error-catalog.yaml` and `metadata/constraints/**`;
+- the standalone adapter workspace manifest, lockfile, and Rust toolchain file.
+
+The shared core file is intentionally inside the inventory now. Hashing its source
+does not create a self-reference: the digest hashes the implementation bytes, not
+the digest output. The obsolete rule that it must remain outside the hash applied
+only to the earlier `src/**` shortcut.
+
+This prerequisite deliberately does **not** certify:
+
+- `adapters/nautilus/src/**`;
+- `adapters/nautilus/nautilus-ls-calendar/src/**` or the calendar manifest;
+- root `Cargo.lock` (the governed build resolves through the standalone adapter
+  workspace lockfile);
+- generated `target/**`, dev-only dependencies, or ambient compiler flags and
+  command-line toolchain overrides.
+
+The adapter/calendar extension remains separate work. The morning shell
+preflight's omission of the root SDK/core manifests is also a distinct residual;
+this runtime fingerprint does not silently discharge that shell boundary.
+
+## Governed Freshness Protocol
+
+One pre-diagnosis digest authorizes the turn:
+
+1. Require `current == parent embedded` and pin that digest as `approved`.
+2. Run diagnosis and the foreground build from `adapters/nautilus`.
+3. Recompute and require `post-build == approved` before invoking a reporter.
+4. Require the fresh reporter's embedded digest to equal `approved`.
+5. Pass `approved` into the separate decider.
+6. As the decider's first action, require
+   `approved == decider embedded == current` before configuration, stage logging,
+   runtime creation, trials, or `turn`.
+
+This closes mutations observable at each validation boundary. It does not claim
+atomicity after the decider's final read; a repository-wide writer lock would be
+required to remove that final TOCTOU residual.
+
+## Coverage Proof
+
+Do not trust the inventory merely because its own tests are green. Compare it to
+independent evidence:
+
+- Cargo's generated dependency file for repository-local `ls-sdk`/`ls-core`
+  source inputs;
+- `ls-core` build-script output for rebuild-watched embedded metadata;
+- explicit checks for manifests, lockfile, and toolchain inputs those oracles do
+  not own.
+
+Ship permanent falsifiers: a synthetic undeclared `crates/new/src/lib.rs` and a
+synthetic undeclared build-script data path must make the coverage checker report
+the gap. Mutation tests must also flip one declared class at a time and prove that
+the digest moves, while adapter/calendar/root-lock/generated-output mutations stay
+equal as negative controls.
 
 ## Why This Matters
 
-Any anti-stale mechanism whose two hashes are computed by non-shared code is only
-as trustworthy as the hand-maintained agreement between them. Share the source and
-parity is **structural**, not conventional: the same walk order, the same NUL
-separators, the same byte reads, by construction. A one-byte change in any hashed
-file moves both hashes together; an unchanged tree yields identical hashes on every
-platform run. This makes "which binary did I actually build?" a decidable question
-**for the inputs the fingerprint hashes** — over that set, path confusion,
-`CARGO_TARGET_DIR` redirection, or a leftover binary can only cause a spurious
-*halt* (false-stale), never a false *green*.
+Build/runtime parity is only meaningful over the real declared input boundary.
+Sharing an algorithm prevents implementation drift; sharing a typed inventory
+also prevents scope drift. Independent Cargo/build-script evidence then protects
+the inventory itself from becoming a confident but incomplete list.
 
-**Scope that claim to the hashed input set; it does not generalise past it.**
-`compute_lab_fingerprint` is called with `lab/src` and `lab/Cargo.toml`
-(`build.rs:22`) and hashes nothing else. But `lab/Cargo.toml` carries **path
-dependencies** on `nautilus-ls`, `ls-sdk`, and `ls-core` (`lab/Cargo.toml:38-40`),
-and only the manifest text is hashed — never those crates' sources. Cargo's own
-dep-info records what the fingerprint cannot: `lab-research.d` references
-`crates/ls-sdk/src` 49 times and `crates/ls-core/src` 21 times. So a lab binary
-built *before* a `crates/ls-core` or `crates/ls-sdk` change recomputes a
-**matching** fingerprint while running old SDK code — a false green on exactly the
-cross-workspace axis, which is also the axis the root workspace's `cargo test`
-cannot see (see
-[`cross-workspace-gate-blind-spot-sdk-preflight-changes-redden-adapter`](../workflow-issues/cross-workspace-gate-blind-spot-sdk-preflight-changes-redden-adapter.md)).
-
-The general rule: an embedded fingerprint certifies **parity over what it hashed**,
-nothing wider. Before relying on one as an anti-stale guarantee, read the argument
-list at its call site and compare it against the binary's real dependency set —
-`target/debug/<name>.d` is that set, already written down. Where the two disagree,
-the gap is precisely where a false green lives. This is why
-`session-morning.sh`'s preflight takes its source set from cargo's dep-info instead
-of extending this fingerprint to `nautilus-ls`, and it is the same failure shape as
-a guard trusting a claim its upstream reported — see
-[`first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual`](../workflow-issues/first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual.md).
-
-Note the intended two-build cost for a code turn: the orchestrator's own parent
-self-check halts as stale until the operator rebuilds the parent, and it then does
-a second foreground build for the fresh child it actually runs the flip in. That is
-by design, not the gate misfiring.
-
-## When to Apply
-
-Any time a value must be identical across the build/run-time boundary and is
-otherwise produced by two separately-compiled code paths — build fingerprints,
-embedded schema hashes, generated-vs-checked-in parity guards. Reach for a shared
-`include!`d core rather than trusting two hand-kept implementations to stay in
-lockstep. Do NOT put the shared file inside the directory it hashes.
-
-## Examples
-
-Layout (`adapters/nautilus/lab/`):
-
-```
-fingerprint_core.rs      # shared: fn compute_lab_fingerprint(src_dir, cargo_toml) -> io::Result<String>
-build.rs                 # use sha2::{Digest, Sha256}; include!("fingerprint_core.rs");
-src/fingerprint.rs        # use sha2::{Digest, Sha256}; include!("../fingerprint_core.rs");
-```
-
-`build.rs`:
-
-```rust
-use sha2::{Digest, Sha256};
-include!("fingerprint_core.rs");
-
-fn main() {
-    let root = std::env::var("CARGO_MANIFEST_DIR").expect("set for build scripts");
-    let root = std::path::Path::new(&root);
-    let fp = compute_lab_fingerprint(&root.join("src"), &root.join("Cargo.toml")).unwrap();
-    println!("cargo:rustc-env=LAB_SRC_FINGERPRINT={fp}");
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=fingerprint_core.rs");
-    println!("cargo:rerun-if-changed=build.rs");
-}
-```
-
-`src/fingerprint.rs`:
-
-```rust
-use sha2::{Digest, Sha256};
-include!("../fingerprint_core.rs");
-
-pub const EMBEDDED: &str = env!("LAB_SRC_FINGERPRINT");
-
-pub fn recompute_from_dir(src_dir: &Path, cargo_toml: &Path) -> std::io::Result<String> {
-    compute_lab_fingerprint(src_dir, cargo_toml)
-}
-```
-
-The parity test that would catch any drift:
-
-```rust
-#[test]
-fn recompute_from_the_current_tree_equals_embedded() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let live = recompute_from_dir(&root.join("src"), &root.join("Cargo.toml")).unwrap();
-    assert_eq!(live, EMBEDDED); // holds only because both call the SAME include!d fn
-}
-```
+Apply this pattern whenever separately compiled build and runtime code must agree
+on a repository-derived identity, especially when local path dependencies or
+build-time embedded data can affect the resulting binary.
