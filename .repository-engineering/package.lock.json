@@ -83,7 +83,7 @@
     "dependency_lock": {
       "schema_version": "v0",
       "path": "Cargo.lock",
-      "sha256": "sha256:906e2d0ea2adbd8018f87bd3cedd9bdfa375a94c870757fdcd19b061edb40139",
+      "sha256": "sha256:bf6955ba2adf28872a284f7ce59e6f9dbbb0ea4e78864b543321b8ca06f9dd1e",
       "media_type": "application/toml"
     },
     "workflow_pins": [
