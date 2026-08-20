@@ -547,14 +547,25 @@ mod catalog_primitives {
     use super::*;
     use nautilus_core::UnixNanos;
     use nautilus_ls::ingest::{
-        delete_bar_series, kst_to_unix_nanos, read_all_bars, read_bars_scoped, write_bars,
+        delete_bar_series, kst_to_unix_nanos, read_all_bars, read_bars_scoped,
+        read_daily_session_dates, write_bars,
     };
     use nautilus_ls::rules::KRX_REGULAR_CLOSE;
     use nautilus_model::data::{Bar, BarType};
     use nautilus_model::types::{Price, Quantity};
 
     fn daily_bar(bar_type: BarType, date: NaiveDate, close: i64) -> Bar {
-        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        daily_bar_with_init(bar_type, date, date, close)
+    }
+
+    fn daily_bar_with_init(
+        bar_type: BarType,
+        event_date: NaiveDate,
+        init_date: NaiveDate,
+        close: i64,
+    ) -> Bar {
+        let ts_event = kst_to_unix_nanos(event_date, KRX_REGULAR_CLOSE).unwrap();
+        let ts_init = kst_to_unix_nanos(init_date, KRX_REGULAR_CLOSE).unwrap();
         Bar::new(
             bar_type,
             Price::from((close - 5).to_string().as_str()),
@@ -562,8 +573,8 @@ mod catalog_primitives {
             Price::from((close - 10).to_string().as_str()),
             Price::from(close.to_string().as_str()),
             Quantity::from(1000),
-            ts,
-            ts,
+            ts_event,
+            ts_init,
         )
     }
 
@@ -580,6 +591,89 @@ mod catalog_primitives {
             ts,
             ts,
         )
+    }
+
+    #[tokio::test]
+    async fn daily_session_dates_deduplicate_symbols_and_exclude_minute_only_dates() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let samsung = InstrumentId::from("005930.XKRX");
+        let hynix = InstrumentId::from("000660.XKRX");
+        let samsung_daily = BarKind::Daily.bar_type(samsung).unwrap();
+        let samsung_minute = BarKind::Minute(1).bar_type(samsung).unwrap();
+        let hynix_daily = BarKind::Daily.bar_type(hynix).unwrap();
+
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar_with_init(
+                    samsung_daily,
+                    ymd(2024, 1, 3),
+                    ymd(2024, 1, 2),
+                    60000,
+                ),
+                daily_bar(samsung_daily, ymd(2024, 1, 4), 60500),
+            ],
+        )
+        .await
+        .unwrap();
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar(hynix_daily, ymd(2024, 1, 4), 130000),
+                daily_bar(hynix_daily, ymd(2024, 1, 5), 131000),
+            ],
+        )
+        .await
+        .unwrap();
+        write_bars(
+            &catalog,
+            vec![minute_bar(samsung_minute, ymd(2024, 1, 8), 9, 1, 61000)],
+        )
+        .await
+        .unwrap();
+
+        // Make the unrelated intraday series unreadable. The daily-only probe
+        // must select identifiers before decoding parquet, so this corruption
+        // cannot poison an otherwise readable daily coverage result.
+        let bars_root = catalog.join("data").join("bars");
+        let minute_dir = std::fs::read_dir(&bars_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains("-1-MINUTE-"))
+            })
+            .expect("minute series directory");
+        let minute_file = std::fs::read_dir(minute_dir)
+            .unwrap()
+            .next()
+            .expect("minute parquet file")
+            .unwrap()
+            .path();
+        std::fs::write(minute_file, b"not parquet").unwrap();
+
+        assert_eq!(
+            read_daily_session_dates(&catalog).await.unwrap(),
+            vec![ymd(2024, 1, 3), ymd(2024, 1, 4), ymd(2024, 1, 5)]
+        );
+    }
+
+    #[tokio::test]
+    async fn daily_session_dates_are_empty_for_a_minute_only_catalog() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let samsung = InstrumentId::from("005930.XKRX");
+        let samsung_minute = BarKind::Minute(1).bar_type(samsung).unwrap();
+
+        write_bars(
+            &catalog,
+            vec![minute_bar(samsung_minute, ymd(2024, 1, 8), 9, 1, 61000)],
+        )
+        .await
+        .unwrap();
+
+        assert!(read_daily_session_dates(&catalog).await.unwrap().is_empty());
     }
 
     #[tokio::test]

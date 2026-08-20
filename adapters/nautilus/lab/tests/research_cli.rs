@@ -3472,8 +3472,16 @@ mod report_sample {
                 "report_sample must not reach {banned:?} — the turn stops at the verdict (KTD7)"
             );
         }
-        // The one catalog call it DOES make is a read.
-        assert!(body.contains("read_all_bars"), "the supply probe reads coverage");
+        // The one catalog call it DOES make is a daily-only read. A full catalog
+        // decode makes the report's supply probe scale with unrelated intraday data.
+        assert!(
+            body.contains("read_daily_session_dates"),
+            "the supply probe reads exact daily coverage"
+        );
+        assert!(
+            !body.contains("read_all_bars"),
+            "the supply probe must not decode every bar series"
+        );
     }
 
     /// Dispatch: `report sample` is reachable through the compiled bin, and the
