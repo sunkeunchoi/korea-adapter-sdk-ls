@@ -18,7 +18,7 @@ pub mod budget;
 pub mod checkpoint;
 pub mod pacer;
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -3474,6 +3474,39 @@ pub async fn write_instruments(
     })
     .await
     .map_err(|e| AdapterError::Ingest(format!("catalog write_instruments task panicked: {e}")))?
+}
+
+/// Read the distinct KST session dates represented by daily-bar series.
+///
+/// This keeps coverage probes from decoding unrelated intraday series while
+/// preserving exact session dates for multi-session parquet files.
+pub async fn read_daily_session_dates(catalog_path: &Path) -> AdapterResult<Vec<NaiveDate>> {
+    let path = catalog_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
+        let daily_identifiers: Vec<String> = catalog
+            .list_instruments("bars")
+            .map_err(|e| AdapterError::Ingest(format!("catalog list bar series: {e}")))?
+            .into_iter()
+            .filter(|identifier| {
+                identifier
+                    .parse::<BarType>()
+                    .is_ok_and(|bar_type| bar_type.spec().aggregation == BarAggregation::Day)
+            })
+            .collect();
+        if daily_identifiers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dates: BTreeSet<NaiveDate> = catalog
+            .bars(Some(daily_identifiers), None, None)
+            .map_err(|e| AdapterError::Ingest(format!("catalog daily-bar read: {e}")))?
+            .into_iter()
+            .map(|bar| kst_date_of(bar.ts_event))
+            .collect();
+        Ok(dates.into_iter().collect())
+    })
+    .await
+    .map_err(|e| AdapterError::Ingest(format!("catalog daily-bar read task panicked: {e}")))?
 }
 
 /// Read all bars back from the catalog on a blocking thread (round-trip helper for

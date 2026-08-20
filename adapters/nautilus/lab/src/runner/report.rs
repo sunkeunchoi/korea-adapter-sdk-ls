@@ -1124,13 +1124,8 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     let (available_sessions, in_range_sessions, first_session, last_session) = if catalog_path
         .exists()
     {
-        match nautilus_ls::ingest::read_all_bars(&catalog_path).await {
-            Ok(bars) => {
-                use crate::runner::backtest::{is_daily, kst_date_of as bar_date};
-                let mut dates: Vec<NaiveDate> =
-                    bars.iter().filter(|b| is_daily(b)).map(bar_date).collect();
-                dates.sort_unstable();
-                dates.dedup();
+        match nautilus_ls::ingest::read_daily_session_dates(&catalog_path).await {
+            Ok(dates) => {
                 // Sessions inside the SOURCE RUN's own data range — the
                 // denominator of the trades-per-session rate below.
                 let start = NaiveDate::parse_from_str(manifest.data_range.start.trim(), "%Y%m%d");
