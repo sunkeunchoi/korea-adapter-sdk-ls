@@ -29,3 +29,8 @@ declared verification bar.
   parallel" is a failure mode, not a repository-layout detail. It is also why
   the Consuming Project runs **one** strategy lineage at a time rather than
   several in parallel (see `adapters/nautilus/CONTEXT.md`).
+- **Do not grow a second data platform through convenience.** The public KRX
+  Open API leg admitted for issue #255 stops at instrument eligibility. It must
+  never expand into quotes, financials, or news; any such use needs a separate,
+  explicit source-admission decision. This restriction applies to the Open API
+  leg, not to #255's separately governed licensed-sample procurement.
