@@ -2599,6 +2599,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ls-metadata"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+]
+
+[[package]]
 name = "ls-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2865,6 +2876,7 @@ dependencies = [
  "chrono-tz",
  "futures",
  "ls-core",
+ "ls-metadata",
  "ls-sdk",
  "ls-sdk-test-support",
  "nautilus-backtest",
@@ -2875,12 +2887,14 @@ dependencies = [
  "nautilus-model",
  "nautilus-persistence",
  "nautilus-trading",
+ "proc-macro2",
  "quick-xml",
  "reqwest",
  "rust_decimal",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
  "thiserror",
  "tokio",

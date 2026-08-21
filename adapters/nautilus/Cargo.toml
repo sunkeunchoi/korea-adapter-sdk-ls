@@ -112,8 +112,11 @@ quick-xml = "0.36"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "query"] }
 
 [dev-dependencies]
+ls-metadata = { path = "../../crates/ls-metadata" }
 ls-sdk-test-support = { path = "../../crates/ls-sdk-test-support" }
 tempfile = "3"
+proc-macro2 = "1"
+syn = { version = "2", features = ["full", "visit"] }
 # Strategy macros (`nautilus_strategy!`, `StrategyCore`) for the throwaway backtest
 # placeholder strategy in tests/backtest_e2e.rs. Test-only, never shipped (KTD3 scope).
 nautilus-trading = "=0.60.0"
