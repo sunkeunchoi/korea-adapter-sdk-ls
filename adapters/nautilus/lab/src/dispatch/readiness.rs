@@ -14,8 +14,8 @@
 //! (R11); the wiring into the gate's check list lives in [`crate::dispatch::checks`].
 //!
 //! Every "safe" verdict fails toward not-safe: a dedup hit on a real emission, a
-//! teardown needing more than one retry, a twin-failed session, or `.tmp-` residue reds the
-//! window regardless of the numeric thresholds.
+//! teardown needing more than one retry, a twin-failed session, or `.tmp-` residue linked to
+//! a consumed live dispatch reds the window regardless of the numeric thresholds.
 
 use std::path::Path;
 
@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::artifacts::data_quality::DataQualityReport;
 use crate::artifacts::{aborted_runs, list_runs, DATA_QUALITY_FILE};
 use crate::dispatch::chain::{ChainRecord, RecordKind};
+use crate::dispatch::ladder::consumed_run_ids;
 use crate::dispatch::prereg::{ExceedanceThresholds, PreRegistration};
 use crate::dispatch::tracking::{read_report, TwinStatus};
 use crate::runner::research::read_manifest;
@@ -77,13 +78,13 @@ pub struct SessionExceedance {
     pub deferrals: u64,
 }
 
-/// The exceedance catalog over the trailing K live-lane sessions plus registry-wide `.tmp-`
-/// residue (R14(f)).
+/// The exceedance catalog over the trailing K live-lane sessions plus `.tmp-` residue linked
+/// to consumed live dispatches (R14(f)).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExceedanceCatalog {
     /// One entry per trailing live-lane session (oldest → newest).
     pub sessions: Vec<SessionExceedance>,
-    /// Aborted `.tmp-` staging directories in the registry (R14(f) residue).
+    /// Aborted `.tmp-` staging directories linked to consumed live dispatches (R14(f)).
     pub aborted_runs: u64,
 }
 
@@ -141,6 +142,7 @@ fn read_dq(data_home: &Path, run_id: &str) -> Option<DataQualityReport> {
 /// Build the exceedance catalog over the trailing K live-lane sessions (read-only, KTD8).
 pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) -> ExceedanceCatalog {
     let deferrals = deferrals_by_dispatch(chain_records);
+    let consumed = consumed_run_ids(chain_records);
     let mut sessions = Vec::new();
     for run_id in qualifying_window(data_home, k) {
         let Ok(manifest) = read_manifest(data_home, &run_id) else { continue };
@@ -168,13 +170,15 @@ pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) 
             deferrals: deferral_count,
         });
     }
-    ExceedanceCatalog { sessions, aborted_runs: aborted_runs(data_home).len() as u64 }
+    let live_residue = aborted_runs(data_home).into_iter().filter(|run_id| consumed.contains(run_id)).count();
+    ExceedanceCatalog { sessions, aborted_runs: live_residue as u64 }
 }
 
 /// The reducer's verdict over an exceedance catalog (R11). Red when any pre-registered
 /// numeric threshold is exceeded OR any safety signal is present (a dedup hit on a real
 /// emission, a teardown needing more than one retry, a twin-failed session, a hard-stopped
-/// node, or `.tmp-` residue) — every safe verdict fails toward not-safe. Otherwise green.
+/// node, or consumed-live `.tmp-` residue) — every safe verdict fails toward not-safe.
+/// Otherwise green.
 pub fn readiness_verdict(catalog: &ExceedanceCatalog, thresholds: &ExceedanceThresholds) -> ReadinessVerdict {
     let over = |total: u64, limit: Option<u32>| limit.is_some_and(|l| total > l as u64);
     let threshold_tripped = over(catalog.sum(|s| s.reconcile_advised), thresholds.max_reconcile_advised)
@@ -237,6 +241,7 @@ mod tests {
     use crate::artifacts::manifest::{universe_hash, DataRange, DispatchLink, Manifest};
     use crate::artifacts::performance::PerformanceReport;
     use crate::artifacts::{RunSource, RunWriter};
+    use crate::dispatch::chain::{Consumption, DispatchChain, DispatchOutcome, SessionDispatch};
     use crate::params::OrbParams;
     use tempfile::TempDir;
 
@@ -320,14 +325,68 @@ mod tests {
     }
 
     #[test]
-    fn an_aborted_tmp_run_pushes_the_verdict_red() {
+    fn consumed_live_residue_pushes_the_verdict_red() {
         let tmp = TempDir::new().unwrap();
         stage_run(tmp.path(), "20260716T010000Z-live-orb-v30", Some("live"), clean_dq());
         stage_run(tmp.path(), "20260716T020000Z-live-orb-v30", Some("live"), clean_dq());
-        // Leave a .tmp- staging dir (an aborted run, R14(f)).
-        std::fs::create_dir_all(tmp.path().join("runs").join(".tmp-20260716T030000Z-live-orb-v30")).unwrap();
-        let (v, _) = compute_readiness(tmp.path(), &[], Some(&prereg(2, None)));
-        assert_eq!(v, ReadinessVerdict::Red, "an aborted .tmp- run reds the window");
+        let live_run = "20260716T030000Z-live-orb-v30";
+        std::fs::create_dir_all(tmp.path().join("runs").join(format!(".tmp-{live_run}"))).unwrap();
+
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-16T03:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+        let dispatch = chain
+            .append(
+                now,
+                1,
+                1,
+                None,
+                RecordKind::SessionDispatch(SessionDispatch {
+                    outcome: DispatchOutcome::Green,
+                    checks: Vec::new(),
+                    deferrals: Vec::new(),
+                    readiness: None,
+                    unknown_override: None,
+                }),
+            )
+            .unwrap();
+        chain
+            .append(
+                now,
+                1,
+                1,
+                None,
+                RecordKind::Consumption(Consumption {
+                    dispatch_record_id: dispatch.body.record_id,
+                    run_id: Some(live_run.into()),
+                }),
+            )
+            .unwrap();
+        let records = chain.load().records;
+
+        let (v, catalog) = compute_readiness(tmp.path(), &records, Some(&prereg(2, None)));
+        assert_eq!(catalog.aborted_runs, 1, "consumed live residue enters the readiness catalog");
+        assert_eq!(v, ReadinessVerdict::Red, "consumed live residue reds the window");
+    }
+
+    #[test]
+    fn backtest_residue_stays_visible_without_redding_readiness() {
+        let tmp = TempDir::new().unwrap();
+        stage_run(tmp.path(), "20260716T010000Z-live-orb-v30", Some("live"), clean_dq());
+        stage_run(tmp.path(), "20260716T020000Z-live-orb-v30", Some("live"), clean_dq());
+        let backtest_run = "20260716T030000Z-backtest-daily-momentum-v1";
+        std::fs::create_dir_all(tmp.path().join("runs").join(format!(".tmp-{backtest_run}"))).unwrap();
+
+        assert_eq!(
+            crate::artifacts::aborted_runs(tmp.path()),
+            vec![backtest_run.to_string()],
+            "research staging remains visible to artifact diagnostics"
+        );
+        let (v, catalog) = compute_readiness(tmp.path(), &[], Some(&prereg(2, None)));
+        assert_eq!(catalog.aborted_runs, 0, "unconsumed backtest residue is not live R14(f) residue");
+        assert_eq!(v, ReadinessVerdict::Green, "backtest residue cannot red a full clean live window");
     }
 
     #[test]

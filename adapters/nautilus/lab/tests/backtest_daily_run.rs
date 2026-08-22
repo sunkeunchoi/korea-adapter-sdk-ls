@@ -22,7 +22,7 @@ use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{build_daily_bar, write_bars, write_instruments, BarKind};
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
-use nautilus_ls_lab::agent::envelope::{Decision, DecisionEnvelope};
+use nautilus_ls_lab::agent::envelope::{self as envelope, Decision, DecisionEnvelope};
 use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::artifacts::manifest::Manifest;
 use nautilus_ls_lab::artifacts::observation::RunObservation;
@@ -30,7 +30,8 @@ use nautilus_ls_lab::artifacts::performance::{
     ClientOrderEntryRiskLedger, EntryRisk, PerformanceReport,
 };
 use nautilus_ls_lab::artifacts::{
-    aborted_runs, list_runs, MANIFEST_FILE, OBSERVATION_FILE, PERFORMANCE_FILE,
+    aborted_runs, list_runs, run_id, RunSource, DECISIONS_FILE, MANIFEST_FILE, OBSERVATION_FILE,
+    PERFORMANCE_FILE,
 };
 use nautilus_ls_lab::params_daily::{DAILY_STRATEGY_ID, FROZEN_ATR_WINDOW_SESSIONS};
 use nautilus_ls_lab::strategy::daily::PLACEHOLDER_RANKING_SIGNAL;
@@ -1406,6 +1407,15 @@ async fn compiled_bin_lands_a_finalized_run_holding_across_sessions() {
     assert_eq!(manifest.strategy_id, DAILY_STRATEGY_ID);
     assert!(runs[0].contains(DAILY_STRATEGY_ID), "the run id carries the discriminator: {}", runs[0]);
     assert!(manifest.daily_params.is_some(), "the daily terms are carried");
+    let decision_text = std::fs::read_to_string(run_dir.join(DECISIONS_FILE)).unwrap();
+    let decisions = envelope::from_jsonl(&decision_text).unwrap();
+    assert!(!decisions.is_empty(), "the finalized decision stream is non-empty");
+    let line_order: Vec<_> = decision_text
+        .lines()
+        .map(|line| serde_json::from_str::<DecisionEnvelope>(line).unwrap().envelope_id)
+        .collect();
+    let parsed_order: Vec<_> = decisions.iter().map(|decision| decision.envelope_id).collect();
+    assert_eq!(parsed_order, line_order, "the JSONL parser preserves append order");
     // The ATR bridge reached the manifest: `OrbParams::atr_window` defaults to 14, and an
     // unbridged run would record that and refuse every entry as `atr_unavailable`.
     assert_eq!(
@@ -1474,9 +1484,27 @@ async fn mid_run_catalog_change_aborts_with_no_residue() {
     let dir = tempdir().unwrap();
     build_daily_fixture(dir.path(), &HashMap::new()).await;
     let catalog = dir.path().join("catalog");
+    let start = Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
+    let config = cfg(dir.path(), 2);
+    let staged_run_id = run_id(
+        start,
+        RunSource::Backtest,
+        DAILY_STRATEGY_ID,
+        config.daily.strategy_version,
+    );
+    let staged_decisions = dir
+        .path()
+        .join("runs")
+        .join(format!(".tmp-{staged_run_id}"))
+        .join(DECISIONS_FILE);
 
     // Append an extra in-range daily bar after the engine run, before the re-check.
     let mutate = async {
+        let streamed = std::fs::read_to_string(&staged_decisions).unwrap();
+        assert!(
+            !envelope::from_jsonl(&streamed).unwrap().is_empty(),
+            "decision envelopes reach staging before finalization"
+        );
         write_daily_series(
             &catalog,
             "005930.XKRX",
@@ -1485,11 +1513,26 @@ async fn mid_run_catalog_change_aborts_with_no_residue() {
         .await;
     };
 
-    let start = Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
-    let err = run_inner(cfg(dir.path(), 2), start, mutate).await.unwrap_err();
+    let err = run_inner(config, start, mutate).await.unwrap_err();
     assert!(err.to_string().contains("catalog changed in-range"), "err: {err}");
     assert!(list_runs(dir.path()).is_empty(), "no finalized run");
     assert!(aborted_runs(dir.path()).is_empty(), "no staging residue");
+}
+
+/// *(library)* A malformed range is discovered after the run writer opens staging but
+/// before the blocking engine starts, so it is a graceful refusal rather than an abort.
+#[tokio::test]
+async fn pre_engine_parse_refusal_removes_staging() {
+    let dir = tempdir().unwrap();
+    build_daily_fixture(dir.path(), &HashMap::new()).await;
+    let mut config = cfg(dir.path(), 2);
+    config.range.start = "not-a-date".to_string();
+
+    let start = Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
+    let err = run(config, start).await.unwrap_err();
+    assert!(err.to_string().contains("input contains invalid characters"), "err: {err}");
+    assert!(list_runs(dir.path()).is_empty(), "no finalized run");
+    assert!(aborted_runs(dir.path()).is_empty(), "refusal removes staging");
 }
 
 /// *(library)* The run refuses to start while the ingest advisory lock is held, and the

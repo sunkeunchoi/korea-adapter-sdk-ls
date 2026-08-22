@@ -15,12 +15,16 @@ pub mod manifest;
 pub mod observation;
 pub mod performance;
 
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::envelope::{to_scrubbed_jsonl_line, DecisionEnvelope};
+use crate::agent::sink::DecisionSink;
 use data_quality::DataQualityReport;
 use manifest::Manifest;
 use observation::RunObservation;
@@ -83,7 +87,15 @@ pub struct RunWriter {
     run_id: String,
     tmp_dir: PathBuf,
     final_dir: PathBuf,
+    decisions: Mutex<DecisionOutput>,
     finalized: bool,
+}
+
+#[derive(Debug)]
+enum DecisionOutput {
+    Unset,
+    Streaming(DecisionSink),
+    Written,
 }
 
 impl RunWriter {
@@ -119,6 +131,7 @@ impl RunWriter {
             run_id: run_id.to_string(),
             tmp_dir,
             final_dir,
+            decisions: Mutex::new(DecisionOutput::Unset),
             finalized: false,
         })
     }
@@ -152,6 +165,25 @@ impl RunWriter {
         self.write_json(DATA_QUALITY_FILE, &scrubbed)
     }
 
+    /// Open this run's bounded decision stream. The writer retains ownership of the
+    /// destination and returns a shared clone to emitters so finalization can close it.
+    pub fn stream_decisions(&self) -> anyhow::Result<DecisionSink> {
+        let mut output = self.decisions.lock().unwrap_or_else(|e| e.into_inner());
+        match &*output {
+            DecisionOutput::Streaming(_) => {
+                anyhow::bail!("the decision stream for run {} is already open", self.run_id)
+            }
+            DecisionOutput::Written => {
+                anyhow::bail!("decisions for run {} were already written", self.run_id)
+            }
+            DecisionOutput::Unset => {}
+        }
+        let sink = DecisionSink::streaming(&self.tmp_dir.join(DECISIONS_FILE))?;
+        let emitter = sink.clone();
+        *output = DecisionOutput::Streaming(sink);
+        Ok(emitter)
+    }
+
     /// Write the per-decision envelope stream as JSONL (`decisions.jsonl`),
     /// scrubbing each envelope's free-text fields at write time via the shared
     /// [`to_scrubbed_jsonl_line`] seam (R9 — the same free-text-only
@@ -160,11 +192,31 @@ impl RunWriter {
     /// descriptions) is compile-time literals from our own code, scrubbed
     /// anyway for consistency.
     pub fn write_decisions(&self, envelopes: &[DecisionEnvelope]) -> anyhow::Result<()> {
-        let mut text = String::new();
-        for e in envelopes {
-            text.push_str(&to_scrubbed_jsonl_line(e)?);
+        let mut output = self.decisions.lock().unwrap_or_else(|e| e.into_inner());
+        match &*output {
+            DecisionOutput::Streaming(_) => {
+                anyhow::bail!("the decision stream for run {} is already open", self.run_id)
+            }
+            DecisionOutput::Written => {
+                anyhow::bail!("decisions for run {} were already written", self.run_id)
+            }
+            DecisionOutput::Unset => {}
         }
-        std::fs::write(self.tmp_dir.join(DECISIONS_FILE), text)?;
+        let mut writer = BufWriter::new(File::create(self.tmp_dir.join(DECISIONS_FILE))?);
+        for e in envelopes {
+            writer.write_all(to_scrubbed_jsonl_line(e)?.as_bytes())?;
+        }
+        writer.flush()?;
+        *output = DecisionOutput::Written;
+        Ok(())
+    }
+
+    /// Remove a staging directory for a graceful pre-finalization refusal. Crashes and
+    /// unexpected drops still leave their staging directory as the aborted-run marker.
+    pub(crate) fn discard(mut self) -> anyhow::Result<()> {
+        self.finish_decisions()?;
+        std::fs::remove_dir_all(&self.tmp_dir)?;
+        self.finalized = true;
         Ok(())
     }
 
@@ -175,6 +227,7 @@ impl RunWriter {
     ///
     /// Errors if the finalized run already exists (a race) or the rename fails.
     pub fn finalize(mut self) -> anyhow::Result<PathBuf> {
+        self.finish_decisions()?;
         if self.final_dir.exists() {
             anyhow::bail!("run {} already exists — the registry is append-only", self.run_id);
         }
@@ -186,6 +239,14 @@ impl RunWriter {
     fn write_json<T: Serialize>(&self, name: &str, value: &T) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(value)?;
         std::fs::write(self.tmp_dir.join(name), json)?;
+        Ok(())
+    }
+
+    fn finish_decisions(&self) -> anyhow::Result<()> {
+        let output = self.decisions.lock().unwrap_or_else(|e| e.into_inner());
+        if let DecisionOutput::Streaming(sink) = &*output {
+            sink.finish()?;
+        }
         Ok(())
     }
 }
