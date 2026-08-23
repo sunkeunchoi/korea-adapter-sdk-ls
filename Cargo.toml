@@ -8,7 +8,10 @@ members = [
     "crates/ls-trackers",
     "crates/ls-repository-engineering",
 ]
-exclude = ["tools/repository-engineering-runtime"]
+exclude = [
+    "tools/orca-runner-proof",
+    "tools/repository-engineering-runtime",
+]
 resolver = "2"
 
 [workspace.package]

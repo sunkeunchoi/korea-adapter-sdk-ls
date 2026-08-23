@@ -90,7 +90,7 @@
       {
         "schema_version": "v0",
         "path": ".github/workflows/repository-engineering-check.yml",
-        "sha256": "sha256:413a287bb5dbe0b7f9ffc0b9208fa3ba4ff027791de08ae630972050b2c142f1",
+        "sha256": "sha256:98d114c733a419b94476bda7a10de60303b05717a174d862c94faa3540f46673",
         "media_type": "application/yaml"
       }
     ]
