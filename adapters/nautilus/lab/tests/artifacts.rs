@@ -292,6 +292,76 @@ fn write_decisions_scrubs_free_text_on_disk() {
     assert_eq!(back.len(), 1, "the scrubbed line still parses");
 }
 
+/// A long-running daily run writes each decision into the staging directory as it is
+/// emitted, rather than retaining the complete stream until finalization. The staging
+/// file remains behind the atomic directory boundary until `finalize` renames the run.
+#[test]
+fn decision_stream_appends_incrementally_before_finalize() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let id = fixed_run_id(RunSource::Backtest, 8);
+    let writer = RunWriter::new(data, &id).unwrap();
+    let sink = writer.stream_decisions().unwrap();
+    let staging_path = data.join("runs").join(format!(".tmp-{id}")).join(DECISIONS_FILE);
+
+    let mut first = telemetry_envelope();
+    first.trigger = DecisionTrigger::Manual {
+        reason: "first probe on account 20187511401".to_string(),
+    };
+    sink.emit(first);
+    sink.flush().unwrap();
+
+    let first_contents = std::fs::read_to_string(&staging_path).unwrap();
+    assert_eq!(envelope::from_jsonl(&first_contents).unwrap().len(), 1);
+    assert!(!first_contents.contains("20187511401"), "the streamed line is scrubbed");
+
+    sink.emit(telemetry_envelope());
+    sink.finish().unwrap();
+    let staged_contents = std::fs::read_to_string(&staging_path).unwrap();
+    assert_eq!(envelope::from_jsonl(&staged_contents).unwrap().len(), 2);
+
+    let run_dir = writer.finalize().unwrap();
+    assert!(!staging_path.exists(), "the staging path moved atomically");
+    let finalized_contents = std::fs::read_to_string(run_dir.join(DECISIONS_FILE)).unwrap();
+    assert_eq!(finalized_contents, staged_contents, "finalization does not rebuild the stream");
+}
+
+#[test]
+fn run_writer_rejects_a_second_or_mixed_decision_destination() {
+    let dir = tempdir().unwrap();
+    let id = fixed_run_id(RunSource::Backtest, 9);
+    let writer = RunWriter::new(dir.path(), &id).unwrap();
+    let _sink = writer.stream_decisions().unwrap();
+
+    let duplicate = writer.stream_decisions().unwrap_err();
+    assert!(duplicate.to_string().contains("already open"), "err: {duplicate}");
+    let mixed = writer.write_decisions(&[telemetry_envelope()]).unwrap_err();
+    assert!(mixed.to_string().contains("already open"), "err: {mixed}");
+
+    let other_id = fixed_run_id(RunSource::Backtest, 10);
+    let other = RunWriter::new(dir.path(), &other_id).unwrap();
+    other.write_decisions(&[telemetry_envelope()]).unwrap();
+    let mixed = other.stream_decisions().unwrap_err();
+    assert!(mixed.to_string().contains("already written"), "err: {mixed}");
+}
+
+#[test]
+fn finalize_closes_retained_decision_sink_clone() {
+    let dir = tempdir().unwrap();
+    let id = fixed_run_id(RunSource::Backtest, 11);
+    let writer = RunWriter::new(dir.path(), &id).unwrap();
+    let sink = writer.stream_decisions().unwrap();
+    sink.emit(telemetry_envelope());
+
+    let run_dir = writer.finalize().unwrap();
+    let decisions_path = run_dir.join(DECISIONS_FILE);
+    let finalized = std::fs::read(&decisions_path).unwrap();
+
+    sink.emit(telemetry_envelope());
+    assert!(sink.finish().unwrap_err().to_string().contains("stream was finished"));
+    assert_eq!(std::fs::read(decisions_path).unwrap(), finalized, "a retained clone cannot mutate the finalized stream");
+}
+
 /// U5 back-compat: a data-quality file written before the teardown-retries / dedup-hits
 /// fields existed still deserializes, and the absent fields read as absent (None), not
 /// zero — a real zero-retry live teardown records Some(0), distinct from "never ran".

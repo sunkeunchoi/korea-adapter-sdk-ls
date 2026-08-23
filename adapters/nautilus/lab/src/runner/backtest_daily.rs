@@ -55,7 +55,7 @@ use crate::artifacts::manifest::{
 };
 use crate::artifacts::observation::{ObservationParts, RunObservation};
 use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk, PerformanceReport};
-use crate::artifacts::RunWriter;
+use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::params::OrbParams;
 use crate::params_daily::DailyParams;
 use crate::runner::backtest::{build_candidates, is_daily, kst_date_of};
@@ -816,7 +816,10 @@ where
     F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
 {
     let (_catalog_path, _guard) = acquire_catalog_guard(&cfg.data_home)?;
-    Ok(run_daily_locked(cfg, sink, rank, make_strategy).await?.outcome)
+    run_daily_locked(cfg, sink, rank, make_strategy)
+        .await
+        .map(|locked| locked.outcome)
+        .map_err(DailyRunFailure::into_error)
 }
 
 /// Check the catalog exists and take the ingest advisory lock over it.
@@ -851,7 +854,7 @@ async fn run_daily_locked<S, R, F>(
     sink: DecisionSink,
     rank: R,
     make_strategy: F,
-) -> anyhow::Result<LockedDailyRun>
+) -> Result<LockedDailyRun, DailyRunFailure>
 where
     S: DailyPathStrategy
         + Strategy
@@ -864,13 +867,21 @@ where
     F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
 {
     let catalog_path = cfg.data_home.join("catalog");
-    let start_date = parse_date(&cfg.range.start)?;
-    let end_date = parse_date(&cfg.range.end)?;
-    let start_ns = kst_to_unix_nanos(start_date, midnight())?.as_u64();
-    let end_ns = kst_to_unix_nanos(end_date, end_of_day())?.as_u64();
+    let start_date = parse_date(&cfg.range.start).map_err(DailyRunFailure::Refused)?;
+    let end_date = parse_date(&cfg.range.end).map_err(DailyRunFailure::Refused)?;
+    let start_ns = kst_to_unix_nanos(start_date, midnight())
+        .map_err(|error| DailyRunFailure::Refused(error.into()))?
+        .as_u64();
+    let end_ns = kst_to_unix_nanos(end_date, end_of_day())
+        .map_err(|error| DailyRunFailure::Refused(error.into()))?
+        .as_u64();
 
-    let instruments = read_all_instruments(&catalog_path).await?;
-    let all_bars = read_all_bars(&catalog_path).await?;
+    let instruments = read_all_instruments(&catalog_path)
+        .await
+        .map_err(|error| DailyRunFailure::Refused(error.into()))?;
+    let all_bars = read_all_bars(&catalog_path)
+        .await
+        .map_err(|error| DailyRunFailure::Refused(error.into()))?;
 
     // The range-scoped catalog fingerprint at start. Taken here, before any engine work,
     // so the finalize re-check compares against the catalog the run actually read.
@@ -881,7 +892,7 @@ where
     let params = cfg.assembly_params();
     let starting_balance = cfg.starting_balance;
     let target_m = cfg.daily.target_m;
-    let outcome = tokio::task::spawn_blocking(move || {
+    let blocking = tokio::task::spawn_blocking(move || {
         run_daily_blocking(
             &instruments,
             &all_bars,
@@ -895,9 +906,33 @@ where
             make_strategy,
         )
     })
-    .await??;
+    .await;
+    let outcome = match blocking {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(error)) => return Err(DailyRunFailure::Aborted(error)),
+        Err(error) => {
+            return Err(DailyRunFailure::Aborted(anyhow::anyhow!(
+                "daily blocking task aborted: {error}"
+            )));
+        }
+    };
 
     Ok(LockedDailyRun { outcome, fingerprint_start, start_ns, end_ns })
+}
+
+/// Whether a failure occurred before the blocking engine started (a refusal) or after
+/// ownership crossed that boundary (an abort). Only refusals remove run staging.
+enum DailyRunFailure {
+    Refused(anyhow::Error),
+    Aborted(anyhow::Error),
+}
+
+impl DailyRunFailure {
+    fn into_error(self) -> anyhow::Error {
+        match self {
+            Self::Refused(error) | Self::Aborted(error) => error,
+        }
+    }
 }
 
 /// [`run_daily_locked`]'s output: the run plus the finalize re-check's inputs.
@@ -970,7 +1005,17 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     let data_range = cfg.range.clone();
     let daily_params = cfg.daily.clone();
     let starting_balance = cfg.starting_balance;
-    let sink = DecisionSink::new();
+    let expected_run_id = run_id(
+        start,
+        RunSource::Backtest,
+        &daily_params.strategy_id,
+        daily_params.strategy_version,
+    );
+    let writer = RunWriter::new(&data_home, &expected_run_id)?;
+    let sink = match writer.stream_decisions() {
+        Ok(sink) => sink,
+        Err(error) => return Err(discard_staging(writer, error)),
+    };
 
     // The R22 gate's input. A catalog with no checkpoint genuinely has no recorded shift
     // ledger, which `AdjustmentBasisShifts::none` states explicitly rather than implying.
@@ -984,25 +1029,38 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // The placeholder ranking signal (KTD6). It is named and marked, not scaffolding: the
     // signal that carries the hypothesis is turn one's act, and U6's observation refuses to
     // yield judgment arguments while the marker is set.
-    let locked =
-        run_daily_locked(cfg, sink.clone(), rank_by_placeholder_signal, make_strategy).await?;
+    let locked = run_daily_locked(
+        cfg,
+        sink.clone(),
+        rank_by_placeholder_signal,
+        make_strategy,
+    )
+    .await;
+    let (writer, locked) = resolve_locked_run(writer, locked)?;
 
     // Test hook: simulate any mid-run catalog mutation before the finalize re-check.
     before_finalize.await;
 
     // Re-check the fingerprint at finalize: a mid-run catalog mutation invalidates the run
-    // and leaves NO registry residue — the `RunWriter` below has not been constructed yet,
-    // so there is nothing partial to clean up.
-    let all_bars_end = read_all_bars(&catalog_path).await?;
+    // and leaves NO registry residue. The decision stream opened staging before selection,
+    // so this graceful refusal explicitly removes it; a crash still leaves the normal
+    // `.tmp-` aborted-run marker.
+    let all_bars_end = match read_all_bars(&catalog_path).await {
+        Ok(bars) => bars,
+        Err(error) => return Err(discard_staging(writer, error.into())),
+    };
     let fingerprint_end = range_fingerprint(&all_bars_end, locked.start_ns, locked.end_ns);
     if fingerprint_end != locked.fingerprint_start {
-        anyhow::bail!(
-            "catalog changed in-range during the daily run — aborting with no registry residue"
-        );
+        return Err(discard_staging(
+            writer,
+            anyhow::anyhow!(
+                "catalog changed in-range during the daily run — aborting with no registry residue"
+            ),
+        ));
     }
 
     finalize_daily_run(FinalizeDaily {
-        data_home: &data_home,
+        writer,
         started_utc: start,
         outcome: locked.outcome,
         fingerprint_start: locked.fingerprint_start,
@@ -1011,14 +1069,33 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         data_range,
         starting_balance,
         catalog_path: &catalog_path,
-        sink: &sink,
     })
+}
+
+fn resolve_locked_run(
+    writer: RunWriter,
+    result: Result<LockedDailyRun, DailyRunFailure>,
+) -> anyhow::Result<(RunWriter, LockedDailyRun)> {
+    match result {
+        Ok(locked) => Ok((writer, locked)),
+        Err(DailyRunFailure::Refused(error)) => Err(discard_staging(writer, error)),
+        Err(DailyRunFailure::Aborted(error)) => Err(error),
+    }
+}
+
+fn discard_staging(writer: RunWriter, error: anyhow::Error) -> anyhow::Error {
+    match writer.discard() {
+        Ok(()) => error,
+        Err(discard_error) => anyhow::anyhow!(
+            "{error}; additionally failed to remove the refused run's staging directory: {discard_error}"
+        ),
+    }
 }
 
 /// Everything [`finalize_daily_run`] needs. A struct rather than eleven positional
 /// arguments, matching [`crate::artifacts::manifest::DailyManifestParts`]'s reasoning.
 struct FinalizeDaily<'a> {
-    data_home: &'a Path,
+    writer: RunWriter,
     started_utc: DateTime<Utc>,
     outcome: DailyRunOutcome,
     fingerprint_start: String,
@@ -1027,7 +1104,6 @@ struct FinalizeDaily<'a> {
     data_range: DataRange,
     starting_balance: f64,
     catalog_path: &'a Path,
-    sink: &'a DecisionSink,
 }
 
 /// Assemble and write the run's artifacts, then finalize the run directory.
@@ -1105,7 +1181,7 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
     // Its `strategy_id` still reads "orb" and is deliberately ignored here; U8's filters key
     // on `Manifest.strategy_id`, which `new_daily` takes from the daily discriminator, so
     // this recorded set can never be selected as an ORB baseline.
-    let manifest = Manifest::new_daily(DailyManifestParts {
+    let manifest = match Manifest::new_daily(DailyManifestParts {
         daily: p.daily_params,
         assembly_params: p.assembly_params,
         daily_source: crate::strategy::DAILY_SOURCE,
@@ -1116,13 +1192,19 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         lab_src_fingerprint: Some(crate::fingerprint::EMBEDDED.to_string()),
         checkpoint_hash: crate::runner::backtest::checkpoint_hash(p.catalog_path),
         universe_metadata_hash: None,
-    })
-    .map_err(|e| anyhow::anyhow!("daily manifest refused: {e}"))?;
+    }) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            return Err(discard_staging(
+                p.writer,
+                anyhow::anyhow!("daily manifest refused: {error}"),
+            ));
+        }
+    };
 
-    // The fifth artifact (U6). Built BEFORE the writer opens so an R25 refusal leaves no
-    // staging directory at all — an aborted run's `.tmp-` dir is reported by
-    // `aborted_runs`, and a refusal is not an abort.
-    let observation = RunObservation::build(ObservationParts {
+    // The fifth artifact (U6). An R25 refusal removes the streaming staging directory:
+    // a refusal is not an aborted run, while an actual crash still leaves the marker.
+    let observation = match RunObservation::build(ObservationParts {
         run_id: &manifest.run_id,
         data_range: &manifest.data_range,
         catalog_fingerprint: &manifest.catalog_fingerprint,
@@ -1130,16 +1212,19 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         session_dates: &session_dates,
         ranking_signal: PLACEHOLDER_RANKING_SIGNAL.name,
         ranking_signal_is_placeholder: PLACEHOLDER_RANKING_SIGNAL.placeholder,
-    })
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }) {
+        Ok(observation) => observation,
+        Err(error) => {
+            return Err(discard_staging(p.writer, anyhow::anyhow!("{error}")));
+        }
+    };
 
-    let writer = RunWriter::new(p.data_home, &manifest.run_id)?;
-    writer.write_manifest(&manifest)?;
-    writer.write_performance(&performance)?;
-    writer.write_data_quality(&data_quality)?;
-    writer.write_decisions(&p.sink.snapshot())?;
-    writer.write_observation(&observation)?;
-    let run_dir = writer.finalize()?;
+    debug_assert_eq!(p.writer.run_id(), manifest.run_id);
+    p.writer.write_manifest(&manifest)?;
+    p.writer.write_performance(&performance)?;
+    p.writer.write_data_quality(&data_quality)?;
+    p.writer.write_observation(&observation)?;
+    let run_dir = p.writer.finalize()?;
 
     Ok(DailyRunResult {
         run_dir,
@@ -1568,4 +1653,24 @@ fn midnight() -> NaiveTime {
 }
 fn end_of_day() -> NaiveTime {
     NaiveTime::from_hms_opt(23, 59, 59).unwrap()
+}
+
+#[cfg(test)]
+mod failure_classification_tests {
+    use super::*;
+    use crate::artifacts::aborted_runs;
+
+    #[test]
+    fn abnormal_engine_failure_keeps_the_aborted_run_marker() {
+        let data_home = tempfile::tempdir().unwrap();
+        let run_id = "classified-engine-abort";
+        let writer = RunWriter::new(data_home.path(), run_id).unwrap();
+        let _emitter = writer.stream_decisions().unwrap();
+        let failure = Err(DailyRunFailure::Aborted(anyhow::anyhow!(
+            "engine failed after blocking work began"
+        )));
+
+        assert!(resolve_locked_run(writer, failure).is_err());
+        assert_eq!(aborted_runs(data_home.path()), vec![run_id.to_string()]);
+    }
 }

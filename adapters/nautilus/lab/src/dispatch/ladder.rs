@@ -153,7 +153,7 @@ impl LimitEvent {
 
 /// The run ids a consumption marker recorded (the live sessions a green dispatch mounted).
 /// Residue matching one of these is a live session that never finalized (R14(f)).
-fn consumed_run_ids(chain_records: &[ChainRecord]) -> BTreeSet<String> {
+pub(super) fn consumed_run_ids(chain_records: &[ChainRecord]) -> BTreeSet<String> {
     chain_records
         .iter()
         .filter_map(|r| match &r.body.kind {
