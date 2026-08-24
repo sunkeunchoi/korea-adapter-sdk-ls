@@ -1268,6 +1268,24 @@ merge-block-check:
 # (`set -a; . ./.env.domestic; set +a`) — never via make `include` (see the
 # header note and
 # docs/solutions/integration-issues/makefile-include-env-quotes-gateway-403.md).
+.PHONY: orca-runner-prepare orca-runner-resume orca-runner-status orca-runner-cancel orca-runner-retry orca-runner-operator-check
+
+## Attended external Runner entry points. ORCA_RUNNER_ATTEMPT is a stable,
+## operator-chosen identity (letters/numbers/dot/underscore/hyphen only). The
+## wrapper persists receipts outside the repository using XDG_STATE_HOME or
+## HOME/.local/state by default; ORCA_RUNNER_STATE_BASE may override that base.
+## prepare stops at a decision gate and never starts a worker by itself.
+ORCA_RUNNER_ATTEMPT ?=
+export ORCA_RUNNER_ATTEMPT
+orca-runner-prepare orca-runner-resume orca-runner-status orca-runner-cancel orca-runner-retry:
+	@tools/orca-runner-proof/operator.sh "$(@:orca-runner-%=%)"
+
+## Offline contract check for action/attempt validation, external state-root
+## derivation, and exact argument forwarding. Uses a stub cargo executable; no
+## Orca runtime, worker, credentials, or network.
+orca-runner-operator-check:
+	@sh tools/orca-runner-proof/tests/operator.test.sh
+
 .PHONY: docs docs-check repository-engineering-check
 
 ## Regenerate TR Dependency Docs and SDK Reference Docs from ls-metadata.
@@ -1284,6 +1302,7 @@ docs-check:
 repository-engineering-check:
 	cargo +1.96.0 run --locked -q -p ls-repository-engineering -- check
 	cargo +1.96.0 test --locked --manifest-path tools/repository-engineering-runtime/Cargo.toml --all-targets
+	$(MAKE) orca-runner-operator-check
 	cargo +1.96.0 test --locked --manifest-path tools/orca-runner-proof/Cargo.toml --all-targets
 
 # ---------------------------------------------------------------------------

@@ -85,3 +85,44 @@ fn usage() -> RunnerError {
             .into(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operator_wrapper_vocabulary_is_accepted_by_cli_parser() {
+        let wrapper = include_str!("../operator.sh");
+        let actions = ["prepare", "resume", "status", "cancel", "retry"];
+        let flags = ["--repository-root", "--state-root", "--orca"];
+
+        for token in actions.iter().chain(flags.iter()) {
+            assert!(
+                wrapper.contains(token),
+                "operator wrapper no longer forwards {token}"
+            );
+        }
+
+        for action in actions {
+            let parsed = parse_arguments(
+                [
+                    action,
+                    "--repository-root",
+                    "/repository",
+                    "--state-root",
+                    "/external/attempt",
+                    "--orca",
+                    "orca-test",
+                ]
+                .into_iter()
+                .map(str::to_owned),
+            )
+            .expect("operator vocabulary must remain accepted");
+
+            assert_eq!(parsed.action, action);
+            assert_eq!(parsed.repository_root, PathBuf::from("/repository"));
+            assert_eq!(parsed.state_root, PathBuf::from("/external/attempt"));
+            assert_eq!(parsed.orca, PathBuf::from("orca-test"));
+        }
+    }
+}
