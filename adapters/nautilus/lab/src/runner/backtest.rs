@@ -869,6 +869,43 @@ fn multiplier_from_realized(realized_pnl: f64, starting_balance: f64) -> f64 {
     1.0 + realized_pnl / starting_balance
 }
 
+fn simulated_venue_config(
+    oms_type: OmsType,
+    starting_balance: f64,
+) -> anyhow::Result<SimulatedVenueConfig> {
+    SimulatedVenueConfig::builder()
+        .venue(Venue::from(nautilus_ls::KRX_VENUE))
+        .oms_type(oms_type)
+        .account_type(AccountType::Margin)
+        .base_currency(Currency::KRW())
+        .book_type(BookType::L1_MBP)
+        .starting_balances(vec![Money::new(starting_balance, Currency::KRW())])
+        .build()
+        .map_err(|error| anyhow::anyhow!("venue build: {error}"))
+}
+
+/// The venue contract for every per-session ORB engine.
+///
+/// ORB exits rely on Netting's reduce-only position resolution. Keep construction behind
+/// this executable seam so tests can verify the configured object and its re-entry behavior,
+/// rather than scanning this module's source text for an enum variant.
+fn orb_venue_config(starting_balance: f64) -> anyhow::Result<SimulatedVenueConfig> {
+    simulated_venue_config(OmsType::Netting, starting_balance)
+}
+
+fn engine_with_venue(config: SimulatedVenueConfig) -> anyhow::Result<BacktestEngine> {
+    let mut engine = BacktestEngine::new(BacktestEngineConfig {
+        bypass_logging: true,
+        ..Default::default()
+    })?;
+    engine.add_venue(config)?;
+    Ok(engine)
+}
+
+fn orb_engine(starting_balance: f64) -> anyhow::Result<BacktestEngine> {
+    engine_with_venue(orb_venue_config(starting_balance)?)
+}
+
 /// Build + run the engine, returning the finished positions (cloned) each paired
 /// with the entry-fixed risk the strategy captured for that symbol this session (U1).
 /// The pairing is by instrument id and unambiguous — ORB holds at most one open leg
@@ -885,21 +922,7 @@ fn run_engine(
     starting_balance: f64,
     session_equity_multiplier: f64,
 ) -> anyhow::Result<(Vec<Position>, Vec<Option<EntryRisk>>)> {
-    let mut engine = BacktestEngine::new(BacktestEngineConfig {
-        bypass_logging: true,
-        ..Default::default()
-    })?;
-    engine.add_venue(
-        SimulatedVenueConfig::builder()
-            .venue(Venue::from(nautilus_ls::KRX_VENUE))
-            .oms_type(OmsType::Netting)
-            .account_type(AccountType::Margin)
-            .base_currency(Currency::KRW())
-            .book_type(BookType::L1_MBP)
-            .starting_balances(vec![Money::new(starting_balance, Currency::KRW())])
-            .build()
-            .map_err(|e| anyhow::anyhow!("venue build: {e}"))?,
-    )?;
+    let mut engine = orb_engine(starting_balance)?;
     for inst in &instruments {
         engine.add_instrument(inst)?;
     }
@@ -1104,6 +1127,9 @@ pub fn summary_block(run_id: &str, run_dir: &Path) -> String {
         run_dir.display()
     )
 }
+
+#[cfg(test)]
+mod identity_tests;
 
 #[cfg(test)]
 mod tests {

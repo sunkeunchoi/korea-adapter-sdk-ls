@@ -62,16 +62,6 @@ const PINNED_ORB_CODE_HASH: &str =
 const PINNED_DEFAULT_GOVERNED_PARAMS_HASH: &str =
     "6a09279cb3182c90b0c2ec6d2b0ff0ba69ccbb94b69f184caf70098d5ecc0f3e";
 
-/// `runner/backtest.rs`'s source, for the two structural guards below. Neither the venue
-/// config nor the shared candidate assembly sits behind a public API that a behavioural
-/// test could pin without also pinning ORB's whole result, and both are edits that break
-/// R3 *invisibly* — a changed OMS type or a changed assembly reorders ORB's fills without
-/// failing anything that exists.
-const BACKTEST_RS: &str = include_str!("../src/runner/backtest.rs");
-
-/// `strategy/orb.rs`'s source. Its bytes *are* [`PINNED_ORB_CODE_HASH`].
-const ORB_RS: &str = include_str!("../src/strategy/orb.rs");
-
 // ---------------------------------------------------------------------------
 // Scenario 1-2: the two pinned digests, by direct equality against the binary
 // ---------------------------------------------------------------------------
@@ -125,61 +115,6 @@ fn a_daily_code_hash_differs_from_the_orb_value() {
 // ---------------------------------------------------------------------------
 // Scenario 4-6: the surfaces outside every pinned hash
 // ---------------------------------------------------------------------------
-
-/// The shared candidate assembly is unchanged (R3).
-///
-/// `build_candidates` and `build_candidates_with_today_open` live in `backtest.rs`, outside
-/// `strategy_code_hash`'s file scope and outside `governed_params_hash`'s parameter scope —
-/// so an edit here changes ORB's selected universe with **no** digest moving and no
-/// existing test objecting. KTD15 reuses them at their current signatures for exactly this
-/// reason; the daily path duplicates the *selection rule* instead.
-#[test]
-fn the_shared_candidate_assembly_is_unchanged() {
-    for sig in [
-        "pub(crate) fn build_candidates(",
-        "pub(crate) fn build_candidates_with_today_open(",
-    ] {
-        assert!(
-            BACKTEST_RS.contains(sig),
-            "{sig} — the shared assembly's signature changed; the daily path reuses it at \
-             its current signature (KTD15) and ORB's universe depends on its behaviour"
-        );
-    }
-    // The delegation is the repo's extend-and-delegate shape: the two-arg form must still
-    // be the one-arg form's caller, or the two can drift apart silently.
-    assert!(
-        BACKTEST_RS.contains("build_candidates_with_today_open(")
-            && BACKTEST_RS.matches("fn build_candidates").count() == 2,
-        "exactly the two assembly entry points exist"
-    );
-}
-
-/// ORB's venue config is unchanged, `OmsType::Netting` included (R3).
-///
-/// The daily path uses `OmsType::Hedging` (KTD12) because Netting collapses position
-/// identity — `determine_netting_position_id` mints one constant id per symbol, and a
-/// re-entry takes the `reopen_position` path that snapshots the earlier round trip out of
-/// the live index with no diagnostic. That is the right call for a multi-session hold and
-/// the *wrong* call for ORB, whose fills would change. The two venue configs are
-/// per-path; this asserts ORB's was not "helpfully" migrated along with the new one.
-#[test]
-fn the_orb_venue_config_is_unchanged() {
-    assert!(
-        BACKTEST_RS.contains("OmsType::Netting"),
-        "ORB's venue must still be Netting — changing it changes ORB's fills (R3)"
-    );
-    assert!(
-        !BACKTEST_RS.contains("OmsType::Hedging"),
-        "the daily path's Hedging venue belongs in backtest_daily.rs, not here"
-    );
-    // ORB's exit submits with no position id and relies on `reduce_only`. That pattern is
-    // Netting-only: under Hedging it opens an opposite-side position instead of closing the
-    // long, and the account type does not reject the accidental short (KTD12).
-    assert!(
-        ORB_RS.contains("reduce_only"),
-        "ORB's Netting-only exit pattern is unchanged"
-    );
-}
 
 /// The per-day-reset gate is intact and was not co-opted for the daily path (R3).
 ///
