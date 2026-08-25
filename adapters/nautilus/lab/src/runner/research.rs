@@ -73,11 +73,25 @@ fn data_home_from_env() -> anyhow::Result<PathBuf> {
 
 /// Read a finalized run's manifest. Crate-visible: `runner::report` resolves
 /// its source run through the same seam.
+///
+/// [`Manifest::validate_strategy_identity`] is enforced **here**, not only at
+/// `Manifest::new_daily`. A construction-time-only check holds for manifests this
+/// binary wrote and says nothing about the ones it reads, which is the direction that
+/// matters: an identity-invalid manifest on disk — an ORB-identified run carrying daily
+/// terms, or a daily-identified run carrying none — is precisely what the registry
+/// partition (KTD14/R24) filters on, so accepting one on read would let a strategy
+/// filter and the terms it selects describe different runs. Failing at the read seam
+/// makes it one invariant on both sides instead of a write-side convention.
 pub(crate) fn read_manifest(data_home: &Path, run_id: &str) -> anyhow::Result<Manifest> {
     let path = data_home.join("runs").join(run_id).join(MANIFEST_FILE);
     let text = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
+    let manifest: Manifest = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))?;
+    manifest
+        .validate_strategy_identity()
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+    Ok(manifest)
 }
 
 /// The chronological sort key for a run id (KTD1). The fixed-width UTC stamp
@@ -171,6 +185,48 @@ pub fn latest_finalized_run_for(
         .rev()
         .filter_map(|rid| read_manifest(data_home, rid).ok().map(|m| (rid.clone(), m)))
         .find(|(_rid, m)| m.strategy_id == strategy_id))
+}
+
+/// The refusal a command raises when [`latest_finalized_run`] resolved nothing — paired
+/// with that lookup so the two cannot drift on which strategy they mean.
+///
+/// "run a backtest first" is only true of a genuinely fresh registry. Since the strategy
+/// partition (KTD14/R24) the lookup also returns `None` on a registry that holds only
+/// *another* strategy's runs — a daily-only registry, concretely — and that message then
+/// sends the operator to redo work they have already done, while hiding the fact that
+/// resolving their run needs an explicit id by design.
+///
+/// The partition itself is deliberately not relaxed to fix the message: defaulting to
+/// another strategy's run is the silent head-reversion [`latest_finalized_run`] exists to
+/// prevent.
+pub(crate) fn no_finalized_run_error(data_home: &Path, run_id_env: &str) -> anyhow::Error {
+    let wanted = crate::params::STRATEGY_ID;
+    // Oldest → newest, so the last insert per strategy is that strategy's newest run.
+    let mut others: BTreeMap<String, String> = BTreeMap::new();
+    for rid in ordered_runs(data_home) {
+        if let Ok(m) = read_manifest(data_home, &rid) {
+            if m.strategy_id != wanted {
+                others.insert(m.strategy_id.clone(), rid);
+            }
+        }
+    }
+    if others.is_empty() {
+        return anyhow::anyhow!(
+            "no finalized runs under {} — set {run_id_env} or run a backtest first",
+            data_home.display()
+        );
+    }
+    let held = others
+        .iter()
+        .map(|(strategy, rid)| format!("{strategy} (newest {rid})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::anyhow!(
+        "no finalized {wanted} runs under {} — the registry holds {held}. Set {run_id_env} to \
+         the run you mean: the strategy partition (KTD14/R24) deliberately does not resolve \
+         another strategy's run as this command's default",
+        data_home.display()
+    )
 }
 
 /// The checkpoint bar-series label for a bar (`1-DAY`, `n-MINUTE`), matching
@@ -2272,5 +2328,236 @@ mod tests {
         assert_eq!(ids.first().unwrap(), "20260101T000000Z-backtest-orb-v2", "v2 is oldest");
         // A run id with no -v suffix degrades to version 0, never panics.
         assert_eq!(run_order_key("no-version-here").1, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // The read seam: identity is enforced on the manifests this binary READS
+    // -----------------------------------------------------------------------
+
+    use chrono::TimeZone;
+    use tempfile::tempdir;
+
+    use crate::artifacts::manifest::{
+        range_fingerprint, strategy_code_hash, universe_hash, DailyManifestParts,
+    };
+    use crate::artifacts::{run_id, RunSource, RunWriter};
+    use crate::params_daily::{DailyParams, DAILY_STRATEGY_ID};
+
+    /// A well-formed ORB manifest stamped at `hour`. Hand-assembled rather than taken
+    /// from `runner::backtest`, which needs an engine run to produce one.
+    fn orb_manifest(hour: u32, version: u32) -> Manifest {
+        let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
+        let params = OrbParams { strategy_version: version, ..OrbParams::default() };
+        Manifest {
+            run_id: run_id(started, RunSource::Backtest, &params.strategy_id, version),
+            source: RunSource::Backtest,
+            strategy_id: params.strategy_id.clone(),
+            strategy_version: version,
+            params,
+            data_range: DataRange { start: "20240102".into(), end: "20240105".into() },
+            catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
+            universe_hash: universe_hash(&["005930.XKRX".to_string()]),
+            strategy_code_hash: strategy_code_hash(),
+            lab_src_fingerprint: None,
+            checkpoint_hash: None,
+            universe_metadata_hash: None,
+            dispatch: None,
+            daily_params: None,
+            created_utc: started.to_rfc3339(),
+        }
+    }
+
+    /// A well-formed daily manifest stamped at `hour`, built through
+    /// [`Manifest::new_daily`] — the only production path — so no test below can
+    /// accidentally assert against a discriminator the real runner would never write.
+    fn daily_manifest(hour: u32) -> Manifest {
+        let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
+        Manifest::new_daily(DailyManifestParts {
+            daily: DailyParams::default(),
+            assembly_params: OrbParams::default(),
+            daily_source: crate::strategy::DAILY_SOURCE,
+            started_utc: started,
+            data_range: DataRange { start: "20240102".into(), end: "20240105".into() },
+            catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
+            universe_hash: universe_hash(&["005930.XKRX".to_string()]),
+            lab_src_fingerprint: None,
+            checkpoint_hash: None,
+            universe_metadata_hash: None,
+        })
+        .unwrap()
+    }
+
+    /// Finalize `manifest` into the registry through [`RunWriter`], returning its run id.
+    fn stage(data: &Path, manifest: &Manifest) -> String {
+        let w = RunWriter::new(data, &manifest.run_id).unwrap();
+        w.write_manifest(manifest).unwrap();
+        w.finalize().unwrap();
+        manifest.run_id.clone()
+    }
+
+    /// Stage a finalized run whose `manifest.json` is written verbatim from `json`,
+    /// bypassing every constructor. The identity-invalid shapes below are *unreachable*
+    /// through `Manifest::new_daily`, which is precisely why a construction-time-only
+    /// check never observed them: they arrive off disk.
+    fn stage_raw_manifest(data: &Path, rid: &str, json: &serde_json::Value) {
+        let dir = data.join("runs").join(rid);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string_pretty(json).unwrap())
+            .unwrap();
+    }
+
+    /// Serialize `manifest` and graft a daily parameter set onto the JSON. The result
+    /// parses cleanly, so only the identity check can reject it.
+    fn with_grafted_daily_params(manifest: &Manifest) -> serde_json::Value {
+        let mut json = serde_json::to_value(manifest).unwrap();
+        json["daily_params"] = serde_json::to_value(DailyParams::default()).unwrap();
+        json
+    }
+
+    /// An ORB-identified manifest carrying daily params is refused when **read**, not
+    /// accepted as an ORB run with a stray field.
+    ///
+    /// The silence this converts: the shape is unreachable through `Manifest::new_daily`,
+    /// so a construction-time-only check said nothing about it, and it parses cleanly, so
+    /// the skip-on-unreadable scan would not notice either. Accepted, a run whose engine,
+    /// OMS, and hold semantics are ORB's would advertise the daily lineage's frozen terms
+    /// — and because the registry partition (KTD14/R24) filters on `strategy_id`, that run
+    /// would be handed to the ORB turn as its adopted params with no error anywhere.
+    #[test]
+    fn read_manifest_refuses_an_orb_manifest_carrying_daily_params() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        let m = orb_manifest(9, 35);
+        stage_raw_manifest(data, &m.run_id, &with_grafted_daily_params(&m));
+
+        let err = read_manifest(data, &m.run_id).unwrap_err().to_string();
+        assert!(err.contains(&m.run_id), "the refusal names the manifest path: {err}");
+        assert!(err.contains("carries daily params"), "and the reason it is refused: {err}");
+    }
+
+    /// A daily-identified manifest carrying **no** daily params is refused on read.
+    ///
+    /// The silence this converts: the discriminator would partition the registry while the
+    /// frozen terms it partitions on are absent from the run's own record (KTD4/KTD14), so
+    /// `runs compare` and the reporting commands would key on an identity whose parameter
+    /// set does not exist — a run that reads as daily and can prove nothing about it.
+    #[test]
+    fn read_manifest_refuses_a_daily_manifest_with_no_daily_params() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        let m = daily_manifest(17);
+        let mut json = serde_json::to_value(&m).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("daily_params")
+            .expect("new_daily writes the field this case strips");
+        stage_raw_manifest(data, &m.run_id, &json);
+
+        let err = read_manifest(data, &m.run_id).unwrap_err().to_string();
+        assert!(err.contains(&m.run_id), "the refusal names the manifest path: {err}");
+        assert!(err.contains("carries no daily params"), "and the reason: {err}");
+    }
+
+    /// Both well-formed shapes still read. Without this, the two refusals above would pass
+    /// for a manifest that rejected *everything*, and the read seam would have closed the
+    /// registry to the runs it exists to serve.
+    #[test]
+    fn read_manifest_accepts_both_well_formed_shapes() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        let orb = stage(data, &orb_manifest(8, 34));
+        // Through `new_daily`, the only production path — a hand-written valid daily
+        // manifest would be asserting against a shape the runner never emits.
+        let daily = stage(data, &daily_manifest(17));
+
+        assert_eq!(read_manifest(data, &orb).unwrap().strategy_id, crate::params::STRATEGY_ID);
+        let read_daily = read_manifest(data, &daily).unwrap();
+        assert_eq!(read_daily.strategy_id, DAILY_STRATEGY_ID);
+        assert!(read_daily.daily_params.is_some(), "the daily terms survive the round trip");
+    }
+
+    /// An identity-invalid **newest** manifest is a hard error, not a stale apparent head.
+    ///
+    /// This is the read seam meeting [`latest_finalized_run_for`]'s strict-newest /
+    /// skip-older rule, and the failure it converts is the worst one that rule names: with
+    /// a valid older ORB run present, an unreadable head resolves the older run as the
+    /// apparent head, and every consumer adopts stale params, a stale inherited range, and
+    /// a stale KEEP/REVERT baseline with no error anywhere. Identity invalidity is exactly
+    /// as unreadable as a parse failure — it just cannot be seen by `serde`.
+    #[test]
+    fn an_identity_invalid_newest_manifest_is_an_error_not_a_stale_head() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        let older = stage(data, &orb_manifest(8, 34));
+        let newest = orb_manifest(17, 35);
+        stage_raw_manifest(data, &newest.run_id, &with_grafted_daily_params(&newest));
+
+        let err = latest_finalized_run(data).unwrap_err().to_string();
+        assert!(err.contains(&newest.run_id), "the error names the offending head: {err}");
+        assert!(
+            !err.contains(&older),
+            "not the run it would silently have fallen back to: {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The refusal message: what "no finalized runs" is allowed to claim
+    // -----------------------------------------------------------------------
+
+    /// A genuinely fresh registry keeps the wording it had.
+    ///
+    /// `report.rs`'s `empty_registry_without_run_id_is_a_clean_failure` asserts exactly
+    /// these two substrings, so this is the compatibility half: the improved daily-only
+    /// branch must not be bought by changing what an empty registry says.
+    #[test]
+    fn an_empty_registry_keeps_the_fresh_registry_wording() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("runs")).unwrap();
+        let msg = no_finalized_run_error(dir.path(), "LS_REPORT_RUN").to_string();
+        assert!(msg.contains("no finalized runs"), "{msg}");
+        assert!(msg.contains("LS_REPORT_RUN"), "names the pin var: {msg}");
+    }
+
+    /// A daily-only registry is not told to go run a backtest it has already run.
+    ///
+    /// The silence this converts is a *misdirection*, not a missing error: since the
+    /// partition (KTD14/R24) the lookup also returns `None` on a registry that holds only
+    /// another strategy's runs, and "run a backtest first" then sends the operator to redo
+    /// finished work while hiding that resolving their run needs an explicit id by design.
+    /// The message must name what is held and how to ask for it.
+    #[test]
+    fn a_daily_only_registry_names_what_it_holds_instead_of_a_rerun() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        let older = stage(data, &daily_manifest(9));
+        let newest = stage(data, &daily_manifest(17));
+
+        let msg = no_finalized_run_error(data, "LS_REPORT_RUN").to_string();
+        assert!(!msg.contains("run a backtest"), "the work is already done: {msg}");
+        assert!(msg.contains(DAILY_STRATEGY_ID), "names the strategy held: {msg}");
+        assert!(msg.contains(&newest), "names that strategy's newest run: {msg}");
+        assert!(!msg.contains(&older), "one run id per strategy, the newest: {msg}");
+        assert!(msg.contains("LS_REPORT_RUN"), "names the var to set: {msg}");
+    }
+
+    /// The message improved; the resolution did not. A daily-only registry still resolves
+    /// to `Ok(None)` for the ORB lookup.
+    ///
+    /// Relaxing the partition to make the refusal go away is the silent head-reversion the
+    /// partition exists to prevent — a daily run becoming the ORB turn's adopted params,
+    /// inherited range, KEEP/REVERT baseline, and trial anchor. This asserts the fix stayed
+    /// on the message side; `identity_guards.rs`'s
+    /// `the_seven_consumers_all_resolve_through_the_filtered_lookup` guards the consumers.
+    #[test]
+    fn a_daily_only_registry_still_resolves_to_no_orb_run() {
+        let dir = tempdir().unwrap();
+        let data = dir.path();
+        stage(data, &daily_manifest(9));
+        stage(data, &daily_manifest(17));
+
+        assert!(
+            latest_finalized_run(data).unwrap().is_none(),
+            "the ORB lookup does not default to another strategy's run"
+        );
     }
 }

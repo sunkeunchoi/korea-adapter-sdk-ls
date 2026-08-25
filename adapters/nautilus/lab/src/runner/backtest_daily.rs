@@ -46,10 +46,20 @@
 //! `BacktestEngine::add_strategy` is a **sized generic**, the runner is generic over
 //! the strategy type rather than taking a boxed factory; that is also what lets this
 //! unit land and be tested before the daily strategy exists.
+//!
+//! # Where the pieces live
+//!
+//! This module owns the **engine phase** and the entry points that drive it. The
+//! parts that are separable from the engine live in `backtest_daily/` and are
+//! re-exported here, so `runner::backtest_daily::<Item>` keeps working:
+//!
+//! - `selection` — the pure selection phase (KTD11), engine-free by construction.
+//! - `handles` — the shared handles ([`OpenPositionBook`], [`DailySessionSignals`])
+//!   and the [`DailyPathStrategy`] contract that exposes them.
+//! - `entry_risk` — the KTD3/R12 projection seam and its three assertions.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use nautilus_backtest::config::{BacktestEngineConfig, SimulatedVenueConfig};
@@ -58,7 +68,6 @@ use nautilus_common::actor::DataActorNative;
 use nautilus_common::component::Component;
 use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, read_all_instruments, BarKind};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
-use nautilus_ls::rules::KRX_REGULAR_OPEN;
 use nautilus_model::data::{Bar, BarType, Data};
 use nautilus_model::enums::{AccountType, BookType, OmsType};
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, PositionId, Venue};
@@ -67,369 +76,32 @@ use nautilus_model::position::Position;
 use nautilus_model::types::{Currency, Money};
 use nautilus_trading::strategy::{Strategy, StrategyNative};
 
-use crate::agent::envelope::{Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger};
 use crate::agent::sink::DecisionSink;
 use crate::artifacts::data_quality::DataQualityReport;
 use crate::artifacts::manifest::{
     range_fingerprint, universe_sequence_hash, DailyManifestParts, DataRange, Manifest,
 };
 use crate::artifacts::observation::{ObservationParts, RunObservation};
-use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk, PerformanceReport};
+use crate::artifacts::performance::{EntryRisk, PerformanceReport};
 use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::params::OrbParams;
 use crate::params_daily::DailyParams;
-use crate::runner::backtest::{build_candidates, is_daily, kst_date_of};
 use crate::strategy::daily::{
     rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy, PLACEHOLDER_RANKING_SIGNAL,
 };
 use crate::strategy::orb::UniverseCandidate;
 
-// ---------------------------------------------------------------------------
-// The shared open-position handle (KTD16)
-// ---------------------------------------------------------------------------
+mod entry_risk;
+mod handles;
+mod selection;
 
-/// The shared open-position book (KTD16) — the single authority for both the
-/// already-held exclusion and per-session batch membership.
-///
-/// The strategy writes it from its position callbacks; the runner clones a handle
-/// off the strategy **before** `add_strategy` consumes it and reads the handle
-/// between batches. This is not the R4 position report: it is a live view of
-/// *which symbols are open right now*, which the cumulative cache read cannot
-/// answer between batches without a per-session read.
-///
-/// Deriving the held set statically from entry date + hold length was rejected: it
-/// blocks re-entry after an early stop-out and so violates R10.
-#[derive(Debug, Clone, Default)]
-pub struct OpenPositionBook {
-    inner: Arc<Mutex<BookState>>,
-}
+pub use entry_risk::{project_entry_risks, EntryRiskProjection};
+pub use handles::{DailyPathStrategy, DailySessionContext, DailySessionSignals, OpenPositionBook};
+pub use selection::{
+    select_daily_sessions, DailySelection, DailySessionPlan, DAILY_EQUITY_MULTIPLIER,
+};
 
-#[derive(Debug, Default)]
-struct BookState {
-    /// The instruments currently holding an open position.
-    open: BTreeSet<InstrumentId>,
-    /// Every position id observed opening across the stream, in observation order.
-    /// The runner compares this against the single post-`end()` cache read, which is
-    /// the check that catches a Netting venue silently snapshotting earlier round
-    /// trips out of the live index (KTD12).
-    opened: Vec<PositionId>,
-}
-
-impl OpenPositionBook {
-    /// A fresh, empty book.
-    #[must_use]
-    pub fn new() -> Self {
-        OpenPositionBook::default()
-    }
-
-    /// Record a position opening on `instrument_id`.
-    pub fn record_opened(&self, instrument_id: InstrumentId, position_id: PositionId) {
-        let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        st.open.insert(instrument_id);
-        st.opened.push(position_id);
-    }
-
-    /// Record the position on `instrument_id` closing.
-    pub fn record_closed(&self, instrument_id: &InstrumentId) {
-        let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        st.open.remove(instrument_id);
-    }
-
-    /// The instruments currently holding an open position.
-    #[must_use]
-    pub fn held(&self) -> BTreeSet<InstrumentId> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).open.clone()
-    }
-
-    /// Whether `instrument_id` currently holds an open position.
-    #[must_use]
-    pub fn is_held(&self, instrument_id: &InstrumentId) -> bool {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).open.contains(instrument_id)
-    }
-
-    /// Every position id observed opening across the stream, in observation order.
-    #[must_use]
-    pub fn opened_position_ids(&self) -> Vec<PositionId> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).opened.clone()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The shared per-session signal handle (U4 — KTD9, KTD11, KTD13, R22)
-// ---------------------------------------------------------------------------
-
-/// What the loop resolved for one session, published to the strategy before that
-/// session's batch runs.
-///
-/// A daily strategy cannot derive any of this from its own bar stream. The batch
-/// carries only the session's *taken* and *held* symbols, so a freshly taken symbol
-/// arrives with no prior bars at all — and the stop's prior ATR is computed strictly
-/// **before** the session (KTD9). Re-deriving it inside the strategy would need a
-/// second full-catalog index, which R5 forbids; the ranked/taken/held triple and the
-/// ordered session calendar are likewise loop state, not stream state.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DailySessionContext {
-    /// The session's ordinal in the run's in-range session list. **This** is the
-    /// clock hold elapsed is counted on (R23) — never a bar-callback counter, so a
-    /// duplicate bar cannot shorten a frozen hold.
-    pub index: usize,
-    /// The KST session date.
-    pub date: NaiveDate,
-    /// The session's ranked candidates, best first, in instrument order.
-    pub ranked: Vec<InstrumentId>,
-    /// The symbols this session's pre-batch step actually took (R10).
-    pub taken: Vec<InstrumentId>,
-    /// The symbols already holding an open position at the pre-batch step.
-    pub held: Vec<InstrumentId>,
-    /// Each candidate's prior ATR for this session. An absent key was not a
-    /// candidate; a `None` value was a candidate with no derivable prior ATR. The
-    /// stop fails closed on both (KTD9).
-    pub prior_atr: HashMap<InstrumentId, Option<f64>>,
-}
-
-/// The shared per-session signal handle: the runner publishes one
-/// [`DailySessionContext`] per session before that session's batch runs, plus the
-/// ordered in-range session calendar once before the loop.
-///
-/// Same shared-handle pattern as [`OpenPositionBook`] (KTD16) and for the same
-/// reason — the runner clones it off the strategy before `add_strategy` consumes
-/// it. The direction of travel is the opposite one: the runner *writes*, the
-/// strategy *reads*.
-#[derive(Debug, Clone, Default)]
-pub struct DailySessionSignals {
-    inner: Arc<Mutex<SignalState>>,
-}
-
-#[derive(Debug, Default)]
-struct SignalState {
-    /// Every in-range session date, in order — the calendar a prospective hold
-    /// window is measured on (R22).
-    sessions: Vec<NaiveDate>,
-    current: Option<DailySessionContext>,
-}
-
-impl DailySessionSignals {
-    /// A fresh, empty handle.
-    #[must_use]
-    pub fn new() -> Self {
-        DailySessionSignals::default()
-    }
-
-    /// Publish the ordered in-range session calendar (once, before the loop).
-    pub fn publish_sessions(&self, sessions: Vec<NaiveDate>) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions = sessions;
-    }
-
-    /// Publish one session's context (once per session, before its batch runs).
-    pub fn publish_session(&self, ctx: DailySessionContext) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).current = Some(ctx);
-    }
-
-    /// The session currently being driven, if the loop has published one.
-    #[must_use]
-    pub fn current(&self) -> Option<DailySessionContext> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).current.clone()
-    }
-
-    /// The in-range session date at `index`.
-    #[must_use]
-    pub fn session_at(&self, index: usize) -> Option<NaiveDate> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions.get(index).copied()
-    }
-
-    /// The number of in-range sessions published.
-    #[must_use]
-    pub fn session_count(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).sessions.len()
-    }
-}
-
-/// A strategy this runner can drive: it must expose the shared open-position book
-/// so the runner can read the held set between batches (KTD16), and the shared
-/// entry-risk ledger so the runner can project it into cache-read order (KTD3).
-pub trait DailyPathStrategy {
-    /// A clone of the shared open-position book.
-    fn open_position_book(&self) -> OpenPositionBook;
-
-    /// A clone of the shared, client-order-keyed entry-risk ledger (KTD3, R12).
-    /// The runner clones it **before** `add_strategy` consumes the strategy and
-    /// projects it into the order of the single post-`end()` cache read.
-    fn entry_risk_ledger(&self) -> ClientOrderEntryRiskLedger;
-
-    /// A clone of the shared per-session signal handle the runner publishes each
-    /// session's [`DailySessionContext`] into.
-    ///
-    /// Defaulted to a detached handle so a strategy that drives itself entirely off
-    /// batch membership (U1's test-only always-enter strategy) needs no wiring: the
-    /// runner still publishes, nothing reads. A strategy whose stop needs the prior
-    /// ATR, whose hold is counted in loop-supplied session ordinals, or whose entry
-    /// gate reads the prospective hold window must override it and return a clone of
-    /// its own handle.
-    fn session_signals(&self) -> DailySessionSignals {
-        DailySessionSignals::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The entry-risk projection seam (KTD3, R12)
-// ---------------------------------------------------------------------------
-
-/// The entry-risk ledger projected into the order of the single post-`end()` cache
-/// read (KTD3, R12) — the `Vec<Option<EntryRisk>>` that
-/// [`crate::artifacts::performance::PerformanceReport::from_positions_with_risk`]
-/// consumes, plus the evidence its three seam assertions need.
-///
-/// `from_positions_with_risk` is **index-aligned, not keyed** (`risks.get(i)` for
-/// `positions[i]`), and its doc records that a short slice silently leaves trailing
-/// positions risk-less. Three distinct defects break three different statistics:
-///
-/// - **Truncation** sets `all_have_risk = false` and collapses `return_on_risk` to
-///   `None` entirely.
-/// - **Collapse** — several positions on a symbol joining to one risk — makes
-///   `Σ risk_capital` and therefore net RoR wrong.
-/// - **Mis-ordering** is a permutation: it leaves `Σ risk_capital` invariant and net
-///   RoR unaffected, but corrupts per-trade `realized_r`, `mean_realized_r`, and the
-///   per-symbol `max_risk_capital_share` fold.
-///
-/// Length equality catches the first, the `Some`-count catches the second, and only
-/// the opening-order-id equality catches the third — a projection built in *ledger*
-/// order rather than cache-read order has the right length and every slot filled.
-///
-/// The risk and the key it came from are held in **one** slot rather than two
-/// parallel vectors, so no mutation can permute the risks while leaving the witness
-/// keys in place.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EntryRiskProjection {
-    slots: Vec<Option<(ClientOrderId, EntryRisk)>>,
-    opened_entries: usize,
-    unopened_entries: Vec<ClientOrderId>,
-}
-
-impl EntryRiskProjection {
-    /// Assemble a projection from already-computed parts.
-    ///
-    /// Production code calls [`project_entry_risks`]; this constructor exists so the
-    /// three seam assertions can be exercised against a deliberately broken
-    /// projection (a shortened slice, a collapsed ledger, a permutation) without the
-    /// test having to reimplement the join.
-    #[must_use]
-    pub fn from_parts(
-        slots: Vec<Option<(ClientOrderId, EntryRisk)>>,
-        opened_entries: usize,
-        unopened_entries: Vec<ClientOrderId>,
-    ) -> Self {
-        EntryRiskProjection { slots, opened_entries, unopened_entries }
-    }
-
-    /// The index-aligned slots: slot `i` is the ledger entry that opened
-    /// `positions[i]`, paired with the client order id it was keyed by.
-    #[must_use]
-    pub fn slots(&self) -> &[Option<(ClientOrderId, EntryRisk)>] {
-        &self.slots
-    }
-
-    /// The index-aligned risk slice `from_positions_with_risk` consumes.
-    #[must_use]
-    pub fn risks(&self) -> Vec<Option<EntryRisk>> {
-        self.slots.iter().map(|s| s.map(|(_, r)| r)).collect()
-    }
-
-    /// How many recorded ledger entries the **stream** observed opening a position.
-    /// This is the reconciliation basis for the `Some`-count assertion, and it is
-    /// read off the ledger's stream-side witness rather than off the cache read or
-    /// the slots — so neither a defective projection nor a cache read that has
-    /// silently lost positions can move its own expectation.
-    #[must_use]
-    pub const fn opened_entries(&self) -> usize {
-        self.opened_entries
-    }
-
-    /// Recorded entries whose order never opened a position — a venue or risk-engine
-    /// rejection, or an order that never filled. A **named run-level diagnostic**,
-    /// deliberately not a hard failure: the `Some`-count assertion is defined over
-    /// the entries that opened a position precisely so a rejection reports rather
-    /// than aborting an otherwise valid run.
-    #[must_use]
-    pub fn unopened_entries(&self) -> &[ClientOrderId] {
-        &self.unopened_entries
-    }
-
-    /// The three seam assertions (KTD3). Panics — this is a corrupt-join guard on the
-    /// denominator of the verdict statistic, not a recoverable condition.
-    pub fn assert_aligned(&self, positions: &[Position]) {
-        // (1) Truncation. A short slice leaves trailing positions risk-less, which
-        // sets `all_have_risk = false` and collapses `return_on_risk` to `None`.
-        assert_eq!(
-            self.slots.len(),
-            positions.len(),
-            "entry-risk projection length {} != position count {} (KTD3 assertion 1): a short \
-             slice silently leaves trailing positions risk-less and collapses return_on_risk",
-            self.slots.len(),
-            positions.len()
-        );
-
-        // (2) Collapse. Several positions joining to one ledger entry passes (1) but
-        // makes Σ risk_capital — the denominator of net RoR — wrong.
-        let filled = self.slots.iter().filter(|s| s.is_some()).count();
-        assert_eq!(
-            filled,
-            self.opened_entries,
-            "entry-risk projection filled {filled} of {} slots but the stream observed {} \
-             recorded ledger entries opening a position (KTD3 assertion 2): a collapsed join or \
-             a cache read that lost positions makes Σ risk_capital and therefore net \
-             return_on_risk wrong",
-            self.slots.len(),
-            self.opened_entries
-        );
-
-        // (3) Permutation. Right length, every slot filled, every risk on the wrong
-        // position: Σ risk_capital is invariant and net RoR unaffected, but per-trade
-        // realized_r, mean_realized_r, and the per-symbol max_risk_capital_share fold
-        // are all corrupt. The key is already on the read side, so this costs nothing.
-        for (i, slot) in self.slots.iter().enumerate() {
-            let Some((key, _)) = slot else { continue };
-            assert_eq!(
-                *key,
-                positions[i].opening_order_id,
-                "entry-risk projection slot {i} carries client order id {key} but position {} \
-                 was opened by {} (KTD3 assertion 3): the projection is a permutation of \
-                 cache-read order, which corrupts realized_r and max_risk_capital_share while \
-                 leaving Σ risk_capital invariant",
-                positions[i].id,
-                positions[i].opening_order_id
-            );
-        }
-    }
-}
-
-/// Project the client-order-keyed entry-risk ledger into the order of the single
-/// post-`end()` cache read (KTD3, R12), joining on `Position.opening_order_id`.
-///
-/// The projection is built by walking `positions` — the cache read defines the order
-/// — and never by walking the ledger, which would produce a permutation that both
-/// count assertions pass.
-///
-/// A position with no recorded entry resolves to `None` and takes the legacy P&L path
-/// rather than panicking.
-#[must_use]
-pub fn project_entry_risks(
-    positions: &[Position],
-    ledger: &ClientOrderEntryRiskLedger,
-) -> EntryRiskProjection {
-    let by_order: HashMap<ClientOrderId, EntryRisk> = ledger.snapshot().into_iter().collect();
-
-    let slots: Vec<Option<(ClientOrderId, EntryRisk)>> = positions
-        .iter()
-        .map(|p| by_order.get(&p.opening_order_id).map(|r| (p.opening_order_id, *r)))
-        .collect();
-
-    EntryRiskProjection {
-        slots,
-        // Stream-side, not cache-read-side: see `EntryRiskProjection::opened_entries`.
-        opened_entries: ledger.opened_entries().len(),
-        unopened_entries: ledger.unopened_entries(),
-    }
-}
+use selection::{index_daily, select_from_index, session_dates_of};
 
 /// One instrument mounted into the engine up front, with the daily bar series it is
 /// driven on. Every instrument is mounted before the first batch (KTD11) so the loop
@@ -440,223 +112,6 @@ pub struct MountedSymbol {
     pub instrument_id: InstrumentId,
     /// The daily bar type — `BarKind::Daily`, never `BarKind::Minute` (R2).
     pub bar_type: BarType,
-}
-
-// ---------------------------------------------------------------------------
-// Selection phase (pure — KTD11)
-// ---------------------------------------------------------------------------
-
-/// One session's pure selection output.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DailySessionPlan {
-    /// The KST session date.
-    pub date: NaiveDate,
-    /// The session-open `ts_event` the envelopes are stamped at.
-    pub session_ts: u64,
-    /// The ranked candidate symbols, best first. This is **not** a take: the
-    /// take-top-`target_m`-minus-held step needs the held set and therefore runs
-    /// per session in the engine phase (KTD16).
-    pub ranked: Vec<String>,
-    /// Each candidate's prior ATR for this session, keyed by symbol — the entry
-    /// stop's only input (KTD9), carried on the plan because it is derived in the
-    /// pure selection phase from the single catalog index (R5) and consumed in the
-    /// engine phase, where the candidates no longer exist. An absent key was not a
-    /// candidate this session; a `None` value was a candidate with no derivable
-    /// prior ATR.
-    pub prior_atr: BTreeMap<String, Option<f64>>,
-    /// The session-open equity multiplier — fixed at exactly `1.0` on this path
-    /// (KTD7). Compounding is on the no-build list, and preserving the ORB path's
-    /// realized-P&L feedback edge would force the daily loop back into a
-    /// per-session engine round trip for no registered benefit.
-    pub equity_multiplier: f64,
-}
-
-/// The selection phase's whole output — a pure function of the catalog, the
-/// candidate-assembly parameters, and the ranking rule. It has no engine dependency.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DailySelection {
-    /// Every in-range session, in date order.
-    pub sessions: Vec<DailySessionPlan>,
-    /// The deduped union of every symbol that was a candidate on any session.
-    pub candidate_union: Vec<String>,
-}
-
-impl DailySelection {
-    /// The chronological per-session ranked sequence.
-    #[must_use]
-    pub fn selection_sequence(&self) -> Vec<(NaiveDate, Vec<String>)> {
-        self.sessions.iter().map(|s| (s.date, s.ranked.clone())).collect()
-    }
-}
-
-/// The session-open equity multiplier on the daily path. Fixed at exactly `1.0`
-/// (KTD7) and asserted by the selection phase, so no realized-P&L feedback edge can
-/// creep back in and force a per-session engine round trip.
-pub const DAILY_EQUITY_MULTIPLIER: f64 = 1.0;
-
-/// Index the catalog once (R5): daily bars bucketed per instrument (ts-sorted, for
-/// the prior/today lookup) and the in-range daily bars bucketed by KST date.
-fn index_daily<'a>(
-    all_bars: &'a [Bar],
-    start_ns: u64,
-    end_ns: u64,
-) -> (HashMap<InstrumentId, Vec<&'a Bar>>, HashMap<NaiveDate, Vec<&'a Bar>>) {
-    let mut daily_by_inst: HashMap<InstrumentId, Vec<&Bar>> = HashMap::new();
-    let mut daily_by_date: HashMap<NaiveDate, Vec<&Bar>> = HashMap::new();
-    for b in all_bars {
-        if !is_daily(b) {
-            continue;
-        }
-        daily_by_inst.entry(b.bar_type.instrument_id()).or_default().push(b);
-        if in_range(b, start_ns, end_ns) {
-            daily_by_date.entry(kst_date_of(b)).or_default().push(b);
-        }
-    }
-    for bars in daily_by_inst.values_mut() {
-        bars.sort_by_key(|b| b.ts_event.as_u64());
-    }
-    (daily_by_inst, daily_by_date)
-}
-
-/// The distinct in-range daily session dates, in order — the same derivation the ORB
-/// runner uses, read off the daily index rather than a second full-catalog scan.
-fn session_dates_of(daily_by_date: &HashMap<NaiveDate, Vec<&Bar>>) -> Vec<NaiveDate> {
-    let mut dates: Vec<NaiveDate> = daily_by_date.keys().copied().collect();
-    dates.sort();
-    dates
-}
-
-/// Run the **pure** selection phase over the whole range (KTD11): per in-range
-/// session build the candidates with the shared [`build_candidates`] assembly and
-/// hand them to `rank`, emitting one universe envelope per candidate.
-///
-/// `select_universe` is deliberately not called — its gap gate and `universe_top_n`
-/// cap are ORB's hypothesis (KTD15). Candidate *assembly* is shared so the two paths
-/// cannot derive `prior_atr` differently; the *selection rule* is the caller's.
-///
-/// This phase touches no engine, which is what makes its output identical whether the
-/// engine phase runs after it or not.
-pub fn select_daily_sessions<R>(
-    instruments: &[InstrumentAny],
-    all_bars: &[Bar],
-    params: &OrbParams,
-    sink: &DecisionSink,
-    start_ns: u64,
-    end_ns: u64,
-    rank: &R,
-) -> anyhow::Result<DailySelection>
-where
-    R: Fn(&[UniverseCandidate]) -> Vec<String> + ?Sized,
-{
-    let (daily_by_inst, daily_by_date) = index_daily(all_bars, start_ns, end_ns);
-    let session_dates = session_dates_of(&daily_by_date);
-    select_from_index(instruments, &daily_by_inst, &session_dates, params, sink, rank)
-}
-
-/// [`select_daily_sessions`] over an already-built index — the form the combined
-/// run uses so the catalog is indexed exactly once (R5).
-fn select_from_index<R>(
-    instruments: &[InstrumentAny],
-    daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
-    session_dates: &[NaiveDate],
-    params: &OrbParams,
-    sink: &DecisionSink,
-    rank: &R,
-) -> anyhow::Result<DailySelection>
-where
-    R: Fn(&[UniverseCandidate]) -> Vec<String> + ?Sized,
-{
-    // The daily path mounts no minute bars (R2), so there is no opening-window volume
-    // series to derive an RVOL baseline from. `build_candidates` reads the map only to
-    // fill `prior_open_vol_mean`, which resolves to `None` — ORB's RVOL gate is not
-    // this path's rule anyway (KTD15).
-    let open_vol_by_inst: HashMap<InstrumentId, BTreeMap<NaiveDate, f64>> = HashMap::new();
-
-    let mut sessions = Vec::with_capacity(session_dates.len());
-    let mut candidate_union: BTreeSet<String> = BTreeSet::new();
-
-    for date in session_dates {
-        let session_ts = kst_to_unix_nanos(*date, KRX_REGULAR_OPEN)?.as_u64();
-        let candidates = build_candidates(
-            instruments,
-            daily_by_inst,
-            &open_vol_by_inst,
-            params,
-            *date,
-            None,
-        );
-        for c in &candidates {
-            candidate_union.insert(c.symbol.clone());
-        }
-        let ranked = rank(&candidates);
-        let prior_atr: BTreeMap<String, Option<f64>> =
-            candidates.iter().map(|c| (c.symbol.clone(), c.prior_atr)).collect();
-        emit_universe_envelopes(sink, params, session_ts, &candidates, &ranked);
-
-        // KTD7: fixed at exactly 1.0, and asserted here so a future edit that
-        // reintroduces the realized-P&L feedback edge fails loudly rather than
-        // quietly forcing the loop back into a per-session engine round trip.
-        let equity_multiplier = DAILY_EQUITY_MULTIPLIER;
-        assert_eq!(
-            equity_multiplier, 1.0,
-            "the daily path's session-open equity multiplier is fixed at exactly 1.0 (KTD7)"
-        );
-
-        sessions.push(DailySessionPlan {
-            date: *date,
-            session_ts,
-            ranked,
-            prior_atr,
-            equity_multiplier,
-        });
-    }
-
-    Ok(DailySelection { sessions, candidate_union: candidate_union.into_iter().collect() })
-}
-
-/// Emit one universe envelope per candidate for a session: `Accept` carrying the
-/// rank for a ranked symbol, `Reject` naming the `unranked` filter for the rest.
-/// Emission is symbol-ordered so the stream is byte-deterministic across runs
-/// regardless of the catalog's instrument read order.
-fn emit_universe_envelopes(
-    sink: &DecisionSink,
-    params: &OrbParams,
-    session_ts: u64,
-    candidates: &[UniverseCandidate],
-    ranked: &[String],
-) {
-    let rank_of: HashMap<&str, usize> =
-        ranked.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect();
-    let mut ordered: Vec<&UniverseCandidate> = candidates.iter().collect();
-    ordered.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-    for c in ordered {
-        let detail = match rank_of.get(c.symbol.as_str()) {
-            Some(rank) => DecisionDetail::universe(
-                c.symbol.clone(),
-                Decision::Accept,
-                None,
-                BTreeMap::from([
-                    ("rank".to_string(), *rank as f64),
-                    ("prior_turnover".to_string(), c.prior_turnover),
-                ]),
-            ),
-            None => DecisionDetail::universe(
-                c.symbol.clone(),
-                Decision::Reject,
-                Some("unranked".to_string()),
-                BTreeMap::from([("prior_turnover".to_string(), c.prior_turnover)]),
-            ),
-        };
-        let counts = BTreeMap::from([("decisions".to_string(), sink.len() as u64)]);
-        sink.emit(DecisionEnvelope::telemetry(
-            session_ts,
-            DecisionTrigger::StateChange {
-                description: "daily universe selection scan".to_string(),
-            },
-            detail,
-            params.telemetry_context(counts),
-        ));
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -939,15 +394,17 @@ where
     let target_m = cfg.daily.target_m;
     let blocking = tokio::task::spawn_blocking(move || {
         run_daily_blocking(
-            &instruments,
-            &all_bars,
-            &params,
-            &sink,
-            starting_balance,
-            target_m,
-            start_ns,
-            end_ns,
-            &rank,
+            DailyBlockingRun {
+                instruments: &instruments,
+                all_bars: &all_bars,
+                params: &params,
+                sink: &sink,
+                starting_balance,
+                target_m,
+                start_ns,
+                end_ns,
+                rank: &rank,
+            },
             make_strategy,
         )
     })
@@ -1355,19 +812,26 @@ pub fn daily_summary_block(result: &DailyRunResult) -> String {
     )
 }
 
-/// The whole daily lifecycle on one blocking thread: index once, run the pure
-/// selection phase, then drive the streaming engine phase.
-#[allow(clippy::too_many_arguments)]
-fn run_daily_blocking<S, R, F>(
-    instruments: &[InstrumentAny],
-    all_bars: &[Bar],
-    params: &OrbParams,
-    sink: &DecisionSink,
+/// Everything [`run_daily_blocking`] reads. A struct rather than nine positional
+/// arguments behind a `clippy::too_many_arguments` allow, matching [`FinalizeDaily`]'s
+/// reasoning: four of them are bare `f64`/`usize`/`u64` scalars in a row, which is a
+/// call the compiler cannot tell apart from a transposed one.
+struct DailyBlockingRun<'a, R: ?Sized> {
+    instruments: &'a [InstrumentAny],
+    all_bars: &'a [Bar],
+    params: &'a OrbParams,
+    sink: &'a DecisionSink,
     starting_balance: f64,
     target_m: usize,
     start_ns: u64,
     end_ns: u64,
-    rank: &R,
+    rank: &'a R,
+}
+
+/// The whole daily lifecycle on one blocking thread: index once, run the pure
+/// selection phase, then drive the streaming engine phase.
+fn run_daily_blocking<S, R, F>(
+    run: DailyBlockingRun<'_, R>,
     make_strategy: F,
 ) -> anyhow::Result<DailyRunOutcome>
 where
@@ -1381,6 +845,17 @@ where
     R: Fn(&[UniverseCandidate]) -> Vec<String> + ?Sized,
     F: FnOnce(&[MountedSymbol]) -> S,
 {
+    let DailyBlockingRun {
+        instruments,
+        all_bars,
+        params,
+        sink,
+        starting_balance,
+        target_m,
+        start_ns,
+        end_ns,
+        rank,
+    } = run;
     let (daily_by_inst, daily_by_date) = index_daily(all_bars, start_ns, end_ns);
     let session_dates = session_dates_of(&daily_by_date);
     let selection =
