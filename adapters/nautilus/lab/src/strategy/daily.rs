@@ -347,8 +347,10 @@ pub struct DailyStrategy {
     signals: DailySessionSignals,
     /// KTD3/R12: keyed by `ClientOrderId`, the only identity available at submit.
     entry_risk: ClientOrderEntryRiskLedger,
-    /// Entry orders submitted but not yet opened.
-    pending: BTreeSet<InstrumentId>,
+    /// Entry orders submitted but not yet opened — the single authority for what is in
+    /// flight. A parallel `pending: BTreeSet<InstrumentId>` was removed: two
+    /// collections cleared on different paths is exactly how a denied order kept a
+    /// concurrency slot for the rest of the run.
     pending_leg: HashMap<InstrumentId, PendingLeg>,
     open: HashMap<InstrumentId, OpenLeg>,
     /// The last session ordinal whose take refusals were recorded — the per-session
@@ -383,7 +385,6 @@ impl DailyStrategy {
             book: OpenPositionBook::new(),
             signals: DailySessionSignals::new(),
             entry_risk: ClientOrderEntryRiskLedger::new(),
-            pending: BTreeSet::new(),
             pending_leg: HashMap::new(),
             open: HashMap::new(),
             last_recorded_session: None,
@@ -520,6 +521,26 @@ impl DailyStrategy {
         }
     }
 
+    /// Drop entry orders that were submitted but never opened a position.
+    ///
+    /// An entry submitted inside `on_bar` is drained and settled at the **same** bar's
+    /// `ts_init` (see the module doc's fill mechanic), so anything still in flight when
+    /// a new session ordinal arrives never opened and never will: the risk engine
+    /// denied it, the venue rejected it, or it did not fill. Nothing else ever removes
+    /// it — `pending_leg` is otherwise cleared only by the position callbacks — so it
+    /// would hold one of `max_concurrent` slots for the rest of the run *and* make the
+    /// symbol permanently un-re-enterable, because `on_bar` returns early on an
+    /// in-flight id.
+    ///
+    /// No decision record is emitted here. The run-level diagnostic for exactly this
+    /// population already exists as
+    /// [`ClientOrderEntryRiskLedger::unopened_entries`], surfaced as
+    /// `DailyRunOutcome::unopened_entry_orders`, and it is keyed by the client order id
+    /// this side does not carry.
+    fn discard_stale_pendings(&mut self) {
+        self.pending_leg.clear();
+    }
+
     // -- the entry path -----------------------------------------------------
 
     /// The last in-range session a hold opened on `ctx.index` could still be open on
@@ -549,7 +570,7 @@ impl DailyStrategy {
         // The concurrency cap is an assertion on this path, not a second selection
         // rule: `target_m × hold` is the throttle, so reaching the cap means the take
         // over-issued.
-        let committed = self.open.len() + self.pending.len();
+        let committed = self.open.len() + self.pending_leg.len();
         if committed >= self.params.max_concurrent {
             let reason = EntryRefusal::ConcurrencyCap;
             self.record_refusal(
@@ -558,7 +579,7 @@ impl DailyStrategy {
                 reason,
                 BTreeMap::from([
                     ("open".to_string(), self.open.len() as f64),
-                    ("pending".to_string(), self.pending.len() as f64),
+                    ("pending".to_string(), self.pending_leg.len() as f64),
                     ("max_concurrent".to_string(), self.params.max_concurrent as f64),
                 ]),
             );
@@ -673,7 +694,6 @@ impl DailyStrategy {
             EntryRisk { risk_per_share, qty: qty as f64 },
         );
         self.submit_order(order, None, None, None)?;
-        self.pending.insert(id);
         self.pending_leg
             .insert(id, PendingLeg { risk_per_share, qty: qty as f64, entry_index: ctx.index });
 
@@ -760,19 +780,32 @@ nautilus_strategy!(DailyStrategy, core, {
             event.side,
             event.instrument_id
         );
-        self.pending.remove(&event.instrument_id);
+        // `pending_leg`'s removal below is what clears the in-flight record.
         // U2/KTD3 assertion 2's stream-side witness: which recorded entries actually
         // opened a position, known independently of the cache read. Recording only at
         // submit would make the runner's reconciliation tautological.
         self.entry_risk.record_opened(event.opening_order_id);
         self.book.record_opened(event.instrument_id, event.position_id);
 
-        let pending = self.pending_leg.remove(&event.instrument_id);
-        let entry_index = pending
-            .map(|p| p.entry_index)
-            .or_else(|| self.signals.current().map(|c| c.index))
-            .unwrap_or(0);
-        let risk_per_share = pending.map(|p| p.risk_per_share).unwrap_or(0.0);
+        // Hard failure, not a fallback. `risk_per_share` is the stop distance: absent
+        // it, `unwrap_or(0.0)` placed the stop AT the fill price, which both flattens
+        // the position on the next session that trades at or below its entry — killing
+        // the frozen hold — and books zero risk capital, which makes `joined_risk`
+        // return `(None, None)` and collapses `return_on_risk` to `None` for the WHOLE
+        // run. Same reasoning as the long-only guard above: a missing leg means this
+        // callback fired for an order this strategy did not submit, which is a defect
+        // to surface rather than a number to invent.
+        let leg = self.pending_leg.remove(&event.instrument_id).unwrap_or_else(|| {
+            panic!(
+                "position opened on {} with no pending entry leg recorded at submit: the \
+                 entry-fixed stop distance and the entry session ordinal are both \
+                 unrecoverable here, and substituting zero would place the stop at the fill \
+                 price and collapse return_on_risk for the whole run",
+                event.instrument_id
+            )
+        });
+        let entry_index = leg.entry_index;
+        let risk_per_share = leg.risk_per_share;
         // The stop is fixed off the REALIZED fill, not the assumed one, and never
         // moves again (R12). `risk_per_share` was recorded at submit and is exact
         // regardless of the fill, because it is `stop_atr_mult × ATR`.
@@ -813,11 +846,13 @@ impl DataActor for DailyStrategy {
             return Ok(());
         };
 
-        // Session rollover: record the take refusals exactly once per session, on its
-        // first bar callback. A duplicate bar for the same session re-enters here with
-        // the same ordinal and records nothing further.
+        // Session rollover: sweep the previous session's stale pendings, then record the
+        // take refusals — both exactly once per session, on its first bar callback. A
+        // duplicate bar for the same session re-enters here with the same ordinal and
+        // does neither again.
         if self.last_recorded_session != Some(ctx.index) {
             self.last_recorded_session = Some(ctx.index);
+            self.discard_stale_pendings();
             self.record_take_refusals(&ctx, ts);
         }
 
@@ -850,7 +885,7 @@ impl DataActor for DailyStrategy {
             return Ok(());
         }
 
-        if self.pending.contains(&id) {
+        if self.pending_leg.contains_key(&id) {
             return Ok(());
         }
         // Defensive: the runner's take already excluded held symbols (R10), so a bar

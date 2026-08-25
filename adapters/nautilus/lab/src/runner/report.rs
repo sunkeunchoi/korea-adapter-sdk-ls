@@ -32,7 +32,9 @@ use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{DECISIONS_FILE, PERFORMANCE_FILE};
 use crate::margin::{self, LoadedMargin};
 use crate::params::{OrbParams, StopMode};
-use crate::runner::research::{self, latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
+use crate::runner::research::{
+    self, latest_finalized_run, no_finalized_run_error, read_manifest, PROPOSAL_BOUNDS_CAP,
+};
 use crate::stats::{
     self, block_bootstrap_ratio, clustering, interval_normal, interval_t_few_clusters,
     minimum_detectable_edge, paired_block_bootstrap_difference, required_trades,
@@ -325,12 +327,8 @@ pub struct TiersOutcome {
 pub async fn report_tiers(cfg: &TiersConfig) -> anyhow::Result<TiersOutcome> {
     let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
         Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
-        None => latest_finalized_run(&cfg.data_home)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
-                cfg.data_home.display()
-            )
-        })?,
+        None => latest_finalized_run(&cfg.data_home)?
+            .ok_or_else(|| no_finalized_run_error(&cfg.data_home, "LS_REPORT_RUN"))?,
     };
     let Some(expected_hash) = manifest.universe_metadata_hash.clone() else {
         anyhow::bail!(
@@ -491,12 +489,9 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
     let latest = latest_finalized_run(&cfg.data_home)?;
     let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
         Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
-        None => latest.clone().ok_or_else(|| {
-            anyhow::anyhow!(
-                "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
-                cfg.data_home.display()
-            )
-        })?,
+        None => latest
+            .clone()
+            .ok_or_else(|| no_finalized_run_error(&cfg.data_home, "LS_REPORT_RUN"))?,
     };
     let defaulted = cfg.run_id.is_none();
     let profit_target_r = manifest.params.profit_target_r;
@@ -1012,12 +1007,8 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     let defaulted_run = cfg.run_id.is_none();
     let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
         Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
-        None => latest_finalized_run(&cfg.data_home)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
-                cfg.data_home.display()
-            )
-        })?,
+        None => latest_finalized_run(&cfg.data_home)?
+            .ok_or_else(|| no_finalized_run_error(&cfg.data_home, "LS_REPORT_RUN"))?,
     };
 
     let (report, trades) = load_performance(&cfg.data_home, &run_id)?;

@@ -640,19 +640,30 @@ fn the_seven_consumers_all_resolve_through_the_filtered_lookup() {
     let governed = include_str!("../src/runner/governed.rs");
     let report = include_str!("../src/runner/report.rs");
 
+    // Only each file's PRODUCTION half is counted. A `#[cfg(test)]` module's calls are not
+    // consumers of "the current run", so counting the whole file makes this guard trip on any
+    // test that merely exercises the lookup — which trains a reader to bump the number
+    // instead of asking which consumer appeared, and that is how a substring guard stops
+    // guarding. Each of these three files has exactly one top-level `#[cfg(test)]`.
+    fn production(src: &str) -> &str {
+        src.split("\n#[cfg(test)]").next().unwrap()
+    }
+    let research = production(research);
+    let governed = production(governed);
+    let report = production(report);
+
     // The seven consumers map onto SIX call sites, because `turn()`'s params adoption and
     // its range inheritance share one `prior` binding. Counted exactly, so that a consumer
     // quietly dropping the lookup — or a new one appearing that never went through it —
-    // shows up as an arithmetic mismatch rather than being absorbed.
+    // shows up as an arithmetic mismatch rather than being absorbed. Line numbers are
+    // deliberately not cited: they rot, and the count is the invariant.
     //
-    //   research.rs  `:429`  turn params adoption AND range inheritance (one binding)
-    //   research.rs  `:2189` the diagnose trial anchor
-    //   governed.rs  `:196`  the KEEP/REVERT baseline
-    //   report.rs    `:328`, `:491`, `:1015`  the three reporting commands
+    //   research.rs  turn params adoption AND range inheritance (one binding)
+    //   research.rs  the diagnose trial anchor
+    //   governed.rs  the KEEP/REVERT baseline
+    //   report.rs    the three reporting commands
     //
-    // The `+ 1`s are non-call occurrences of the same token: research.rs's own `pub fn`
-    // definition, and report.rs's `absent_run_id_defaults_to_latest_finalized_run()` test
-    // name.
+    // The one `+ 1` is a non-call occurrence: research.rs's own `pub fn` definition.
     assert_eq!(
         research.matches("latest_finalized_run(").count(),
         2 + 1,
@@ -661,8 +672,25 @@ fn the_seven_consumers_all_resolve_through_the_filtered_lookup() {
     assert_eq!(governed.matches("latest_finalized_run(").count(), 1, "the KEEP/REVERT baseline");
     assert_eq!(
         report.matches("latest_finalized_run(").count(),
-        3 + 1,
-        "report.rs: the three reporting commands, plus a test name"
+        3,
+        "report.rs: the three reporting commands"
+    );
+
+    // The refusal is paired with the lookup: every command that defaults through
+    // `latest_finalized_run` must raise `no_finalized_run_error` rather than hand-writing
+    // "run a backtest first", which is false of a registry holding only another strategy's
+    // runs. Counted for the same reason as the lookup itself — a fourth reporting command
+    // that resolves through the filter but invents its own message is the drift this
+    // catches.
+    assert_eq!(
+        research.matches("no_finalized_run_error(").count(),
+        1,
+        "research.rs: the definition only"
+    );
+    assert_eq!(
+        report.matches("no_finalized_run_error(").count(),
+        3,
+        "report.rs: one per reporting command, matching its latest_finalized_run count"
     );
 
     // No consumer resolves "the newest run" by scanning ids itself. `ordered_runs` is
