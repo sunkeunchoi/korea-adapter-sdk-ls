@@ -12,7 +12,7 @@
 //! strategy and not the (unbuilt) daily strategy: U1's carry-over proof must not
 //! depend on U4's ranking, stop, or hold semantics.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -142,16 +142,23 @@ const RANGE_END: &str = "20240131";
 
 /// A hand-chained flat daily series long enough to reach hold expiry: a constant
 /// close with a small per-session drift, so nothing ever breaches a stop placed a
-/// long way below. `low_overrides` injects a crash low on a chosen session index.
+/// long way below. `low_overrides` injects a crash low on a chosen session index;
+/// `gaps` removes a session's bar entirely (a halt, a suspension, or an incomplete
+/// ingest — the symbol keeps trading afterwards).
 ///
 /// Every price is a multiple of 100 — the KRX instrument masters this fixture
 /// ingests carry `price_increment = 100`, and the matching engine *skips the fill*
 /// (a WARN, not an error) for any price off that grid, so an off-grid fixture
 /// silently trades nothing.
-fn flat_series(base: i64, low_overrides: &HashMap<usize, i64>) -> Vec<serde_json::Value> {
+fn flat_series(
+    base: i64,
+    low_overrides: &HashMap<usize, i64>,
+    gaps: &BTreeSet<usize>,
+) -> Vec<serde_json::Value> {
     SESSION_DAYS
         .iter()
         .enumerate()
+        .filter(|(i, _)| !gaps.contains(i))
         .map(|(i, date)| {
             let c = base + (i as i64) * 100;
             let low = low_overrides.get(&i).copied().unwrap_or(c - 500);
@@ -173,21 +180,32 @@ async fn build_daily_fixture(
     data_home: &Path,
     crash: &HashMap<&str, HashMap<usize, i64>>,
 ) {
+    build_daily_fixture_with_gaps(data_home, crash, &HashMap::new()).await;
+}
+
+/// [`build_daily_fixture`] with per-symbol data gaps: the `SESSION_DAYS` indices a
+/// symbol carries no bar on at all.
+async fn build_daily_fixture_with_gaps(
+    data_home: &Path,
+    crash: &HashMap<&str, HashMap<usize, i64>>,
+    gaps: &HashMap<&str, BTreeSet<usize>>,
+) {
     let catalog = data_home.join("catalog");
     write_masters(&catalog).await;
     let empty = HashMap::new();
-    write_daily_series(
-        &catalog,
-        "005930.XKRX",
-        &flat_series(60_000, crash.get("005930.XKRX").unwrap_or(&empty)),
-    )
-    .await;
-    write_daily_series(
-        &catalog,
-        "000660.XKRX",
-        &flat_series(50_000, crash.get("000660.XKRX").unwrap_or(&empty)),
-    )
-    .await;
+    let no_gaps = BTreeSet::new();
+    for (id, base) in [("005930.XKRX", 60_000i64), ("000660.XKRX", 50_000)] {
+        write_daily_series(
+            &catalog,
+            id,
+            &flat_series(
+                base,
+                crash.get(id).unwrap_or(&empty),
+                gaps.get(id).unwrap_or(&no_gaps),
+            ),
+        )
+        .await;
+    }
     let mut cp = Checkpoint::default();
     cp.adjusted_prices = true;
     cp.save(&catalog.join("ingest-checkpoint.json")).unwrap();
@@ -689,6 +707,77 @@ async fn an_empty_batch_session_skips_the_cycle_without_erroring() {
     assert!(!outcome.batches.is_empty(), "every in-range session is still visited");
     assert!(outcome.batches.iter().all(|b| b.skipped && b.bars == 0), "every batch was skipped");
     assert!(outcome.positions.is_empty(), "no engine cycle ran, so no positions");
+}
+
+/// The empty-batch skip must not swallow a **held** symbol's data gap. With one
+/// symbol held and no other name in the batch, the session's batch is empty — the
+/// same shape as the skip above, but with a frozen hold in flight — so the run fails
+/// closed instead of skipping the session.
+#[tokio::test]
+async fn a_held_symbol_absent_from_an_empty_batch_aborts_instead_of_skipping_the_session() {
+    let dir = tempdir().unwrap();
+    // 005930 is the only rankable name, and it goes dark on session index 5.
+    build_daily_fixture_with_gaps(
+        dir.path(),
+        &HashMap::new(),
+        &HashMap::from([("005930.XKRX", BTreeSet::from([5usize]))]),
+    )
+    .await;
+
+    let error = run_daily(
+        cfg(dir.path(), 1),
+        DecisionSink::new(),
+        rank_only(&["005930.XKRX"]),
+        always_enter(
+            AlwaysEnterConfig { hold_sessions: 20, reenter: false, ..Default::default() },
+            BarWitness::default(),
+        ),
+    )
+    .await
+    .expect_err("a held symbol's gap fails the run closed even when the batch is empty");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("005930.XKRX") && message.contains("2024-01-09"),
+        "the error names the held symbol and the session it had no bar on: {message}"
+    );
+}
+
+/// The gate is scoped to **held** symbols. A name that is absent from a session while
+/// holding no position has no frozen term in flight, so its gap is not the runner's
+/// business and the run completes normally.
+#[tokio::test]
+async fn a_gap_in_a_symbol_that_holds_no_position_does_not_abort_the_run() {
+    let dir = tempdir().unwrap();
+    // 000660 is never ranked and therefore never held; it is missing on three
+    // sessions that 005930 is held across.
+    build_daily_fixture_with_gaps(
+        dir.path(),
+        &HashMap::new(),
+        &HashMap::from([("000660.XKRX", BTreeSet::from([5usize, 6, 7]))]),
+    )
+    .await;
+
+    let outcome = run_daily(
+        cfg(dir.path(), 1),
+        DecisionSink::new(),
+        rank_only(&["005930.XKRX"]),
+        always_enter(
+            AlwaysEnterConfig { hold_sessions: 6, reenter: false, ..Default::default() },
+            BarWitness::default(),
+        ),
+    )
+    .await
+    .expect("an unheld symbol's gap is not a data gap in any hold");
+
+    let held = InstrumentId::from("005930.XKRX");
+    assert_eq!(outcome.positions.len(), 1, "the held name still completes its round trip");
+    assert!(outcome.positions[0].is_closed(), "and closes at hold expiry");
+    assert!(
+        outcome.batches.iter().all(|b| b.held.is_empty() || b.held == vec![held]),
+        "000660 never held a position: {:?}",
+        outcome.batches
+    );
 }
 
 /// A value-divergent duplicate bar at the same `ts_event` mid-hold is deduped, the

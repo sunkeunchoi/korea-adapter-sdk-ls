@@ -19,6 +19,26 @@
 //!    after a completed hold mints a *distinct* position instead of silently
 //!    snapshotting the earlier round trip out of the live index (R19).
 //!
+//! # The missing-data policy: fail closed, never carry and never synthesize
+//!
+//! A held position **must** receive its symbol's daily bar on every session of its
+//! hold. Both of this path's exits fire from `DataActor::on_bar`, so a session that
+//! delivers no bar for a held symbol hands the strategy no callback for that position
+//! at all — its stop cannot evaluate and its hold-expiry exit cannot fire. The hold
+//! then runs past the **pre-registered** `holding_period_sessions` and the run still
+//! finalizes green, moving the frozen verdict statistic under a term that is not
+//! supposed to be able to move.
+//!
+//! The policy is therefore to abort the run with
+//! [`DailyEngineError::HeldSymbolMissingBar`], enforced in [`engine_phase`] against
+//! [`build_batch`]'s output on the **held** set. The two alternatives were considered
+//! and rejected: carrying the position silently *is* the defect, and flattening at a
+//! last-known price invents an execution a daily-resolution observer never saw, with
+//! its own lineage consequences. Neither may be adopted implicitly, so a catalog gap
+//! under a live hold is surfaced to the operator to heal rather than absorbed into a
+//! number. Note the empty-batch skip is not the same guard: a batch can be non-empty
+//! from other names while the held one is absent.
+//!
 //! The already-held set is engine state, and R4 forbids a per-session position-report
 //! read, so the runner clones an [`OpenPositionBook`] handle off the strategy *before*
 //! mounting it — the same shared-handle pattern `run_engine` uses for the entry-risk
@@ -674,6 +694,31 @@ pub enum DailyEngineError {
         /// The engine's `run_finished` timestamp.
         finished_ns: u64,
     },
+    /// A held position's symbol contributed no daily bar to a session of its hold.
+    /// Both exits fire from `on_bar`, so the position would silently outlive the
+    /// pre-registered hold — see the check in [`engine_phase`] for why this fails
+    /// the run closed rather than carrying or synthesizing an exit.
+    #[error(
+        "session {date} delivered no daily bar for {} held position(s) [{}]: the stop and the \
+         hold-expiry exit both fire from on_bar, so a held symbol absent from the session's \
+         batch receives no callback — its exit is postponed to whichever later session does \
+         deliver a bar, or never fires at all, and the position outlives the PRE-REGISTERED \
+         holding_period_sessions while the run finalizes green. Heal the catalog gap on these \
+         symbols over this session and re-run",
+        .missing.len(),
+        format_instrument_ids(.missing)
+    )]
+    HeldSymbolMissingBar {
+        /// The session whose batch was missing the held symbols' bars.
+        date: NaiveDate,
+        /// The held symbols with no bar on that session, in id order.
+        missing: Vec<InstrumentId>,
+    },
+}
+
+/// Render instrument ids for an error message, comma-separated in the given order.
+fn format_instrument_ids(ids: &[InstrumentId]) -> String {
+    ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }
 
 /// A duplicate daily bar dropped from a session batch (R23). A surviving
@@ -1450,6 +1495,36 @@ where
             &mut duplicate_drops,
         );
 
+        // Fail closed on a data gap inside a HELD position's series. Both the stop and
+        // the hold-expiry exit fire from `DataActor::on_bar`, so a held symbol that
+        // contributes no bar to this session gets no callback for that position: its
+        // exit slides to whichever later session does deliver a bar, or never fires and
+        // the position ends censored. Either way the hold runs past the PRE-REGISTERED
+        // `holding_period_sessions` and the run still finalizes green, which moves the
+        // frozen verdict statistic (`Σ realized_pnl / Σ risk_capital`) under a term that
+        // is not supposed to be able to move.
+        //
+        // The alternative policies were considered and rejected: carrying the position
+        // silently is the current bias, and flattening at a last-known price invents an
+        // execution the daily-resolution observer never saw. Neither may be chosen
+        // implicitly, so the gap becomes the operator's problem here rather than a
+        // number in a green run.
+        //
+        // This runs over the HELD set, before the empty-batch skip below: the empty
+        // batch is not the only path, because a batch can be non-empty from other names
+        // while the held one is absent (`build_batch` emits only what `session_bars`
+        // contains). Entry-session absence is deliberately not covered — a taken symbol
+        // with no bar simply never opens a position, so no frozen term is in flight.
+        let present: BTreeSet<InstrumentId> =
+            batch.iter().map(|b| b.bar_type.instrument_id()).collect();
+        let missing: Vec<InstrumentId> =
+            held.iter().copied().filter(|id| !present.contains(id)).collect();
+        if !missing.is_empty() {
+            return Err(
+                DailyEngineError::HeldSymbolMissingBar { date: plan.date, missing }.into()
+            );
+        }
+
         let bars = batch.len();
         let mut record = SessionBatch {
             date: plan.date,
@@ -1597,7 +1672,9 @@ fn resolve_take(
 /// Build one session's batch: **every symbol with an open position plus that
 /// session's newly taken symbols** (step 4). A held position must receive its daily
 /// bar on every session of its hold or the venue cannot price it and the stop never
-/// evaluates.
+/// evaluates — this function can only emit what `session_bars` actually holds, so
+/// that requirement is *enforced* by the [`DailyEngineError::HeldSymbolMissingBar`]
+/// check in [`engine_phase`], against this function's output.
 ///
 /// Deduped to one bar per instrument per distinct `ts_event` (R23), recording each
 /// drop and whether it was value-divergent. The first copy in catalog order wins.

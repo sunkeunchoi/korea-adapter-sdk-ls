@@ -31,7 +31,7 @@
 //! catalog. Everything that needs a *fill* (entry, stop exit, hold expiry, position
 //! identity, concurrency) goes through a real `run_daily`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -101,6 +101,11 @@ struct SymbolSpec {
     /// The first `SESSION_DAYS` index that carries a bar — a symbol that starts
     /// inside the range has no derivable prior ATR on its first candidate session.
     first_session: usize,
+    /// `SESSION_DAYS` indices this symbol carries **no bar at all** on — the data gap
+    /// a KRX trading halt, a suspension, or an incomplete ingest leaves behind. The
+    /// symbol keeps trading afterwards, so this is a hole in the series rather than a
+    /// truncation.
+    gaps: BTreeSet<usize>,
     /// A limit-locked series: `O = H = L = C` on every session, so ATR(1) is exactly
     /// zero — *available*, and it passes an `is_some` check (KTD9).
     locked: bool,
@@ -114,6 +119,7 @@ impl SymbolSpec {
             volume,
             lows: HashMap::new(),
             first_session: 0,
+            gaps: BTreeSet::new(),
             locked: false,
         }
     }
@@ -188,7 +194,7 @@ fn series(spec: &SymbolSpec) -> Vec<serde_json::Value> {
     SESSION_DAYS
         .iter()
         .enumerate()
-        .filter(|(i, _)| *i >= spec.first_session)
+        .filter(|(i, _)| *i >= spec.first_session && !spec.gaps.contains(i))
         .map(|(i, date)| {
             if spec.locked {
                 // A KRX limit-locked session: O = H = L = C, so the true range is
@@ -779,6 +785,60 @@ async fn an_unbreached_position_closes_at_exactly_entry_plus_hold() {
     assert!(
         !recs.iter().any(|r| matches!(r.kind, SignalKind::StopHit)),
         "nothing breached its stop in this fixture: {recs:#?}"
+    );
+}
+
+/// **Scenario 5b (the data-gap gate).** A held symbol that contributes no bar to a
+/// session **aborts the run** rather than silently outliving its frozen hold.
+///
+/// The frozen `holding_period_sessions` is a pre-registered term. Both exits fire from
+/// [`DataActor::on_bar`], so a session that delivers no bar for a held position hands
+/// the strategy no callback for it at all: before this gate the exit slid to whichever
+/// later session did deliver one, and the run still finalized green. Measured on this
+/// exact fixture, the position opened at session 0 under a 3-session hold exited at
+/// `elapsed_sessions = 5` — a 67% overrun of a term that is not supposed to move.
+///
+/// The session the gap falls on is deliberately one whose batch is **non-empty**: the
+/// second symbol keeps printing, so the empty-batch skip is not what catches this.
+#[tokio::test]
+async fn a_held_symbol_with_no_bar_aborts_the_run_instead_of_outliving_its_frozen_hold() {
+    let dir = tempdir().unwrap();
+    let mut specs = descending_turnover(2);
+    // The top-ranked name goes dark for the two sessions straddling its hold expiry,
+    // then trades again. The second name keeps printing, so every batch is non-empty.
+    specs[0].gaps = BTreeSet::from([FIRST_IN_RANGE + 3, FIRST_IN_RANGE + 4]);
+    build_fixture(dir.path(), &specs).await;
+
+    let sink = DecisionSink::new();
+    let params = DailyParams {
+        holding_period_sessions: 3,
+        target_m: 1,
+        max_concurrent: 8,
+        ..DailyParams::default()
+    };
+    let error = run_daily(
+        cfg_range(dir.path(), FIRST_IN_RANGE, FIRST_IN_RANGE + 11, 1),
+        sink.clone(),
+        rank_by_placeholder_signal,
+        DailyStrategy::factory(params, sink.clone(), AdjustmentBasisShifts::none()),
+    )
+    .await
+    .expect_err("the run must fail closed on the gap, not finalize green over it");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&specs[0].id().to_string()),
+        "the error names the held symbol whose bar was missing: {message}"
+    );
+    // The FIRST gap session, not a later one: the gate fires on the session the
+    // contract is first unenforceable on.
+    assert!(
+        message.contains(&day(FIRST_IN_RANGE + 3).to_string()),
+        "the error names the session the bar was missing from: {message}"
+    );
+    assert!(
+        !message.contains(&specs[1].id().to_string()),
+        "the name that kept printing is not implicated: {message}"
     );
 }
 
