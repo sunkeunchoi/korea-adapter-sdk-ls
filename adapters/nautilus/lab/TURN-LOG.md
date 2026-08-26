@@ -81,6 +81,52 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — declared build-input fingerprint boundary CLOSED over the adapter and calendar packages: `LAB_SRC_FINGERPRINT` moves `cd6626ce…` → `fa213f72…`; no strategy code, no param, no run (2026-08-26) — plan 2026-08-25-2332, queue `fingerprint-nautilus-ls-calendar-closure`
+
+- **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
+  backtest. `strategy_code_hash` is unchanged (`lab/src/strategy/orb.rs` untouched), so head
+  identity does not move and the documented head stays **v35**. The compatibility surfaces are
+  untouched as well: the environment constant `LAB_SRC_FINGERPRINT`, the CLI line
+  `fingerprint: <hex>`, and the persisted manifest field `lab_src_fingerprint`.
+- **What DID change — the declared inventory, 15 entries → 18.** The digest now covers
+  `adapters/nautilus/src` (the `nautilus-ls` adapter source tree), the
+  `nautilus-ls-calendar` source tree, and the calendar package manifest. Both packages were
+  already compiled into every lab binary as path dependencies, so before this change an edit
+  in either could move a binary's behavior while its embedded digest stayed equal — and the
+  governed turn would accept it. The dual-purpose `adapters/nautilus/Cargo.toml` gets **no**
+  second entry: it already enters as the workspace manifest, and a second entry would fail
+  the inventory's duplicate-normalized-path check.
+- **The digest transition, both values recorded.** `LAB_SRC_FINGERPRINT`
+  **`cd6626cebcd3482ce1f87a33fb40323647c0461d7efd275be3748cc836de9a0d`** →
+  **`fa213f72c843f36b1fa381871cc39ca6f4e9748ad571aecf729aacd571bcbab1`** (debug profile,
+  recomputation equal to the embedded value). This is why a later KEEP verdict's interpolated
+  hash moves while `strategy_code_hash` does not: `lab_src_fingerprint` is stamped into
+  manifests and rendered into the verdict string but never equality-tested — every persisted
+  comparator keys on `catalog_fingerprint`, `strategy_code_hash`, `governed_params_hash`, or a
+  git-derived tree digest instead. The pre-change value was recorded **before** the edit
+  landed, because the inventory file is itself a declared input and the old value is
+  unrecoverable afterwards.
+- **Every prebuilt lab binary refuses once.** A governed turn on a binary built before this
+  change HELDs `StaleBinary` at the parent self-check, before diagnosis and before the build
+  stage; the recovery is a release rebuild in the adapter workspace and a re-run, and the turn
+  is one-shot so nothing is lost. Note that a pre-change binary's refusal is **not** evidence
+  that the widening shipped — the shared inventory file was already declared, so it would
+  refuse for any edit to it. The proof is the content assertion above: the rebuilt binary's
+  recomputed digest differs from the recorded pre-change value.
+- **The coverage oracle lost its package-specific deferral.** The subtraction in
+  `lab/tests/fingerprint_closure.rs` carried three roots and now carries one — generated build
+  output under `adapters/nautilus/target`, which has no source form to declare. A future
+  repository-local crate the lab compiles is therefore a gate failure rather than a silent gap.
+  Because deleting deferral arms leaves the suite green either way, the deletion is proven by a
+  new adapter-workspace falsifier that reds against the pre-change predicate (observed: uncovered
+  `{}` vs the expected undeclared input) while the pre-existing root-workspace falsifier stays
+  green under both — which is exactly why the old falsifier could not gate this.
+- **Residual staged, not silently absorbed.** An edit under `adapters/nautilus/src/bin/**` moves
+  the declared digest but never reaches the lab binary's Cargo dependency evidence, so the
+  morning preflight's mtime axis reports fresh while a governed turn refuses. That divergence is
+  its own queue item; the pre-existing `session-morning-root-manifest-freshness` item covers a
+  different residual and this plan does not touch `session-morning.sh`.
+
 ## Governance — successor daily lineage PRE-REGISTRATION FROZEN (P6): terms, refusal mechanic, and derivation guard land; the lineage is NOT opened — offline, zero gateway calls (2026-08-15) — plan 2026-08-14-001, queue `next-lineage-preregistration-artifact`
 
 - **Verdict: FROZEN, and deliberately NOT OPENED.** The successor daily-resolution
