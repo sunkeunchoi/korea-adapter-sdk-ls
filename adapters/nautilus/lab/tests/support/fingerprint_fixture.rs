@@ -42,6 +42,7 @@ fn seed(root: &Path) {
         "crates/ls-core/src",
         "crates/ls-sdk-test-support/src",
         "metadata/constraints",
+        "adapters/nautilus/target/debug",
         "target/debug",
     ] {
         std::fs::create_dir_all(root.join(directory)).expect("create fixture directory");
@@ -98,6 +99,10 @@ fn seed(root: &Path) {
         ("metadata/error-catalog.yaml", "errors: {}\n"),
         ("metadata/constraints/t1101.yaml", "tr: t1101\n"),
         ("target/debug/generated.rs", "generated negative control\n"),
+        (
+            "adapters/nautilus/target/debug/generated.rs",
+            "adapter generated negative control\n",
+        ),
     ] {
         std::fs::write(root.join(relative), body).expect("write fixture file");
     }

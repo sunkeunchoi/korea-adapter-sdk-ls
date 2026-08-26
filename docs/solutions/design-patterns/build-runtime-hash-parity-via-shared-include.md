@@ -3,7 +3,7 @@ title: "Guarantee build/runtime fingerprint parity with one shared declared-inpu
 date: 2026-07-16
 last_updated: 2026-08-26
 category: design-patterns
-module: adapters/nautilus/lab (build.rs, fingerprint_core.rs, src/fingerprint.rs) — the declared lab build-input fingerprint
+module: "adapters/nautilus/lab (build.rs, fingerprint_core.rs, src/fingerprint.rs, tests/fingerprint_closure.rs) — the declared lab build-input fingerprint; certified inputs also include adapters/nautilus/src, adapters/nautilus/nautilus-ls-calendar, crates/ls-sdk, crates/ls-core, metadata/constraints"
 problem_type: design_pattern
 component: development_workflow
 severity: medium
@@ -19,6 +19,8 @@ tags:
   - hash-parity
   - input-inventory
   - strategy-loop
+  - adapter-workspace
+  - coverage-oracle
 ---
 
 ## Context
@@ -170,12 +172,12 @@ Do not trust the inventory merely because its own tests are green. Compare it to
 independent evidence:
 
 - Cargo's generated dependency evidence for every repository-local package the lab
-  compiles — `ls-sdk`, `ls-core`, `nautilus-ls`, and `nautilus-ls-calendar`. Prefer
-  the built binary's `.d` sidecar when present, but fall back to Cargo's versioned,
-  typed `.fingerprint/**/dep-lib-*` records because artifact caches do not
-  guarantee that convenience sidecar survives. Both paths resolve all four
-  packages, so the closure does not depend on which evidence format happens to
-  survive in a build directory;
+  links — `ls-sdk`, `ls-core`, `nautilus-ls`, and `nautilus-ls-calendar`. Prefer the
+  built binary's `.d` sidecar when present, but fall back to Cargo's versioned, typed
+  `.fingerprint/**/dep-lib-*` records because artifact caches do not guarantee that
+  convenience sidecar survives. Both paths are exercised against the real build
+  directory and must yield the same closed boundary, so the closure does not depend on
+  which evidence format happens to survive;
 - `ls-core` build-script output for rebuild-watched embedded metadata;
 - explicit checks for manifests, lockfile, and toolchain inputs those oracles do
   not own.
@@ -186,12 +188,25 @@ Its only subtraction is generated build output under `adapters/nautilus/target`,
 which has no source form to declare — build-script output such as `ls-core`'s
 generated metadata legitimately appears in dependency evidence.
 
+Two classes escape that oracle by construction, so each gets its own check:
+
+- **A build script at a linked package root** never appears in that package's lib
+  dep-info, which is why `crates/ls-core/build.rs` is declared explicitly. A test
+  asserts that every linked package's `build.rs` either does not exist or is covered,
+  so adding one cannot silently escape.
+- **A fifth repository-local crate** would be skipped by the fallback decoder's
+  per-package dispatch. That table is pinned to an independent source of truth — the
+  adapter lockfile, where a repository-local package is a `[[package]]` block with no
+  `source` key — and every local package must be classified as linked or explicitly
+  unlinked, with its reason. A new crate reds that test until it is classified.
+
 Ship permanent falsifiers: a synthetic undeclared `crates/new/src/lib.rs`, a
-synthetic undeclared crate planted *inside the adapter workspace* — the shape the
+synthetic undeclared input planted *inside the adapter workspace* — the shape the
 deleted per-package deferral used to hide — and a synthetic undeclared
-build-script data path must each make the coverage checker report the gap. With
-the deferral deleted, those falsifiers are the mechanism that makes a future
-repository-local crate fail closed instead of sitting silently uncertified.
+build-script data path must each make the coverage checker report the gap. The
+adapter-workspace falsifier is a falsifier of the *predicate*: it reds against a
+per-package exemption and passes without one, which is what proves the deletion
+rather than assuming it.
 
 Mutation tests must also flip one declared class at a time and prove that the
 digest moves, adapter source, calendar source, and the calendar manifest included.

@@ -39,6 +39,9 @@ fn every_declared_input_class_moves_the_digest() {
         "adapters/nautilus/Cargo.lock",
         "adapters/nautilus/rust-toolchain.toml",
     ];
+    // A declared entry added without a mutation case here would leave the new class
+    // unproven while the suite stayed green.
+    assert_eq!(cases.len(), declared_inventory().len());
 
     for relative in cases {
         let fixture = FingerprintFixture::new();
@@ -82,6 +85,28 @@ fn membership_changes_move_each_declared_tree() {
     }
 }
 
+/// The tree walk reads each entry's node kind to reject symlinks and special nodes.
+/// Without this case that refusal is unexercised, and a walk that silently followed a
+/// link would hash the target's bytes under the link's path — a digest that moves when
+/// something outside the declared tree changes.
+#[cfg(unix)]
+#[test]
+fn a_symlink_inside_a_declared_tree_is_refused() {
+    let fixture = FingerprintFixture::new();
+    recompute_from_root(fixture.root()).expect("the unchanged fixture must hash");
+    std::os::unix::fs::symlink(
+        fixture.path("Cargo.toml"),
+        fixture.path("adapters/nautilus/src/linked.rs"),
+    )
+    .unwrap();
+    let error = recompute_from_root(fixture.root())
+        .expect_err("a symlink inside a declared tree must fail closed");
+    assert!(
+        error.to_string().contains("contains a symlink"),
+        "refusal must name the symlink, not fail for some other reason: {error}"
+    );
+}
+
 #[test]
 fn digest_is_declaration_order_and_checkout_location_independent() {
     let first = FingerprintFixture::new();
@@ -102,6 +127,7 @@ fn excluded_inputs_are_negative_controls() {
     for relative in [
         "Cargo.lock",
         "target/debug/generated.rs",
+        "adapters/nautilus/target/debug/generated.rs",
         "crates/ls-sdk-test-support/src/lib.rs",
         "adapters/nautilus/state/krx.calendar.json",
     ] {
@@ -229,23 +255,64 @@ fn cargo_dependency_evidence_has_no_undeclared_repository_input() {
     let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
     let evidence = lab_dependency_evidence();
     let selected_sources = repository_dependency_paths(&evidence, &repo_root);
-    for expected in [
-        "crates/ls-sdk/src",
-        "crates/ls-core/src",
-        "adapters/nautilus/src",
-        "adapters/nautilus/nautilus-ls-calendar/src",
-    ] {
+    for (_, package_root_relative, _) in LINKED_REPOSITORY_PACKAGES {
+        // The linked tree, not the package root: a bare `adapters/nautilus` prefix
+        // would be satisfied by any path in the adapter workspace.
+        let expected = Path::new(package_root_relative).join("src");
         assert!(
-            selected_sources
-                .iter()
-                .any(|path| path.starts_with(expected)),
-            "Cargo dep-info must expose repository-local sources under {expected}"
+            selected_sources.iter().any(|path| path.starts_with(&expected)),
+            "Cargo dep-info must expose repository-local sources under {}",
+            expected.display()
         );
     }
     let uncovered = uncovered_repository_dependencies(&selected_sources);
     assert!(
         uncovered.is_empty(),
         "Cargo compiled inputs outside the declared boundary: {uncovered:?}"
+    );
+}
+
+/// A build script at a linked package root is a compiled input that never appears in
+/// that package's lib dep-info, so the dependency-evidence oracle above cannot see it.
+/// `crates/ls-core/build.rs` is declared for exactly this reason; this test is what
+/// makes that class fail closed instead of silently escaping the boundary.
+#[test]
+fn no_linked_package_has_an_undeclared_build_script() {
+    let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
+    let inventory = declared_inventory();
+    for (package, package_root_relative, _) in LINKED_REPOSITORY_PACKAGES {
+        let relative = Path::new(package_root_relative).join("build.rs");
+        if !repo_root.join(&relative).exists() {
+            continue;
+        }
+        assert!(
+            inventory.iter().any(|input| input.covers(&relative)),
+            "{package} has a build script no declared entry covers: {}",
+            relative.display()
+        );
+    }
+}
+
+/// `LINKED_REPOSITORY_PACKAGES` is a hand-written table, so on its own it cannot
+/// notice a fifth repository-local crate — the fallback decoder would skip the new
+/// package and the completeness assertion would compare the table to itself. Pin it
+/// to an independent source of truth: the adapter lockfile, which lists every
+/// repository-local package as a `[[package]]` block carrying no `source` key. A new
+/// local crate reds this test until someone classifies it as linked or not.
+#[test]
+fn the_linked_package_table_accounts_for_every_repository_local_package() {
+    let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
+    let lock = std::fs::read_to_string(repo_root.join("adapters/nautilus/Cargo.lock"))
+        .expect("read the adapter lockfile");
+    let classified: BTreeSet<&str> = LINKED_REPOSITORY_PACKAGES
+        .iter()
+        .map(|(package, _, _)| *package)
+        .chain(UNLINKED_REPOSITORY_PACKAGES.iter().map(|(package, _)| *package))
+        .collect();
+    assert_eq!(
+        local_lockfile_packages(&lock),
+        classified,
+        "every repository-local package must be classified as linked or unlinked"
     );
 }
 
@@ -294,15 +361,34 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
             "dep-lib-nautilus_ls_calendar",
             vec![(0, "src/lib.rs")],
         ),
+        // Prefix-sharing siblings the table must NOT resolve. Each carries a source
+        // path unique to it, so a decoder that mis-attributed the directory would emit
+        // that path and red the negative assertions below — a shared `src/lib.rs`
+        // would collide with a linked package's own path and prove nothing.
         (
             "nautilus-ls-lab-current",
             "dep-lib-nautilus_ls_lab",
-            vec![(0, "src/lib.rs")],
+            vec![(0, "src/lab_only.rs")],
         ),
         (
             "ls-sdk-test-support-current",
             "dep-lib-ls_sdk_test_support",
-            vec![(0, "src/lib.rs")],
+            vec![(0, "src/support_only.rs")],
+        ),
+        // A second fingerprint directory for one package: the lib dep-info is absent
+        // here, so this exercises the NotFound-continue arm that every bin-target
+        // directory hits in a real build tree.
+        (
+            "nautilus-ls-4f2a91c0",
+            "dep-bin-ls_ingest",
+            vec![(0, "src/bin/ls-ingest.rs")],
+        ),
+        // A third, carrying a valid lib dep-info: evidence from every matching
+        // directory accumulates rather than the last one winning.
+        (
+            "nautilus-ls-9b7d33e1",
+            "dep-lib-nautilus_ls",
+            vec![(0, "src/instrument.rs")],
         ),
     ] {
         let package_dir = fingerprint_dir.join(directory);
@@ -324,10 +410,41 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
     assert!(evidence.contains("adapters/nautilus/src/constraints.rs"));
     assert!(evidence.contains("adapters/nautilus/nautilus-ls-calendar/src/lib.rs"));
     assert!(evidence.contains("embedded_metadata.rs"));
+    // Accumulated across both nautilus-ls fingerprint directories.
+    assert!(evidence.contains("adapters/nautilus/src/instrument.rs"));
     // A package that merely shares a prefix with a linked one contributes nothing:
     // the lab itself is not a dependency of itself, and test-support is dev-only.
-    assert!(!evidence.contains("nautilus-ls-lab"));
-    assert!(!evidence.contains("ls-sdk-test-support"));
+    assert!(!evidence.contains("lab_only.rs"));
+    assert!(!evidence.contains("support_only.rs"));
+    // The bin-target directory carries no lib dep-info, so it is skipped entirely.
+    assert!(!evidence.contains("ls-ingest.rs"));
+}
+
+/// The synthetic test above proves the decoder's shape; this one proves the closure
+/// actually holds on the degraded evidence path against the real build directory, so
+/// "the boundary does not depend on which evidence format survived" is an executed
+/// assertion rather than a documented intention.
+#[test]
+fn the_real_cargo_fingerprint_tree_yields_the_same_closed_boundary() {
+    let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
+    let evidence = cargo_fingerprint_dependency_evidence(
+        &PathBuf::from(env!("CARGO_BIN_EXE_lab-research")),
+        &repo_root,
+    );
+    let selected_sources = repository_dependency_paths(&evidence, &repo_root);
+    for (_, package_root_relative, _) in LINKED_REPOSITORY_PACKAGES {
+        let expected = Path::new(package_root_relative).join("src");
+        assert!(
+            selected_sources.iter().any(|path| path.starts_with(&expected)),
+            "Cargo fingerprint evidence must expose sources under {}",
+            expected.display()
+        );
+    }
+    let uncovered = uncovered_repository_dependencies(&selected_sources);
+    assert!(
+        uncovered.is_empty(),
+        "Cargo fingerprint inputs outside the declared boundary: {uncovered:?}"
+    );
 }
 
 #[test]
@@ -353,12 +470,16 @@ fn synthetic_dependency_evidence_exposes_an_undeclared_root_source() {
     );
 }
 
-/// Deliberate sibling of the root-source falsifier, and not redundant with it. This
-/// one plants *inside* the adapter workspace, where the calendar package's `src` tree
-/// and manifest are declared but nothing else in that package is — the shape a future
-/// repository-local input takes. Any per-package exemption predicate would wrongly
-/// subtract this path while leaving the root falsifier green, so the two tests must
-/// not be merged or parameterized into one.
+/// Deliberate sibling of the root-source falsifier, and not redundant with it. This one
+/// plants *inside* the adapter workspace, where the calendar package's `src` tree and
+/// manifest are declared but nothing else in that package is. Any per-package exemption
+/// predicate would wrongly subtract this path while leaving the root falsifier green, so
+/// the two tests must not be merged or parameterized into one.
+///
+/// It falsifies the *predicate*, not a reachable evidence shape: a build script at a
+/// package root does not appear in that package's lib dep-info, so real evidence would
+/// not carry this path. `no_linked_package_has_an_undeclared_build_script` is what
+/// covers the reachable form of this class.
 #[test]
 fn synthetic_dependency_evidence_exposes_an_undeclared_adapter_workspace_input() {
     let fixture = FingerprintFixture::new();
@@ -434,6 +555,47 @@ const LINKED_REPOSITORY_PACKAGES: [(&str, &str, &str); 4] = [
         "dep-lib-nautilus_ls_calendar",
     ),
 ];
+
+/// The repository-local packages the adapter lockfile carries that the lab binary does
+/// NOT link, each with the reason it contributes no compiled input. Kept beside the
+/// linked table so the two together account for every local package in the lockfile —
+/// that is what turns a new repository-local crate into a red test rather than a
+/// silently skipped one on the fallback evidence path.
+const UNLINKED_REPOSITORY_PACKAGES: [(&str, &str); 3] = [
+    (
+        "nautilus-ls-lab",
+        "the crate under test; it is not a dependency of itself",
+    ),
+    (
+        "ls-sdk-test-support",
+        "dev-only wiremock helper, so it cannot change a shipped binary",
+    ),
+    (
+        "ls-metadata",
+        "outside the lab binary's dependency closure; reachable only from root tooling",
+    ),
+];
+
+/// Every `[[package]]` block in a Cargo lockfile that carries no `source` key — the
+/// lockfile's own way of saying the package comes from this repository rather than a
+/// registry.
+fn local_lockfile_packages(lock: &str) -> BTreeSet<&str> {
+    lock.split("[[package]]")
+        .skip(1)
+        .filter(|block| {
+            !block
+                .lines()
+                .any(|line| line.trim_start().starts_with("source = "))
+        })
+        .filter_map(|block| {
+            block.lines().find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("name = \"")?
+                    .strip_suffix('"')
+            })
+        })
+        .collect()
+}
 
 fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> String {
     let profile_dir = binary.parent().expect("lab binary has a profile directory");
