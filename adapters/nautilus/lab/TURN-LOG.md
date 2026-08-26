@@ -81,7 +81,7 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
-## Governance — declared build-input fingerprint boundary CLOSED over the adapter and calendar packages: `LAB_SRC_FINGERPRINT` moves `cd6626ce…` → `fa213f72…`; no strategy code, no param, no run (2026-08-26) — plan 2026-08-25-2332, queue `fingerprint-nautilus-ls-calendar-closure`
+## Governance — declared build-input fingerprint boundary CLOSED over the adapter and calendar packages: `LAB_SRC_FINGERPRINT` moves `cd6626ce…` → `56d2b88a…`; no strategy code, no param, no run (2026-08-26) — plan 2026-08-25-2332, queue `fingerprint-nautilus-ls-calendar-closure`
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
   backtest. `strategy_code_hash` is unchanged (`lab/src/strategy/orb.rs` untouched), so head
@@ -98,7 +98,7 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   the inventory's duplicate-normalized-path check.
 - **The digest transition, both values recorded.** `LAB_SRC_FINGERPRINT`
   **`cd6626cebcd3482ce1f87a33fb40323647c0461d7efd275be3748cc836de9a0d`** →
-  **`fa213f72c843f36b1fa381871cc39ca6f4e9748ad571aecf729aacd571bcbab1`** (debug profile,
+  **`56d2b88a860d19503577c91106ce05df2766c4cbed54faa832d6a4fb065d442b`** (debug profile,
   recomputation equal to the embedded value). This is why a later KEEP verdict's interpolated
   hash moves while `strategy_code_hash` does not: `lab_src_fingerprint` is stamped into
   manifests and rendered into the verdict string but never equality-tested — every persisted

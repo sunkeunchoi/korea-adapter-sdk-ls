@@ -99,10 +99,6 @@ fn seed(root: &Path) {
         ("metadata/constraints/t1101.yaml", "tr: t1101\n"),
         ("target/debug/generated.rs", "generated negative control\n"),
     ] {
-        let path = root.join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("create fixture file parent");
-        }
-        std::fs::write(path, body).expect("write fixture file");
+        std::fs::write(root.join(relative), body).expect("write fixture file");
     }
 }

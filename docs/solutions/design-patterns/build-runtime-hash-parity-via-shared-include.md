@@ -113,9 +113,10 @@ This prerequisite deliberately does **not** certify:
   two competing identities and make an ordinary calendar ingest invalidate every
   governed binary.
 
-The boundary is closed and carries no package-specific deferral: a
-repository-local crate the lab compiles is either declared here or reported by
-the coverage oracle. The morning shell preflight's omission of the root SDK/core
+The boundary is closed and carries no package-specific deferral: a repository-local
+crate the lab *links into its binaries* is either declared here or reported by the
+coverage oracle. Dev-only dependency sources are outside it by the same rule — they
+cannot change a shipped binary. The morning shell preflight's omission of the root SDK/core
 manifests is also a distinct residual; this runtime fingerprint does not silently
 discharge that shell boundary.
 

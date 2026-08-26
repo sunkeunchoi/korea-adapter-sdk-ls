@@ -294,6 +294,16 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
             "dep-lib-nautilus_ls_calendar",
             vec![(0, "src/lib.rs")],
         ),
+        (
+            "nautilus-ls-lab-current",
+            "dep-lib-nautilus_ls_lab",
+            vec![(0, "src/lib.rs")],
+        ),
+        (
+            "ls-sdk-test-support-current",
+            "dep-lib-ls_sdk_test_support",
+            vec![(0, "src/lib.rs")],
+        ),
     ] {
         let package_dir = fingerprint_dir.join(directory);
         std::fs::create_dir_all(&package_dir).unwrap();
@@ -314,6 +324,10 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
     assert!(evidence.contains("adapters/nautilus/src/constraints.rs"));
     assert!(evidence.contains("adapters/nautilus/nautilus-ls-calendar/src/lib.rs"));
     assert!(evidence.contains("embedded_metadata.rs"));
+    // A package that merely shares a prefix with a linked one contributes nothing:
+    // the lab itself is not a dependency of itself, and test-support is dev-only.
+    assert!(!evidence.contains("nautilus-ls-lab"));
+    assert!(!evidence.contains("ls-sdk-test-support"));
 }
 
 #[test]
@@ -339,12 +353,12 @@ fn synthetic_dependency_evidence_exposes_an_undeclared_root_source() {
     );
 }
 
-/// The sibling of the root-workspace falsifier, planted at a path the deleted
-/// per-package deferral arms used to subtract. The calendar package's `src` tree
-/// and manifest are declared, but nothing else in that package is, so a compiled
-/// build script there is exactly the shape a future repository-local input takes.
-/// This test reds against a per-package deferral predicate and is therefore what
-/// proves the deletion, which the root-workspace falsifier cannot do.
+/// Deliberate sibling of the root-source falsifier, and not redundant with it. This
+/// one plants *inside* the adapter workspace, where the calendar package's `src` tree
+/// and manifest are declared but nothing else in that package is — the shape a future
+/// repository-local input takes. Any per-package exemption predicate would wrongly
+/// subtract this path while leaving the root falsifier green, so the two tests must
+/// not be merged or parameterized into one.
 #[test]
 fn synthetic_dependency_evidence_exposes_an_undeclared_adapter_workspace_input() {
     let fixture = FingerprintFixture::new();
@@ -405,6 +419,22 @@ fn dependency_evidence_for_binary(binary: &Path, repo_root: &Path) -> String {
     cargo_fingerprint_dependency_evidence(binary, repo_root)
 }
 
+/// Every repository-local package the lab links, paired with the repository-relative
+/// root its dep-info paths resolve against and the dep-info file Cargo writes for its
+/// lib target. This is the single place the package set is stated: the dispatch below
+/// and the completeness assertion both derive from it, so a fifth package cannot be
+/// added to one and forgotten in the other.
+const LINKED_REPOSITORY_PACKAGES: [(&str, &str, &str); 4] = [
+    ("ls-sdk", "crates/ls-sdk", "dep-lib-ls_sdk"),
+    ("ls-core", "crates/ls-core", "dep-lib-ls_core"),
+    ("nautilus-ls", "adapters/nautilus", "dep-lib-nautilus_ls"),
+    (
+        "nautilus-ls-calendar",
+        "adapters/nautilus/nautilus-ls-calendar",
+        "dep-lib-nautilus_ls_calendar",
+    ),
+];
+
 fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> String {
     let profile_dir = binary.parent().expect("lab binary has a profile directory");
     let target_dir = profile_dir
@@ -420,19 +450,14 @@ fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> Str
         let entry = entry.unwrap();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let (package, package_root_relative, dep_info_name) = if name.starts_with("ls-sdk-") {
-            ("ls-sdk", "crates/ls-sdk", "dep-lib-ls_sdk")
-        } else if name.starts_with("ls-core-") {
-            ("ls-core", "crates/ls-core", "dep-lib-ls_core")
-        } else if name.starts_with("nautilus-ls-calendar-") {
-            (
-                "nautilus-ls-calendar",
-                "adapters/nautilus/nautilus-ls-calendar",
-                "dep-lib-nautilus_ls_calendar",
-            )
-        } else if name.starts_with("nautilus-ls-") {
-            ("nautilus-ls", "adapters/nautilus", "dep-lib-nautilus_ls")
-        } else {
+        // Cargo names each fingerprint directory `<package>-<hash>`. Match the package
+        // name exactly, so a sibling that merely shares a prefix — `nautilus-ls-lab`,
+        // `ls-sdk-test-support` — is never resolved against the wrong package root.
+        let package_name = name.rsplit_once('-').map_or(&*name, |(package, _)| package);
+        let Some(&(package, package_root_relative, dep_info_name)) = LINKED_REPOSITORY_PACKAGES
+            .iter()
+            .find(|(candidate, _, _)| *candidate == package_name)
+        else {
             continue;
         };
         let dep_info_path = entry.path().join(dep_info_name);
@@ -458,8 +483,11 @@ fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> Str
 
     assert_eq!(
         found_packages,
-        BTreeSet::from(["ls-core", "ls-sdk", "nautilus-ls", "nautilus-ls-calendar"]),
-        "Cargo fingerprint evidence must include every repository-local package the lab compiles"
+        LINKED_REPOSITORY_PACKAGES
+            .iter()
+            .map(|(package, _, _)| *package)
+            .collect::<BTreeSet<_>>(),
+        "Cargo fingerprint evidence must include every repository-local package the lab links"
     );
     evidence
 }
