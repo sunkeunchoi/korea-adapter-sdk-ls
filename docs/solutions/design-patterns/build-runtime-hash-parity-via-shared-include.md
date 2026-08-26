@@ -208,6 +208,12 @@ adapter-workspace falsifier is a falsifier of the *predicate*: it reds against a
 per-package exemption and passes without one, which is what proves the deletion
 rather than assuming it.
 
+Those three hand the checker a fabricated evidence string, so a broken decoder is
+never on their execution path. One more plants an undeclared input as a real Cargo
+dep-info record and drives the whole degraded chain — fingerprint-directory matching,
+dep-info decoding, package-root resolution, coverage subtraction — so the fallback is
+proven to *report* a gap rather than merely to be clean against today's tree.
+
 Mutation tests must also flip one declared class at a time and prove that the
 digest moves, adapter source, calendar source, and the calendar manifest included.
 The retained negative controls are root `Cargo.lock`, generated output under any

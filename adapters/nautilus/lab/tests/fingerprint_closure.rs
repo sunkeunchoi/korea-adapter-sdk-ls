@@ -420,6 +420,45 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
     assert!(!evidence.contains("ls-ingest.rs"));
 }
 
+/// The other falsifiers hand `uncovered_repository_dependencies` a fabricated evidence
+/// string, so a broken fallback decoder is never on their execution path. This one
+/// plants an undeclared input as a real Cargo dep-info record and drives the whole
+/// degraded chain — fingerprint-directory matching, dep-info decoding, package-root
+/// resolution, coverage subtraction — so the fallback is proven to *report* a gap
+/// rather than merely to be clean against today's tree.
+#[test]
+fn the_cargo_fingerprint_fallback_reports_an_undeclared_input() {
+    let fixture = FingerprintFixture::new();
+    let profile_dir = fixture.path("adapters/nautilus/target/debug");
+    // Every linked package must be present or the helper's completeness assertion fires
+    // first; only nautilus-ls carries the undeclared extra input.
+    for (package, _, dep_info_name) in LINKED_REPOSITORY_PACKAGES {
+        let package_dir = profile_dir.join(".fingerprint").join(format!("{package}-1c0ffee0"));
+        std::fs::create_dir_all(&package_dir).unwrap();
+        let paths = if package == "nautilus-ls" {
+            // `src/lib.rs` is declared; the generated sibling at the package root is not.
+            vec![(0, "src/lib.rs"), (0, "generated_data.rs")]
+        } else {
+            vec![(0, "src/lib.rs")]
+        };
+        std::fs::write(
+            package_dir.join(dep_info_name),
+            encoded_cargo_dep_info(&paths),
+        )
+        .unwrap();
+    }
+
+    let evidence =
+        cargo_fingerprint_dependency_evidence(&profile_dir.join("lab-research"), fixture.root());
+    let paths = repository_dependency_paths(&evidence, fixture.root());
+    let uncovered = uncovered_repository_dependencies(&paths);
+    assert_eq!(
+        uncovered,
+        BTreeSet::from([PathBuf::from("adapters/nautilus/generated_data.rs")]),
+        "the fallback path must surface an undeclared repository-local input"
+    );
+}
+
 /// The synthetic test above proves the decoder's shape; this one proves the closure
 /// actually holds on the degraded evidence path against the real build directory, so
 /// "the boundary does not depend on which evidence format survived" is an executed
