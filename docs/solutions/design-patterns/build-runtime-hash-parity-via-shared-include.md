@@ -1,7 +1,7 @@
 ---
 title: "Guarantee build/runtime fingerprint parity with one shared declared-input inventory"
 date: 2026-07-16
-last_updated: 2026-08-19
+last_updated: 2026-08-26
 category: design-patterns
 module: adapters/nautilus/lab (build.rs, fingerprint_core.rs, src/fingerprint.rs) — the declared lab build-input fingerprint
 problem_type: design_pattern
@@ -84,7 +84,15 @@ declared lab build-input fingerprint. It covers:
 - `crates/ls-sdk/src/**` and its manifest;
 - `crates/ls-core/src/**`, its manifest, and its build script;
 - `metadata/error-catalog.yaml` and `metadata/constraints/**`;
+- `adapters/nautilus/src/**` — the `nautilus-ls` adapter source, including the
+  `src/bin/**` binaries the lab never links (the tree is declared whole so that
+  adding or removing a member cannot slip past the digest);
+- `adapters/nautilus/nautilus-ls-calendar/src/**` and its manifest;
 - the standalone adapter workspace manifest, lockfile, and Rust toolchain file.
+  `adapters/nautilus/Cargo.toml` carries both `[package] name = "nautilus-ls"`
+  and the `[workspace]` table, so that single entry is also the adapter package
+  manifest — a second entry for it would fail the duplicate-normalized-path
+  check.
 
 The shared core file is intentionally inside the inventory now. Hashing its source
 does not create a self-reference: the digest hashes the implementation bytes, not
@@ -93,16 +101,50 @@ only to the earlier `src/**` shortcut.
 
 This prerequisite deliberately does **not** certify:
 
-- `adapters/nautilus/src/**`;
-- `adapters/nautilus/nautilus-ls-calendar/src/**` or the calendar manifest;
 - root `Cargo.lock` (the governed build resolves through the standalone adapter
   workspace lockfile);
-- generated `target/**`, dev-only dependencies, or ambient compiler flags and
-  command-line toolchain overrides.
+- generated `target/**`, dev-only dependency sources such as
+  `crates/ls-sdk-test-support`, or ambient compiler flags and command-line
+  toolchain overrides;
+- the operator-local KRX calendar snapshot **state** under
+  `adapters/nautilus/state`. The calendar package *source* is certified; its
+  snapshot state is not. That state is gitignored, credential-refreshed, and
+  carries its own `artifact_id` identity, so declaring it would give one artifact
+  two competing identities and make an ordinary calendar ingest invalidate every
+  governed binary.
 
-The adapter/calendar extension remains separate work. The morning shell
-preflight's omission of the root SDK/core manifests is also a distinct residual;
-this runtime fingerprint does not silently discharge that shell boundary.
+The boundary is closed and carries no package-specific deferral: a
+repository-local crate the lab compiles is either declared here or reported by
+the coverage oracle. The morning shell preflight's omission of the root SDK/core
+manifests is also a distinct residual; this runtime fingerprint does not silently
+discharge that shell boundary.
+
+## Operator Consequences
+
+A closed boundary with no exclusion predicate has four consequences worth knowing
+before they surprise someone mid-session:
+
+- **A stray untracked file inside a declared tree moves the digest.** Tree hashing
+  covers every regular file, by design — an ignore predicate would be exactly the
+  second input list this pattern exists to forbid. The recovery is to delete the
+  stray file, *and to rebuild as well* if any build ran while it was present: a
+  declared tree is a rebuild watch, so a stray that existed at build time is
+  embedded in the digest, and deleting it is itself a stale-binary refusal until
+  the binary is rebuilt.
+- **Editing any adapter binary under `adapters/nautilus/src/bin/**` invalidates
+  every governed lab binary.** The lab links only the `nautilus_ls` lib target, but
+  the whole tree is declared, so a release rebuild is required before the next
+  governed turn. This includes the four calendar binaries
+  `adapters/nautilus/scripts/session-morning.sh` runs as prebuilt paths.
+- **The two freshness oracles therefore disagree on those edits.** A `src/bin/**`
+  edit moves the declared digest but never reaches the lab binary's Cargo
+  dependency evidence, so the morning preflight's mtime axis reports fresh while a
+  governed turn refuses.
+- **A new repository-local crate must be seeded into the shared test fixture as
+  well as declared.** Validation fails closed on a missing declared input, so
+  declaring a crate without adding it to `lab/tests/support/fingerprint_fixture.rs`
+  reddens every fixture-based test with a message about an untrustworthy inventory
+  rather than about the omission.
 
 ## Governed Freshness Protocol
 
@@ -126,19 +168,34 @@ required to remove that final TOCTOU residual.
 Do not trust the inventory merely because its own tests are green. Compare it to
 independent evidence:
 
-- Cargo's generated dependency evidence for repository-local `ls-sdk`/`ls-core`
-  source inputs. Prefer the built binary's `.d` sidecar when present, but fall
-  back to Cargo's versioned, typed `.fingerprint/**/dep-lib-*` records because
-  artifact caches do not guarantee that convenience sidecar survives;
+- Cargo's generated dependency evidence for every repository-local package the lab
+  compiles — `ls-sdk`, `ls-core`, `nautilus-ls`, and `nautilus-ls-calendar`. Prefer
+  the built binary's `.d` sidecar when present, but fall back to Cargo's versioned,
+  typed `.fingerprint/**/dep-lib-*` records because artifact caches do not
+  guarantee that convenience sidecar survives. Both paths resolve all four
+  packages, so the closure does not depend on which evidence format happens to
+  survive in a build directory;
 - `ls-core` build-script output for rebuild-watched embedded metadata;
 - explicit checks for manifests, lockfile, and toolchain inputs those oracles do
   not own.
 
-Ship permanent falsifiers: a synthetic undeclared `crates/new/src/lib.rs` and a
-synthetic undeclared build-script data path must make the coverage checker report
-the gap. Mutation tests must also flip one declared class at a time and prove that
-the digest moves, while adapter/calendar/root-lock/generated-output mutations stay
-equal as negative controls.
+The dependency-evidence oracle requires every repository-local compiled input it
+observes to be covered by a declared entry, with no package-specific exception.
+Its only subtraction is generated build output under `adapters/nautilus/target`,
+which has no source form to declare — build-script output such as `ls-core`'s
+generated metadata legitimately appears in dependency evidence.
+
+Ship permanent falsifiers: a synthetic undeclared `crates/new/src/lib.rs`, a
+synthetic undeclared crate planted *inside the adapter workspace* — the shape the
+deleted per-package deferral used to hide — and a synthetic undeclared
+build-script data path must each make the coverage checker report the gap. With
+the deferral deleted, those falsifiers are the mechanism that makes a future
+repository-local crate fail closed instead of sitting silently uncertified.
+
+Mutation tests must also flip one declared class at a time and prove that the
+digest moves, adapter source, calendar source, and the calendar manifest included.
+The retained negative controls are root `Cargo.lock`, generated output under any
+`target/` directory, dev-only dependency sources, and the KRX snapshot state.
 
 ## Why This Matters
 

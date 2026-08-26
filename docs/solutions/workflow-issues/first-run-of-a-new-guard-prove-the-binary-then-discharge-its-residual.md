@@ -279,10 +279,11 @@ This repo has already paid for the stale-binary class once and solved it *struct
 shares the walk-and-hash source between `build.rs` and the runtime via `include!` so a lab binary can
 prove at run time which tree built it — see
 [`build-runtime-hash-parity-via-shared-include`](../design-patterns/build-runtime-hash-parity-via-shared-include.md).
-That doc's claim that a leftover binary "can only cause a spurious halt (false-stale), never a false
-green" holds **only for binaries carrying the fingerprint**. The calendar tools carry none, so for
-them a leftover binary produces exactly a false green — a missing `REFUSED` line read as a clean
-pass. Where the structural self-check is absent, the check falls to the operator's hands.
+That doc's Governed Freshness Protocol makes refusal the only outcome of a fingerprint mismatch —
+a lab binary built from a tree that no longer matches halts rather than reporting — and that
+guarantee holds **only for binaries carrying the fingerprint**. The calendar tools carry none, so
+for them a leftover binary produces exactly a false green — a missing `REFUSED` line read as a
+clean pass. Where the structural self-check is absent, the check falls to the operator's hands.
 
 ## When to Apply
 
