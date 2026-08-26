@@ -1,8 +1,9 @@
 //! Runtime access to the declared lab build-input fingerprint.
 //!
-//! The compatibility name [`EMBEDDED`] remains `LAB_SRC_FINGERPRINT`, but the
-//! value now certifies the declared root SDK/core build-input inventory rather
-//! than only `lab/src/**` and the lab manifest.
+//! The compatibility name [`EMBEDDED`] remains `LAB_SRC_FINGERPRINT`, and the
+//! value certifies the complete declared build-input inventory: the source and
+//! manifest of every repository-local crate the lab compiles, plus the embedded
+//! metadata, workspace manifest, lockfile, and pinned toolchain around them.
 
 use std::path::{Path, PathBuf};
 

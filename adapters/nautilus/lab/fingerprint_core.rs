@@ -59,7 +59,10 @@ impl FingerprintInput {
     }
 }
 
-/// The complete root SDK/core prerequisite certified by `LAB_SRC_FINGERPRINT`.
+/// The complete repository-local build-input prerequisite certified by
+/// `LAB_SRC_FINGERPRINT`: the source and manifest of every repository-local crate
+/// the lab compiles, the metadata a build script embeds, and the workspace
+/// manifest, lockfile, and pinned toolchain that decide how those crates resolve.
 pub fn declared_inventory() -> Vec<FingerprintInput> {
     vec![
         FingerprintInput::tree("lab-source", "adapters/nautilus/lab/src"),
@@ -77,6 +80,12 @@ pub fn declared_inventory() -> Vec<FingerprintInput> {
         FingerprintInput::file("ls-core-build-script", "crates/ls-core/build.rs"),
         FingerprintInput::file("error-catalog", "metadata/error-catalog.yaml"),
         FingerprintInput::tree("constraint-metadata", "metadata/constraints"),
+        FingerprintInput::tree("adapter-source", "adapters/nautilus/src"),
+        FingerprintInput::tree("calendar-source", "adapters/nautilus/nautilus-ls-calendar/src"),
+        FingerprintInput::file(
+            "calendar-manifest",
+            "adapters/nautilus/nautilus-ls-calendar/Cargo.toml",
+        ),
         FingerprintInput::file("adapter-workspace-manifest", "adapters/nautilus/Cargo.toml"),
         FingerprintInput::file("adapter-workspace-lock", "adapters/nautilus/Cargo.lock"),
         FingerprintInput::file(

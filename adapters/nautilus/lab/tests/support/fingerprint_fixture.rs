@@ -37,6 +37,7 @@ fn seed(root: &Path) {
         "adapters/nautilus/lab/src/runner",
         "adapters/nautilus/src",
         "adapters/nautilus/nautilus-ls-calendar/src",
+        "adapters/nautilus/state",
         "crates/ls-sdk/src",
         "crates/ls-core/src",
         "crates/ls-sdk-test-support/src",
@@ -77,6 +78,10 @@ fn seed(root: &Path) {
         (
             "adapters/nautilus/nautilus-ls-calendar/src/lib.rs",
             "pub fn calendar() {}\n",
+        ),
+        (
+            "adapters/nautilus/state/krx.calendar.json",
+            "{\"artifact_id\":\"fixture-krx-snapshot\"}\n",
         ),
         ("crates/ls-sdk/Cargo.toml", "[package]\nname = \"ls-sdk\"\n"),
         ("crates/ls-sdk/src/lib.rs", "pub fn sdk() {}\n"),

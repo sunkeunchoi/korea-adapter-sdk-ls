@@ -32,6 +32,9 @@ fn every_declared_input_class_moves_the_digest() {
         "crates/ls-core/build.rs",
         "metadata/error-catalog.yaml",
         "metadata/constraints/t1101.yaml",
+        "adapters/nautilus/src/lib.rs",
+        "adapters/nautilus/nautilus-ls-calendar/src/lib.rs",
+        "adapters/nautilus/nautilus-ls-calendar/Cargo.toml",
         "adapters/nautilus/Cargo.toml",
         "adapters/nautilus/Cargo.lock",
         "adapters/nautilus/rust-toolchain.toml",
@@ -56,6 +59,8 @@ fn membership_changes_move_each_declared_tree() {
         "crates/ls-sdk/src",
         "crates/ls-core/src",
         "metadata/constraints",
+        "adapters/nautilus/src",
+        "adapters/nautilus/nautilus-ls-calendar/src",
     ] {
         let fixture = FingerprintFixture::new();
         let unchanged = recompute_from_root(fixture.root()).unwrap();
@@ -95,12 +100,10 @@ fn digest_is_declaration_order_and_checkout_location_independent() {
 #[test]
 fn excluded_inputs_are_negative_controls() {
     for relative in [
-        "adapters/nautilus/src/lib.rs",
-        "adapters/nautilus/nautilus-ls-calendar/src/lib.rs",
-        "adapters/nautilus/nautilus-ls-calendar/Cargo.toml",
         "Cargo.lock",
         "target/debug/generated.rs",
         "crates/ls-sdk-test-support/src/lib.rs",
+        "adapters/nautilus/state/krx.calendar.json",
     ] {
         let fixture = FingerprintFixture::new();
         let unchanged = recompute_from_root(fixture.root()).unwrap();
@@ -226,22 +229,23 @@ fn cargo_dependency_evidence_has_no_undeclared_repository_input() {
     let repo_root = nautilus_ls_lab::fingerprint::compiled_repo_root();
     let evidence = lab_dependency_evidence();
     let selected_sources = repository_dependency_paths(&evidence, &repo_root);
-    assert!(
-        selected_sources
-            .iter()
-            .any(|path| path.starts_with("crates/ls-sdk/src")),
-        "Cargo dep-info must expose root SDK sources"
-    );
-    assert!(
-        selected_sources
-            .iter()
-            .any(|path| path.starts_with("crates/ls-core/src")),
-        "Cargo dep-info must expose root core sources"
-    );
+    for expected in [
+        "crates/ls-sdk/src",
+        "crates/ls-core/src",
+        "adapters/nautilus/src",
+        "adapters/nautilus/nautilus-ls-calendar/src",
+    ] {
+        assert!(
+            selected_sources
+                .iter()
+                .any(|path| path.starts_with(expected)),
+            "Cargo dep-info must expose repository-local sources under {expected}"
+        );
+    }
     let uncovered = uncovered_repository_dependencies(&selected_sources);
     assert!(
         uncovered.is_empty(),
-        "Cargo compiled inputs outside the declared or explicitly deferred boundary: {uncovered:?}"
+        "Cargo compiled inputs outside the declared boundary: {uncovered:?}"
     );
 }
 
@@ -266,23 +270,39 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
     let temp = tempfile::TempDir::new().unwrap();
     let profile_dir = temp.path().join("debug");
     let fingerprint_dir = profile_dir.join(".fingerprint");
-    let sdk_dir = fingerprint_dir.join("ls-sdk-current");
-    let core_dir = fingerprint_dir.join("ls-core-current");
-    std::fs::create_dir_all(&sdk_dir).unwrap();
-    std::fs::create_dir_all(&core_dir).unwrap();
-    std::fs::write(
-        sdk_dir.join("dep-lib-ls_sdk"),
-        encoded_cargo_dep_info(&[(0, "src/lib.rs"), (0, "src/client.rs")]),
-    )
-    .unwrap();
-    std::fs::write(
-        core_dir.join("dep-lib-ls_core"),
-        encoded_cargo_dep_info(&[
-            (0, "src/lib.rs"),
-            (1, "debug/build/ls-core-current/out/embedded_metadata.rs"),
-        ]),
-    )
-    .unwrap();
+    for (directory, dep_info_name, paths) in [
+        (
+            "ls-sdk-current",
+            "dep-lib-ls_sdk",
+            vec![(0, "src/lib.rs"), (0, "src/client.rs")],
+        ),
+        (
+            "ls-core-current",
+            "dep-lib-ls_core",
+            vec![
+                (0, "src/lib.rs"),
+                (1, "debug/build/ls-core-current/out/embedded_metadata.rs"),
+            ],
+        ),
+        (
+            "nautilus-ls-current",
+            "dep-lib-nautilus_ls",
+            vec![(0, "src/lib.rs"), (0, "src/constraints.rs")],
+        ),
+        (
+            "nautilus-ls-calendar-current",
+            "dep-lib-nautilus_ls_calendar",
+            vec![(0, "src/lib.rs")],
+        ),
+    ] {
+        let package_dir = fingerprint_dir.join(directory);
+        std::fs::create_dir_all(&package_dir).unwrap();
+        std::fs::write(
+            package_dir.join(dep_info_name),
+            encoded_cargo_dep_info(&paths),
+        )
+        .unwrap();
+    }
 
     let evidence = dependency_evidence_for_binary(
         &profile_dir.join("lab-research"),
@@ -291,6 +311,8 @@ fn dependency_evidence_falls_back_to_cargo_fingerprints_without_a_binary_sidecar
 
     assert!(evidence.contains("crates/ls-sdk/src/client.rs"));
     assert!(evidence.contains("crates/ls-core/src/lib.rs"));
+    assert!(evidence.contains("adapters/nautilus/src/constraints.rs"));
+    assert!(evidence.contains("adapters/nautilus/nautilus-ls-calendar/src/lib.rs"));
     assert!(evidence.contains("embedded_metadata.rs"));
 }
 
@@ -314,6 +336,38 @@ fn synthetic_dependency_evidence_exposes_an_undeclared_root_source() {
     assert_eq!(
         uncovered,
         BTreeSet::from([PathBuf::from("crates/new/src/lib.rs")])
+    );
+}
+
+/// The sibling of the root-workspace falsifier, planted at a path the deleted
+/// per-package deferral arms used to subtract. The calendar package's `src` tree
+/// and manifest are declared, but nothing else in that package is, so a compiled
+/// build script there is exactly the shape a future repository-local input takes.
+/// This test reds against a per-package deferral predicate and is therefore what
+/// proves the deletion, which the root-workspace falsifier cannot do.
+#[test]
+fn synthetic_dependency_evidence_exposes_an_undeclared_adapter_workspace_input() {
+    let fixture = FingerprintFixture::new();
+    let undeclared = fixture.path("adapters/nautilus/nautilus-ls-calendar/build.rs");
+    std::fs::write(&undeclared, "fn main() {}\n").unwrap();
+    let evidence = format!(
+        "{}: {} {} {}\n",
+        fixture
+            .path("adapters/nautilus/target/debug/lab-research")
+            .display(),
+        fixture.path("adapters/nautilus/src/lib.rs").display(),
+        fixture
+            .path("adapters/nautilus/nautilus-ls-calendar/src/lib.rs")
+            .display(),
+        undeclared.display()
+    );
+    let paths = repository_dependency_paths(&evidence, fixture.root());
+    let uncovered = uncovered_repository_dependencies(&paths);
+    assert_eq!(
+        uncovered,
+        BTreeSet::from([PathBuf::from(
+            "adapters/nautilus/nautilus-ls-calendar/build.rs"
+        )])
     );
 }
 
@@ -366,10 +420,18 @@ fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> Str
         let entry = entry.unwrap();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let (package, dep_info_name) = if name.starts_with("ls-sdk-") {
-            ("ls-sdk", "dep-lib-ls_sdk")
+        let (package, package_root_relative, dep_info_name) = if name.starts_with("ls-sdk-") {
+            ("ls-sdk", "crates/ls-sdk", "dep-lib-ls_sdk")
         } else if name.starts_with("ls-core-") {
-            ("ls-core", "dep-lib-ls_core")
+            ("ls-core", "crates/ls-core", "dep-lib-ls_core")
+        } else if name.starts_with("nautilus-ls-calendar-") {
+            (
+                "nautilus-ls-calendar",
+                "adapters/nautilus/nautilus-ls-calendar",
+                "dep-lib-nautilus_ls_calendar",
+            )
+        } else if name.starts_with("nautilus-ls-") {
+            ("nautilus-ls", "adapters/nautilus", "dep-lib-nautilus_ls")
         } else {
             continue;
         };
@@ -380,7 +442,7 @@ fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> Str
             Err(error) => panic!("read {}: {error}", dep_info_path.display()),
         };
         found_packages.insert(package);
-        let package_root = repo_root.join("crates").join(package);
+        let package_root = repo_root.join(package_root_relative);
         for (path_type, path) in decode_cargo_dep_info(&raw, &dep_info_path) {
             let absolute = if path.is_absolute() {
                 path
@@ -396,8 +458,8 @@ fn cargo_fingerprint_dependency_evidence(binary: &Path, repo_root: &Path) -> Str
 
     assert_eq!(
         found_packages,
-        BTreeSet::from(["ls-core", "ls-sdk"]),
-        "Cargo fingerprint evidence must include root ls-core and ls-sdk"
+        BTreeSet::from(["ls-core", "ls-sdk", "nautilus-ls", "nautilus-ls-calendar"]),
+        "Cargo fingerprint evidence must include every repository-local package the lab compiles"
     );
     evidence
 }
@@ -501,20 +563,19 @@ fn uncovered_repository_dependencies(paths: &BTreeSet<PathBuf>) -> BTreeSet<Path
         .iter()
         .filter(|path| {
             !inventory.iter().any(|input| input.covers(path))
-                && !is_explicitly_deferred_dependency(path)
+                && !is_generated_artifact_dependency(path)
         })
         .cloned()
         .collect()
 }
 
-fn is_explicitly_deferred_dependency(path: &Path) -> bool {
-    [
-        Path::new("adapters/nautilus/src"),
-        Path::new("adapters/nautilus/nautilus-ls-calendar"),
-        Path::new("adapters/nautilus/target"),
-    ]
-    .iter()
-    .any(|root| path.starts_with(root))
+/// Generated build output is the only permitted subtraction: it has no source form
+/// to declare, and build-script output such as `ls-core`'s embedded metadata
+/// legitimately appears in dependency evidence. There is deliberately no
+/// package-specific exception — a repository-local compiled input outside the
+/// declared inventory is a gap, not a deferral.
+fn is_generated_artifact_dependency(path: &Path) -> bool {
+    path.starts_with("adapters/nautilus/target")
 }
 
 fn repository_relative_path(path: &Path, repo_root: &Path) -> Option<PathBuf> {
