@@ -1,8 +1,9 @@
 //! Runtime access to the declared lab build-input fingerprint.
 //!
-//! The compatibility name [`EMBEDDED`] remains `LAB_SRC_FINGERPRINT`, but the
-//! value now certifies the declared root SDK/core build-input inventory rather
-//! than only `lab/src/**` and the lab manifest.
+//! [`EMBEDDED`] carries the historical environment name `LAB_SRC_FINGERPRINT`; its
+//! value certifies exactly the inventory [`declared_inventory`] returns. That function
+//! is where the certified boundary is defined and documented — this module deliberately
+//! does not restate it, so the two cannot drift apart.
 
 use std::path::{Path, PathBuf};
 

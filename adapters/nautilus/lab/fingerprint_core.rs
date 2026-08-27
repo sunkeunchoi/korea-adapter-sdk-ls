@@ -59,7 +59,16 @@ impl FingerprintInput {
     }
 }
 
-/// The complete root SDK/core prerequisite certified by `LAB_SRC_FINGERPRINT`.
+/// The complete repository-local build-input prerequisite certified by
+/// `LAB_SRC_FINGERPRINT`: the source and manifest of every repository-local crate the
+/// lab links into its binaries, the metadata a build script embeds, and the workspace
+/// manifest, lockfile, and pinned toolchain that decide how those crates resolve.
+/// Dev-only dependency sources such as `crates/ls-sdk-test-support` are deliberately
+/// outside it — they cannot change a shipped binary.
+///
+/// Both the logical label and the normalized path of every entry are framed into the
+/// digest, so renaming an entry moves `LAB_SRC_FINGERPRINT` and invalidates every
+/// governed binary. A label is a one-time choice, not a comment.
 pub fn declared_inventory() -> Vec<FingerprintInput> {
     vec![
         FingerprintInput::tree("lab-source", "adapters/nautilus/lab/src"),
@@ -77,6 +86,12 @@ pub fn declared_inventory() -> Vec<FingerprintInput> {
         FingerprintInput::file("ls-core-build-script", "crates/ls-core/build.rs"),
         FingerprintInput::file("error-catalog", "metadata/error-catalog.yaml"),
         FingerprintInput::tree("constraint-metadata", "metadata/constraints"),
+        FingerprintInput::tree("adapter-source", "adapters/nautilus/src"),
+        FingerprintInput::tree("calendar-source", "adapters/nautilus/nautilus-ls-calendar/src"),
+        FingerprintInput::file(
+            "calendar-manifest",
+            "adapters/nautilus/nautilus-ls-calendar/Cargo.toml",
+        ),
         FingerprintInput::file("adapter-workspace-manifest", "adapters/nautilus/Cargo.toml"),
         FingerprintInput::file("adapter-workspace-lock", "adapters/nautilus/Cargo.lock"),
         FingerprintInput::file(
@@ -262,11 +277,10 @@ fn collect_tree_nodes(
     });
 
     let mut entries: Vec<_> = std::fs::read_dir(directory)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries.sort_by_cached_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let absolute = entry.path();
-        let metadata = std::fs::symlink_metadata(&absolute)?;
-        let file_type = metadata.file_type();
+        let file_type = entry.file_type()?;
         if file_type.is_symlink() {
             return Err(invalid_data(format!(
                 "fingerprint tree contains a symlink: {}",

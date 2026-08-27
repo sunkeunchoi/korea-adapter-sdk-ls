@@ -1,6 +1,7 @@
 ---
 title: "A guard's verdict certifies nothing unless you ran the right binary and it was handed a true claim — prove the artifact, then discharge the residual"
 date: 2026-08-04
+last_updated: 2026-08-26
 category: workflow-issues
 module: adapters/nautilus calendar snapshot cadence (RUNBOOK-calendar-snapshot.md § "Forward-readiness decay", scripts/session-morning.sh, src/calendar_refresh/candidate.rs, src/calendar_refresh/fetch_state.rs)
 problem_type: workflow_issue
@@ -159,7 +160,7 @@ the **mtime axis only**. A binary pinned on purpose is still pinned to code cont
 registered guard, so nothing legitimate needs that escape — and binding both axes to one switch
 would let the noisy axis train the operator into disabling the quiet one.
 
-Two limits survive the discharge, and both are real:
+Three limits survive the discharge, and all three are real:
 
 - It guards **`target/debug`**, which is what the chain pins. The `--release` artifacts — the ones
   that were actually stale in this incident — are **not** covered by it. That is why the recipe
@@ -167,6 +168,13 @@ Two limits survive the discharge, and both are real:
 - `make script-check` still never *builds* anything. It now runs as `make gate-run` step 7,
   immediately after `adapter-check` — which is the step that produces `target/debug` — so it
   **consumes** those artifacts rather than making them, and reports loudly when one is absent.
+- Neither axis sees an edit under `adapters/nautilus/src/bin/**`. Since the declared
+  build-input fingerprint closed over the whole `adapters/nautilus/src` tree, such an edit moves
+  the governed digest — but the lab binary links only the `nautilus_ls` lib target, so the edit
+  reaches neither the mtime axis (cargo dep-info) nor a registered content literal. The preflight
+  reports fresh while a governed turn refuses as stale. Tracked as queue item
+  `fingerprint-src-bin-freshness-oracle-divergence`; see the Operator Consequences section of
+  [`build-runtime-hash-parity-via-shared-include`](../design-patterns/build-runtime-hash-parity-via-shared-include.md).
 
 The `calendar-refresh` half of that residual is now discharged too, on the two axes the gap
 actually had (`scripts/tests/session-morning.test.sh`):
@@ -279,10 +287,11 @@ This repo has already paid for the stale-binary class once and solved it *struct
 shares the walk-and-hash source between `build.rs` and the runtime via `include!` so a lab binary can
 prove at run time which tree built it — see
 [`build-runtime-hash-parity-via-shared-include`](../design-patterns/build-runtime-hash-parity-via-shared-include.md).
-That doc's claim that a leftover binary "can only cause a spurious halt (false-stale), never a false
-green" holds **only for binaries carrying the fingerprint**. The calendar tools carry none, so for
-them a leftover binary produces exactly a false green — a missing `REFUSED` line read as a clean
-pass. Where the structural self-check is absent, the check falls to the operator's hands.
+That doc's Governed Freshness Protocol makes refusal the only outcome of a fingerprint mismatch —
+a lab binary built from a tree that no longer matches halts rather than reporting — and that
+guarantee holds **only for binaries carrying the fingerprint**. The calendar tools carry none, so
+for them a leftover binary produces exactly a false green — a missing `REFUSED` line read as a
+clean pass. Where the structural self-check is absent, the check falls to the operator's hands.
 
 ## When to Apply
 

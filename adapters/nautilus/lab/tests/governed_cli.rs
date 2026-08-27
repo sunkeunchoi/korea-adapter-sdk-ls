@@ -474,6 +474,7 @@ fn an_invalid_declared_input_holds_before_governed_side_effects() {
 fn stale_parent_mutations_hold_before_diagnosis_or_build() {
     for relative in [
         "crates/ls-sdk/src/lib.rs",
+        "adapters/nautilus/src/lib.rs",
         "adapters/nautilus/Cargo.lock",
         "metadata/error-catalog.yaml",
     ] {
