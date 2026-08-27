@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use fingerprint_fixture::FingerprintFixture;
 use nautilus_ls_lab::fingerprint::{
     compute_from_inventory, declared_inventory, recompute, recompute_from_root,
-    watch_paths_from_root, FingerprintInput,
+    watch_paths_from_root, FingerprintInput, FingerprintInputKind,
 };
 
 #[test]
@@ -57,14 +57,27 @@ fn every_declared_input_class_moves_the_digest() {
 
 #[test]
 fn membership_changes_move_each_declared_tree() {
-    for tree in [
+    let trees = [
         "adapters/nautilus/lab/src",
         "crates/ls-sdk/src",
         "crates/ls-core/src",
         "metadata/constraints",
         "adapters/nautilus/src",
         "adapters/nautilus/nautilus-ls-calendar/src",
-    ] {
+    ];
+    // A declared tree added without a membership case would leave add/rename/remove
+    // unproven for it while the suite stayed green.
+    let declared_trees: BTreeSet<_> = declared_inventory()
+        .into_iter()
+        .filter(|input| input.kind() == FingerprintInputKind::Tree)
+        .map(|input| input.relative_path().to_path_buf())
+        .collect();
+    assert_eq!(
+        trees.iter().map(PathBuf::from).collect::<BTreeSet<_>>(),
+        declared_trees
+    );
+
+    for tree in trees {
         let fixture = FingerprintFixture::new();
         let unchanged = recompute_from_root(fixture.root()).unwrap();
         let added = fixture.path(&format!("{tree}/added.rs"));
