@@ -95,7 +95,7 @@ pub const PROBE_REPORT_PATH_ENV: &str = "LS_PROBE_REPORT_PATH";
 pub const PROBE_REPORT_RELPATH: &str = "queue/probe-report.json";
 
 /// A usage string enumerating the valid subcommands (KTD3).
-const USAGE: &str = "usage: lab-next [report] | probe | list [--all] | add --id <id> --title <t> --window <open-attended|closed|any> [--event <name> [--artifact <path>]] [--deadline <rfc3339>] [--sequence <name>] [--note <text>] [--ref <path>]... | done <id> | supersede <id> --by <id>";
+const USAGE: &str = "usage: lab-next [report] | probe | list [--all] | add --id <id> --title <t> --window <open-attended|closed|any> [--event <name> [--artifact <path>]] [--deadline <rfc3339>] [--sequence <name>] [--note <text>] [--ref <path>]... | done <id> | supersede <id> --by <id> | priority <id> | priority --clear | block <id> --until <condition> | unblock <id>";
 
 /// The CLI entry point: install scrub, emit the mandatory calendar startup
 /// record, dispatch the subcommand, and scrub any terminal error. A hygiene
@@ -126,6 +126,9 @@ fn dispatch() -> anyhow::Result<ExitCode> {
         Some("add") => run_add(&args[1..]),
         Some("done") => run_done(&args[1..]),
         Some("supersede") => run_supersede(&args[1..]),
+        Some("priority") => run_priority(&args[1..]),
+        Some("block") => run_block(&args[1..]),
+        Some("unblock") => run_unblock(&args[1..]),
         Some(other) => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
 }
@@ -967,4 +970,61 @@ fn run_supersede(rest: &[String]) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// `priority <id>` | `priority --clear` (R20): move the single-item priority
+/// marker, or leave no holder. Setting it clears every other holder, so the
+/// store converges to exactly one even when it arrived with several (KTD6).
+fn run_priority(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let target = match rest {
+        [flag] if flag == "--clear" => None,
+        [id] if !id.starts_with("--") => Some(id.as_str()),
+        other => anyhow::bail!("priority takes <id> or --clear, got {other:?}\n{USAGE}"),
+    };
+    let queue = Queue::from_env()?;
+    let cleared = match target {
+        Some(id) => {
+            let cleared = queue.set_priority(id)?;
+            println!("priority: {id}");
+            cleared
+        }
+        None => {
+            let cleared = queue.clear_priority()?;
+            println!("priority: none");
+            cleared
+        }
+    };
+    if !cleared.is_empty() {
+        println!("cleared: {}", cleared.join(", "));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `block <id> --until <condition>` (R5/R20): record the blocked state with the
+/// act that would unblock it. The condition is mandatory — a blocked item that
+/// names no reachable act is refused by the store (R24).
+fn run_block(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let (id, condition) = match rest {
+        [id, flag, condition] if flag == "--until" => (id, condition),
+        other => anyhow::bail!("block takes <id> --until <condition>, got {other:?}\n{USAGE}"),
+    };
+    let queue = Queue::from_env()?;
+    queue.block(id, condition)?;
+    println!("blocked: {id} — until {condition}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `unblock <id>` (R20): clear the blocked state. Unblocking an item that is not
+/// blocked is a reported no-op, mirroring `done`'s idempotence.
+fn run_unblock(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let [id] = rest else {
+        anyhow::bail!("unblock takes exactly one <id>\n{USAGE}");
+    };
+    let queue = Queue::from_env()?;
+    if queue.unblock(id)? {
+        println!("unblocked: {id}");
+    } else {
+        println!("unblocked: {id} (was not blocked)");
+    }
+    Ok(ExitCode::SUCCESS)
 }
