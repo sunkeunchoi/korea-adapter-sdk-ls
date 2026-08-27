@@ -14,8 +14,9 @@
 //!   docs/solutions/logic-errors/empty-repull-completing-destructive-heal-destroys-history.md).
 //! - Completed and stale items leave the actionable view but stay in the store
 //!   (append-forward history, R9); stale = past `deadline` or `superseded_by` a
-//!   named item; a paused in-flight sequence entry (`sequence` set with a valid
-//!   checkpoint) is never stale.
+//!   named item; neither a paused in-flight sequence entry (`sequence` set with
+//!   a valid checkpoint) nor a blocked item (`unblock_condition` set) is ever
+//!   stale — waiting work is not abandoned work.
 //!
 //! Writes are whole-file read → mutate → atomic tmp+rename (mirroring the
 //! ingest-checkpoint idiom at `nautilus-ls/src/ingest/checkpoint.rs`), so a crash
@@ -101,7 +102,15 @@ pub enum CompletionSignal {
 }
 
 /// One queue item (KTD6 schema).
+///
+/// `deny_unknown_fields` is load-bearing, not tidiness (R31; mirroring
+/// [`crate::lineage_prereg::LineagePreRegistration`]). Serde reads a *missing*
+/// field as its default, so without it a mistyped key — `prioriti`, or
+/// `unblock_conditon` — would drop silently and the line would load clean as
+/// "neither priority nor blocked". A marker that decides what gets worked on
+/// next must fail loud, never default quietly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QueueItem {
     /// Schema version (gate on read).
     pub schema_version: u32,
@@ -135,12 +144,34 @@ pub struct QueueItem {
     /// when it is one. A paused in-flight sequence entry is never stale (R9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence: Option<String>,
+    /// The single-item priority marker (R1): this item outranks the ordinary
+    /// deadline-then-file-order selection. At most ONE item in the store carries
+    /// it — setting the marker elsewhere clears it — so priority is scarce by
+    /// construction rather than by discipline. Priority is a first-class queue
+    /// concept, never an encoded `deadline` (a deadline means a clock).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub priority: bool,
+    /// The act that would unblock this item; set means the item is BLOCKED (R2).
+    /// The state and its condition are ONE field — never an overload of
+    /// `sequence`, which already carries the paused-sequence label (KTD2) — so a
+    /// blocked item can never exist without naming a reachable act an identified
+    /// actor can perform (R24; a blank condition is refused by [`Queue::save`]).
+    /// A blocked item is never stale (KTD3): it is waiting, not abandoned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unblock_condition: Option<String>,
     /// Free-form operator notes (rich migrated content lives here per R13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     /// Supplementary reference paths — runbooks, plans, prompts (R13).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<String>,
+}
+
+/// `skip_serializing_if` for a bool marker (the `TrialRecord::backfill` idiom):
+/// an unset marker stays absent from the line instead of writing
+/// `"priority":false` into every committed item.
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl QueueItem {
@@ -164,20 +195,30 @@ impl QueueItem {
             done_utc: None,
             reconcile: None,
             sequence: None,
+            priority: false,
+            unblock_condition: None,
             notes: None,
             refs: Vec::new(),
         }
     }
 
+    /// Whether the item is blocked (R2): a recorded [`Self::unblock_condition`]
+    /// IS the blocked state, so the two can never disagree. The edit surface and
+    /// the entry report both ask through this one predicate.
+    pub fn is_blocked(&self) -> bool {
+        self.unblock_condition.is_some()
+    }
+
     /// Whether the item is past its deadline at `now` (R9). A paused in-flight
-    /// sequence entry is never stale; an item with no deadline never expires.
+    /// sequence entry and a blocked item are never stale (KTD3 — waiting work is
+    /// not abandoned work); an item with no deadline never expires.
     ///
     /// # Errors
     ///
     /// When the recorded deadline is not RFC3339 (a corrupt store must be loud,
     /// never a silently-immortal item).
     pub fn is_stale(&self, now: DateTime<Utc>) -> anyhow::Result<bool> {
-        if self.sequence.is_some() {
+        if self.sequence.is_some() || self.is_blocked() {
             return Ok(false);
         }
         match &self.deadline {
@@ -287,9 +328,23 @@ impl Queue {
     ///
     /// # Errors
     ///
-    /// When the parent cannot be created, or the tmp write / rename fails (the
-    /// live file is untouched in every failure case).
+    /// When an item is blocked with a blank unblock condition, the parent cannot
+    /// be created, or the tmp write / rename fails (the live file is untouched in
+    /// every failure case).
     pub fn save(&self, items: &[QueueItem]) -> anyhow::Result<()> {
+        // R24: a blocked item must name the act that would unblock it. `save` is
+        // the single funnel every mutator writes through, so this is the one
+        // place a blank condition cannot slip past — and it is checked before
+        // any path is touched, so a refusal leaves the store exactly as it was.
+        for item in items {
+            if item.unblock_condition.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                anyhow::bail!(
+                    "item {:?}: blocked with an empty unblock condition — a blocked \
+                     item must name the act that would unblock it",
+                    item.id
+                );
+            }
+        }
         let mut text = String::new();
         for item in items {
             text.push_str(&serde_json::to_string(item)?);
@@ -561,5 +616,108 @@ mod tests {
         // line this build cannot read.
         let q = Queue::new(default_queue_path().unwrap());
         q.read_all().unwrap();
+    }
+
+    #[test]
+    fn a_blocked_item_round_trips_with_its_unblock_condition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut blocked = item("parked", Window::OpenAttended);
+        blocked.unblock_condition =
+            Some("the operator authorizes a session on a margin-clearing head".into());
+        q.add(blocked).unwrap();
+        let back = q.read_all().unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(back[0].is_blocked(), "the blocked state survives the round trip");
+        assert_eq!(
+            back[0].unblock_condition.as_deref(),
+            Some("the operator authorizes a session on a margin-clearing head"),
+            "the unblock condition survives verbatim"
+        );
+    }
+
+    #[test]
+    fn priority_round_trips_and_both_new_fields_are_skipped_when_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut top = item("top", Window::Any);
+        top.priority = true;
+        q.add(top).unwrap();
+        q.add(item("plain", Window::Any)).unwrap();
+        let back = q.read_all().unwrap();
+        assert!(back[0].priority, "the priority marker survives the round trip");
+        assert!(!back[1].priority, "an unmarked item stays unmarked");
+        assert!(!back[1].is_blocked());
+        // Absent fields are skipped on write, so the committed store never
+        // churns with `"priority":false` / `"unblock_condition":null` (KTD1).
+        let text = std::fs::read_to_string(q.path()).unwrap();
+        let plain = text.lines().nth(1).unwrap();
+        assert!(!plain.contains("priority"), "absent priority is skipped: {plain}");
+        assert!(!plain.contains("unblock_condition"), "absent blocked state is skipped: {plain}");
+    }
+
+    #[test]
+    fn a_mistyped_priority_key_is_refused_naming_the_line() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("a", Window::Any)).unwrap();
+        // R31: serde reads a MISSING field as the default, so without
+        // `deny_unknown_fields` a mistyped key would drop silently and the item
+        // would load clean as "neither priority nor blocked".
+        let mut typo = serde_json::to_value(item("b", Window::Any)).unwrap();
+        typo["prioriti"] = serde_json::json!(true);
+        let mut text = std::fs::read_to_string(q.path()).unwrap();
+        text.push_str(&format!("{typo}\n"));
+        std::fs::write(q.path(), text).unwrap();
+        let err = q.read_all().unwrap_err().to_string();
+        assert!(err.contains("line 2"), "the refusal names the line: {err}");
+        assert!(err.contains("prioriti"), "the refusal names the offending key: {err}");
+    }
+
+    #[test]
+    fn a_pre_existing_line_with_neither_new_field_parses_at_version_1() {
+        // A verbatim committed line shape (queue/items.jsonl): neither new key.
+        // The fields are ADDITIVE at version 1 — a bump would make every
+        // committed line unreadable and the queue unrewritable (KTD1).
+        assert_eq!(QUEUE_SCHEMA_VERSION, 1, "the additive fields must NOT bump the version");
+        let line = r#"{"schema_version":1,"id":"session-morning-root-manifest-freshness","title":"Add root ls-sdk and ls-core manifests to the morning freshness preflight","window":"any","completion":{"kind":"explicit"},"added_utc":"2026-08-19T12:04:34.452122+00:00","notes":"Separate shell-preflight residual.","refs":["adapters/nautilus/scripts/session-morning.sh"]}"#;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        std::fs::write(q.path(), format!("{line}\n")).unwrap();
+        let back = q.read_all().unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(!back[0].priority, "a pre-existing line defaults to unmarked");
+        assert!(!back[0].is_blocked(), "a pre-existing line defaults to unblocked");
+    }
+
+    #[test]
+    fn blocked_with_a_blank_unblock_condition_is_refused() {
+        // R24: a blocked item must name an act a reachable actor can perform.
+        // The state and its condition are ONE field, so blocked-without-a-
+        // condition is unrepresentable; a BLANK condition is the residual hole,
+        // refused at `save` — the single funnel every mutator writes through.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut blank = item("blank", Window::Any);
+        blank.unblock_condition = Some("   ".into());
+        let err = q.add(blank).unwrap_err().to_string();
+        assert!(err.contains("blank"), "the refusal names the item: {err}");
+        assert!(err.contains("unblock condition"), "{err}");
+        assert!(!q.path().exists(), "the refused write never created the queue file");
+    }
+
+    #[test]
+    fn a_blocked_item_is_never_stale_and_stays_actionable() {
+        // KTD3, the `QueueItem` half: a blocked item past its deadline is not
+        // abandoned work — its recorded unblock condition is the whole point of
+        // keeping it. `is_actionable` keeps its three clauses; withholding a
+        // blocked item from the report's `next:` is the report's job (U3).
+        let now: DateTime<Utc> = "2026-07-29T12:00:00Z".parse().unwrap();
+        let mut blocked = item("parked", Window::OpenAttended);
+        blocked.deadline = Some("2026-07-28T00:00:00Z".into());
+        assert!(blocked.is_stale(now).unwrap(), "unblocked and past its deadline: stale");
+        blocked.unblock_condition = Some("a certified head clears its frozen margin".into());
+        assert!(!blocked.is_stale(now).unwrap(), "a blocked item is never stale");
+        assert!(blocked.is_actionable(now).unwrap());
     }
 }
