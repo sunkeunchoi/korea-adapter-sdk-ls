@@ -58,7 +58,7 @@ use crate::reference::pit_walk::{
     partition_windows, ListingOutcome, PitUniverseArtifact, RangeSessions, WalkError, WalkWindow,
     MAX_SESSIONS_PER_WINDOW, MAX_THROTTLE_RETRIES, MAX_WALK_PAGES,
 };
-use crate::rules::{regular_close, SessionRegime, KRX_REGULAR_CLOSE};
+use crate::rules::{regular_close, SessionRegime};
 
 /// The smallest window this planner will emit. A `sdate == edate` request is
 /// degenerate on the live gateway: it **ignores `sdate`** and serves `qrycnt`
@@ -913,7 +913,7 @@ mod tests {
     use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, KrxCalendar};
     use nautilus_model::identifiers::InstrumentId;
     use std::sync::Mutex;
-    use crate::rules::KRX_REGULAR_CLOSE_PRE_2016;
+    use crate::rules::{KRX_REGULAR_CLOSE, KRX_REGULAR_CLOSE_PRE_2016};
 
     fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
