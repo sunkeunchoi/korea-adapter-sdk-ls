@@ -693,6 +693,46 @@ fn daily_bars_present(catalog: &Path, instrument: &str) -> bool {
     })
 }
 
+/// Whether the catalog covers the session's OWN trading date for every traded
+/// instrument — `produce_report`'s `catalog_has_range` gate (U8/R12).
+///
+/// This is the twin's prerequisite, not a freshness check: the paper twin replays
+/// the session's decisions, so it is only meaningful once the post-session ingest
+/// has landed that session's bars. Asked PER TRADED INSTRUMENT and against the
+/// daily watermark, mirroring [`evaluate_catalog`]'s discipline — a whole-tree
+/// sample would be satisfied by the minute series beside the daily ones.
+///
+/// Fails closed on every unestablished input (unreadable checkpoint, unparseable
+/// trading date, an instrument with no watermark): a false here is
+/// `TwinFailed`, which is explicitly re-runnable per run id, so the conservative
+/// answer costs nothing but a later re-production.
+///
+/// NOTE on ordering, because it decides what a finalize-time call can produce:
+/// the KRX witness is retrospective, so at the moment a session finalizes its own
+/// daily bar is normally NOT yet ingested and this returns false. That is the
+/// honest answer — the report written at finalize records a re-runnable
+/// `TwinFailed` rather than a fabricated twin, which is already a strict
+/// improvement on the previous state (no report at all, so `read_report` returned
+/// `None` and the rung-2 refusal was structural rather than informative). A
+/// *Computed* twin additionally requires re-production after that ingest lands.
+fn session_range_in_catalog(catalog: &Path, trading_date: &str, symbols: &[String]) -> bool {
+    let Ok(session) = chrono::NaiveDate::parse_from_str(trading_date, "%Y%m%d") else {
+        return false;
+    };
+    let Ok(checkpoint) = Checkpoint::load(&catalog.join("ingest-checkpoint.json")) else {
+        return false;
+    };
+    if symbols.is_empty() {
+        return false;
+    }
+    symbols.iter().all(|instrument| {
+        checkpoint
+            .watermark(instrument, DAILY_BAR_TYPE)
+            .is_some_and(|wm| wm >= session)
+            && daily_bars_present(catalog, instrument)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_context(
     cfg: &DispatchCliConfig,
@@ -2151,7 +2191,42 @@ fn stage_and_finalize(
              its outcome could not be recorded; treat the account as NOT flat and reconcile"
         ));
     }
-    finalize_session(writer, dq, report, dedup_hits)
+    // R5's always-emit guarantee: this is the mandatory side effect, and NOTHING
+    // fallible may precede it (a `?` here would abort before `write_data_quality`
+    // + `finalize`, leaving `.tmp-` residue that `scan_limit_events` classifies as
+    // a limit event — a self-inflicted de-escalation).
+    let run_dir = finalize_session(writer, dq, report, dedup_hits)?;
+
+    // U8/R12 — the tracking report's FIRST production caller. Until now
+    // `produce_report` had zero non-test callers while `clean_session_verdict`
+    // required a produced twin at rung >= 2, so rung 2 was unreachable by
+    // construction: the gate read an artifact nothing ever wrote.
+    //
+    // Placed AFTER `finalize_session` for two independent reasons: the producer
+    // reads the FINALIZED run dir (`decisions.jsonl`, `performance.json`,
+    // `data-quality.json`, which exist only after the atomic rename), and it must
+    // not sit ahead of the always-emit tail above. It is FAIL-SOFT for the same
+    // reason: the sidecar lives outside the immutable run dir and is idempotent
+    // per run id, so a write failure is re-runnable and must never cost the
+    // operator the session's artifacts.
+    let tracking_rung = ctx.dispatch.as_ref().map_or(ctx.chain_rung, |d| d.rung);
+    let catalog_has_range =
+        session_range_in_catalog(&ctx.data_home.join("catalog"), &ctx.trading_date, &ctx.symbols);
+    let tracking = crate::dispatch::tracking::produce_report(
+        &run_dir,
+        &ctx.run_id,
+        tracking_rung,
+        catalog_has_range,
+    );
+    if let Err(e) = crate::dispatch::tracking::write_report(&ctx.data_home, &tracking) {
+        eprintln!(
+            "live: warning — the tracking report for {} could not be written ({}); the run's \
+             own artifacts are finalized and the report is re-runnable per run id",
+            ctx.run_id,
+            nautilus_ls::scrub::scrub_secrets(&e.to_string())
+        );
+    }
+    Ok(run_dir)
 }
 
 /// Record one of the mounted session's gateway dispatches (an order call, a t0425 poll)
