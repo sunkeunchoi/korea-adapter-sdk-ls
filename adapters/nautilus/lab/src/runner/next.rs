@@ -346,7 +346,7 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
 
     // R4 top offer: the first current-window-compatible in-flight sequence,
     // else the first eligible item; R5 even when nothing is eligible.
-    let mut remaining = eligible.clone();
+    let mut remaining = eligible;
     if let Some(seq) = active.first() {
         out.push("next:".to_string());
         push_sequence(&mut out, seq, None);
@@ -359,7 +359,7 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
         // are both the wrong advice — name the act that would free the work.
         out.push(format!(
             "next: none offerable — every open item is standing work; when {}: lab-next unblock {}",
-            head.unblock_condition.as_deref().unwrap_or("(unrecorded)"),
+            head.unblock_reason(),
             head.id
         ));
     } else if matches!(window.state, WindowState::GenuinelyUnknown(_)) {
@@ -465,12 +465,7 @@ fn push_item(out: &mut Vec<String>, item: &QueueItem) {
         ),
     };
     out.push(format!("    run: {run}"));
-    if !item.refs.is_empty() {
-        out.push(format!("    refs: {}", item.refs.join(", ")));
-    }
-    if let Some(n) = &item.notes {
-        out.push(format!("    note: {n}"));
-    }
+    push_refs_and_notes(out, item);
 }
 
 /// One standing-work block (R3; KTD4): the same head every other section uses
@@ -480,10 +475,14 @@ fn push_item(out: &mut Vec<String>, item: &QueueItem) {
 /// by construction: the act that would unblock the item is not ours to run.
 fn push_standing(out: &mut Vec<String>, item: &QueueItem) {
     out.push(item_head(item));
-    out.push(format!(
-        "    blocked: {}",
-        item.unblock_condition.as_deref().unwrap_or("(unrecorded)")
-    ));
+    out.push(format!("    blocked: {}", item.unblock_reason()));
+    push_refs_and_notes(out, item);
+}
+
+/// The detail tail both offer and standing blocks carry: reference paths (R13)
+/// then notes, each omitted when empty. Shared so the R13 contract the module
+/// doc states for BOTH sections has one edit site rather than two.
+fn push_refs_and_notes(out: &mut Vec<String>, item: &QueueItem) {
     if !item.refs.is_empty() {
         out.push(format!("    refs: {}", item.refs.join(", ")));
     }

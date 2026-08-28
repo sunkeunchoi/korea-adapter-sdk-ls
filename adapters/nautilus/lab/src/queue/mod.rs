@@ -154,7 +154,10 @@ pub struct QueueItem {
     /// it — setting the marker elsewhere clears it — so priority is scarce by
     /// construction rather than by discipline. Priority is a first-class queue
     /// concept, never an encoded `deadline` (a deadline means a clock).
-    #[serde(default, skip_serializing_if = "is_false")]
+    // Shares `trials::is_false` (the `TrialRecord::backfill` idiom) rather than
+    // a second copy: an unset marker stays ABSENT from the line instead of
+    // writing `"priority":false` into every committed item.
+    #[serde(default, skip_serializing_if = "crate::trials::is_false")]
     pub priority: bool,
     /// The act that would unblock this item; set means the item is BLOCKED (R2).
     /// The state and its condition are ONE field — never an overload of
@@ -170,13 +173,6 @@ pub struct QueueItem {
     /// Supplementary reference paths — runbooks, plans, prompts (R13).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<String>,
-}
-
-/// `skip_serializing_if` for a bool marker (the `TrialRecord::backfill` idiom):
-/// an unset marker stays absent from the line instead of writing
-/// `"priority":false` into every committed item.
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 impl QueueItem {
@@ -212,6 +208,16 @@ impl QueueItem {
     /// the entry report both ask through this one predicate.
     pub fn is_blocked(&self) -> bool {
         self.unblock_condition.is_some()
+    }
+
+    /// The recorded act that would unblock this item, for display (R3/R24).
+    /// Lives beside [`Self::is_blocked`] because that predicate is what
+    /// guarantees the fallback never renders: a blocked item always carries a
+    /// non-blank condition ([`Queue::save`] refuses otherwise), so the fallback
+    /// is fail-soft display for a store an older binary could have written, not
+    /// an expected state.
+    pub fn unblock_reason(&self) -> &str {
+        self.unblock_condition.as_deref().unwrap_or("(unrecorded)")
     }
 
     /// Whether the item is past its deadline at `now` (R9). A paused in-flight
@@ -400,10 +406,7 @@ impl Queue {
     /// hygiene refusal is NOT an error — it is [`TransitionOutcome::Reconcile`].
     pub fn done(&self, id: &str, now_utc: &str) -> anyhow::Result<TransitionOutcome> {
         let mut items = self.read_all()?;
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
+        let item = find_mut(&mut items, id)?;
         if item.done_utc.is_some() {
             return Ok(TransitionOutcome::Completed); // already done — idempotent
         }
@@ -449,10 +452,7 @@ impl Queue {
             anyhow::bail!("an item cannot supersede itself ({id:?})");
         }
         let by_exists = items.iter().any(|i| i.id == by);
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
+        let item = find_mut(&mut items, id)?;
         if !by_exists {
             let flag = format!("supersede refused: superseding item {by:?} not in queue");
             item.reconcile = Some(flag.clone());
@@ -490,25 +490,7 @@ impl Queue {
     ///
     /// When the queue is unreadable, no item has `id`, or the write fails.
     pub fn set_priority(&self, id: &str) -> anyhow::Result<Vec<String>> {
-        let mut items = self.read_all()?;
-        if !items.iter().any(|i| i.id == id) {
-            anyhow::bail!("no queue item with id {id:?}");
-        }
-        let mut cleared = Vec::new();
-        let mut changed = false;
-        for item in &mut items {
-            if item.id == id {
-                changed |= !item.priority;
-                item.priority = true;
-            } else if std::mem::take(&mut item.priority) {
-                cleared.push(item.id.clone());
-                changed = true;
-            }
-        }
-        if changed {
-            self.save(&items)?;
-        }
-        Ok(cleared)
+        self.move_priority(Some(id))
     }
 
     /// Clear the priority marker from every item (R20's `--clear`), leaving no
@@ -519,14 +501,37 @@ impl Queue {
     ///
     /// When the queue is unreadable or the write fails.
     pub fn clear_priority(&self) -> anyhow::Result<Vec<String>> {
+        self.move_priority(None)
+    }
+
+    /// Move the single priority marker to `target`, or clear it everywhere when
+    /// `target` is `None`. One body so the single-holder-on-write rule and the
+    /// write-only-when-changed rule cannot diverge between the set and clear
+    /// verbs; the CLI already models the choice as the same `Option<&str>`.
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable, `target` names no item, or the write fails.
+    fn move_priority(&self, target: Option<&str>) -> anyhow::Result<Vec<String>> {
         let mut items = self.read_all()?;
-        let mut cleared = Vec::new();
-        for item in &mut items {
-            if std::mem::take(&mut item.priority) {
-                cleared.push(item.id.clone());
+        if let Some(id) = target {
+            // Checked BEFORE mutating, so a typo leaves the store untouched.
+            if !items.iter().any(|i| i.id == id) {
+                anyhow::bail!("no queue item with id {id:?}");
             }
         }
-        if !cleared.is_empty() {
+        let mut cleared = Vec::new();
+        let mut changed = false;
+        for item in &mut items {
+            if target == Some(item.id.as_str()) {
+                changed |= !item.priority;
+                item.priority = true;
+            } else if std::mem::take(&mut item.priority) {
+                cleared.push(item.id.clone());
+                changed = true;
+            }
+        }
+        if changed {
             self.save(&items)?;
         }
         Ok(cleared)
@@ -544,11 +549,7 @@ impl Queue {
     /// before any path is touched), or the write fails.
     pub fn block(&self, id: &str, condition: &str) -> anyhow::Result<()> {
         let mut items = self.read_all()?;
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
-        item.unblock_condition = Some(condition.to_string());
+        find_mut(&mut items, id)?.unblock_condition = Some(condition.to_string());
         self.save(&items)
     }
 
@@ -561,16 +562,28 @@ impl Queue {
     /// When the queue is unreadable, no item has `id`, or the write fails.
     pub fn unblock(&self, id: &str) -> anyhow::Result<bool> {
         let mut items = self.read_all()?;
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
-        if item.unblock_condition.take().is_none() {
+        if find_mut(&mut items, id)?.unblock_condition.take().is_none() {
             return Ok(false); // not blocked — nothing to write
         }
         self.save(&items)?;
         Ok(true)
     }
+}
+
+/// The one lookup every field-editing transition opens with, so the
+/// unknown-id refusal is worded once rather than copied per verb. Returns a
+/// mutable handle into the caller's already-read `items`, keeping the
+/// read-mutate-save shape (and, for `supersede`, letting the borrow end where
+/// that verb needs a second item in the same pass).
+///
+/// # Errors
+///
+/// When no item carries `id`.
+fn find_mut<'a>(items: &'a mut [QueueItem], id: &str) -> anyhow::Result<&'a mut QueueItem> {
+    items
+        .iter_mut()
+        .find(|i| i.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))
 }
 
 /// Whether an artifact path witnesses completion: it exists and is non-empty

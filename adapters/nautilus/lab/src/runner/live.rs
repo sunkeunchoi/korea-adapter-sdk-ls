@@ -2197,10 +2197,10 @@ fn stage_and_finalize(
     // a limit event — a self-inflicted de-escalation).
     let run_dir = finalize_session(writer, dq, report, dedup_hits)?;
 
-    // U8/R12 — the tracking report's FIRST production caller. Until now
-    // `produce_report` had zero non-test callers while `clean_session_verdict`
-    // required a produced twin at rung >= 2, so rung 2 was unreachable by
-    // construction: the gate read an artifact nothing ever wrote.
+    // U8/R12 — the ONLY production caller of `produce_report`.
+    // `clean_session_verdict` requires a produced twin at rung >= 2, so removing
+    // this call makes rung 2 unreachable by construction: the gate would read a
+    // sidecar nothing writes.
     //
     // Placed AFTER `finalize_session` for two independent reasons: the producer
     // reads the FINALIZED run dir (`decisions.jsonl`, `performance.json`,
