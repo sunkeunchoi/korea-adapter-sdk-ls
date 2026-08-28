@@ -58,7 +58,7 @@ use crate::reference::pit_walk::{
     partition_windows, ListingOutcome, PitUniverseArtifact, RangeSessions, WalkError, WalkWindow,
     MAX_SESSIONS_PER_WINDOW, MAX_THROTTLE_RETRIES, MAX_WALK_PAGES,
 };
-use crate::rules::KRX_REGULAR_CLOSE;
+use crate::rules::{regular_close, SessionRegime, KRX_REGULAR_CLOSE};
 
 /// The smallest window this planner will emit. A `sdate == edate` request is
 /// degenerate on the live gateway: it **ignores `sdate`** and serves `qrycnt`
@@ -401,10 +401,14 @@ pub async fn pull_window<F: DailyFetcher>(
     }
     // Window bounds as bar timestamps — the same convention `build_daily_bar`
     // stamps (KST regular close of the candle's date), so the trim compares
-    // parsed values (R4).
+    // parsed values (R4). Each endpoint resolves against ITS OWN close
+    // (R13/R29 class b): a window may SPAN the 2016-08-01 close extension, and
+    // one regime for the pair trims in-range bars away — and a below-window row
+    // is also completion evidence, so the loss reads as a clean silent
+    // completion rather than an error.
     let (ts_start, ts_end) = match (
-        kst_to_unix_nanos(window.sdate, KRX_REGULAR_CLOSE),
-        kst_to_unix_nanos(window.edate, KRX_REGULAR_CLOSE),
+        kst_to_unix_nanos(window.sdate, regular_close(SessionRegime::for_date(window.sdate))),
+        kst_to_unix_nanos(window.edate, regular_close(SessionRegime::for_date(window.edate))),
     ) {
         (Ok(s), Ok(e)) => (s.as_u64(), e.as_u64()),
         (Err(e), _) | (_, Err(e)) => fail!(e),
@@ -909,6 +913,7 @@ mod tests {
     use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, KrxCalendar};
     use nautilus_model::identifiers::InstrumentId;
     use std::sync::Mutex;
+    use crate::rules::KRX_REGULAR_CLOSE_PRE_2016;
 
     fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -1455,6 +1460,56 @@ mod tests {
             "the append stays inside the window on BOTH sides"
         );
         assert_eq!(pull.calls, 1, "a below-window row completes without following the cursor");
+    }
+
+    /// U9/R29 consumer class (b): INGEST RANGE BOUNDS. The bounds must move in
+    /// EXACT lockstep with the stamping (class a), and a window can SPAN
+    /// [`crate::rules::CLOSE_REFORM_DATE`], so each endpoint must resolve against
+    /// ITS OWN close — one regime for the pair puts in-range bars outside the scan
+    /// window. Worse, a below-window row is also completion evidence
+    /// (`reached_below_window` breaks the walk), so the loss reads as a clean,
+    /// silent completion rather than an error.
+    ///
+    /// Blast radius: whole windows silently empty — a deeper backfill stops at the
+    /// first pre-2016 session it reaches.
+    #[tokio::test]
+    async fn window_bounds_resolve_each_endpoint_against_its_own_effective_close() {
+        let f = ScriptedFetcher::new();
+        // sdate 2016-07-29 closes at 15:00; edate 2016-08-02 closes at 15:30.
+        // 2016-07-28 is genuinely below the window (completion evidence).
+        f.script(
+            "005930",
+            "20160729",
+            "20160802",
+            "",
+            &["20160802", "20160801", "20160729", "20160728"],
+            "20160727",
+        );
+        let pull = pull_window(
+            &f,
+            "005930",
+            bar_type_for("005930"),
+            window(ymd(2016, 7, 29), ymd(2016, 8, 2), 3),
+            NO_PACE,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            bar_dates(&pull),
+            vec![ymd(2016, 7, 29), ymd(2016, 8, 1), ymd(2016, 8, 2)],
+            "both endpoints survive the trim: the pre-reform sdate bar is not below a \
+             15:30 start bound, and the post-reform edate bar is not above a 15:00 end bound"
+        );
+        // Witnessed on the kept bars: each endpoint carries its own close.
+        assert_eq!(
+            pull.bars[0].ts_event,
+            kst_to_unix_nanos(ymd(2016, 7, 29), KRX_REGULAR_CLOSE_PRE_2016).unwrap()
+        );
+        assert_eq!(
+            pull.bars[2].ts_event,
+            kst_to_unix_nanos(ymd(2016, 8, 2), KRX_REGULAR_CLOSE).unwrap()
+        );
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveTime;
-use nautilus_ls::rules::KRX_REGULAR_OPEN;
+use nautilus_ls::rules::{regular_close, SessionRegime, KRX_REGULAR_OPEN};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::context::AgentContext;
@@ -388,7 +388,19 @@ impl Default for OrbParams {
             max_concurrent: 5,
             range_open: KRX_REGULAR_OPEN,
             range_minutes: 15,
-            // 15:00 KST time-flat (before the 15:30 regular close).
+            // 15:00 KST time-flat. R30/KTD15: this sits thirty minutes inside the
+            // close only for sessions on/after `CLOSE_REFORM_DATE` (2016-08-01) —
+            // before it, 15:00 IS the regular close
+            // (`nautilus_ls::rules::regular_close`). The default is deliberately
+            // NOT effective-dated: `flat_time` is a serialized `OrbParams` field,
+            // so moving it moves `governed_params_hash(&OrbParams::default())`,
+            // which is pinned by `tests/identity_guards.rs` and rides every
+            // historical manifest. The invariant that matters holds either way and
+            // is asserted in `validate`: the flat never EXCEEDS the session's own
+            // close. ORB is undefinable on pre-2016 daily history anyway (it needs
+            // the 09:00-09:15 opening range), so no ORB run is stamped by the
+            // pre-2016 regime today; a strategy that does reach below the reform
+            // must pass the flat as a parameter rather than inherit this default.
             flat_time: NaiveTime::from_hms_opt(15, 0, 0).expect("valid time"),
             notional_per_position: 10_000_000.0,
             profit_target_r: default_profit_target_r(),
@@ -494,6 +506,24 @@ impl OrbParams {
                     self.entry_cutoff_min, cutoff, self.flat_time
                 ));
             }
+        }
+        // R30/KTD15 — the time-flat must never exceed the session's own regular
+        // close. Before `CLOSE_REFORM_DATE` (2016-08-01) the close was 15:00, not
+        // 15:30, so this is the arm that a licensed backfill reaching below the
+        // reform would otherwise trip silently: a flat past the close cannot
+        // execute, and the position ends censored rather than flat. Checked
+        // against the EARLIER regime because it is the binding one — passing it
+        // implies the post-2016 close, and the reverse does not hold.
+        let pre_reform_close = regular_close(SessionRegime::Pre2016);
+        if self.flat_time > pre_reform_close {
+            return Err(format!(
+                "flat_time {} is after the pre-2016 KRX regular close {} — a session \
+                 dated before {} has no bar at that instant, so the time-flat exit \
+                 could never fire and the position would end censored (R30)",
+                self.flat_time,
+                pre_reform_close,
+                nautilus_ls::rules::CLOSE_REFORM_DATE
+            ));
         }
         // ATR is consumed by the ATR stop mode and by the OR-width gate; its window
         // must be positive or ATR is never available — every ATR-stop session then
@@ -1031,6 +1061,41 @@ mod tests {
         assert!(!p.risk_sizing_active());
         assert!(!p.equity_compounding_active());
         assert!(!p.ratio_atr_active());
+    }
+
+    #[test]
+    fn the_time_flat_never_exceeds_the_sessions_own_effective_close() {
+        // R30/KTD15. The default 15:00 flat reads as "thirty minutes before the
+        // close" only for modern sessions; before CLOSE_REFORM_DATE (2016-08-01)
+        // 15:00 IS the close. Both readings must satisfy the same invariant, and
+        // the pre-reform close is the binding one.
+        let p = OrbParams::default();
+        assert_eq!(
+            p.flat_time,
+            regular_close(SessionRegime::Pre2016),
+            "the default flat sits exactly AT the pre-2016 close, not inside it"
+        );
+        assert!(
+            p.flat_time < regular_close(SessionRegime::Post2016),
+            "and thirty minutes inside the post-2016 close"
+        );
+        assert!(p.validate().is_ok(), "the default configuration satisfies R30");
+
+        // The observable consequence: a flat past the pre-2016 close is refused,
+        // because a session dated before the reform has no bar at that instant —
+        // the exit could never fire and the position would end censored.
+        let mut past_close = OrbParams::default();
+        past_close.flat_time = NaiveTime::from_hms_opt(15, 20, 0).unwrap();
+        let err = past_close.validate().expect_err("a flat after the pre-2016 close is refused");
+        assert!(err.contains("15:00"), "the refusal names the binding close: {err}");
+        assert!(err.contains("2016-08-01"), "and the reform date: {err}");
+        assert!(err.contains("censored"), "and the harm: {err}");
+
+        // A flat exactly at the post-2016 close is likewise refused — it is past
+        // the earlier regime's close, which is the whole point of the check.
+        let mut at_modern_close = OrbParams::default();
+        at_modern_close.flat_time = regular_close(SessionRegime::Post2016);
+        assert!(at_modern_close.validate().is_err());
     }
 
     #[test]

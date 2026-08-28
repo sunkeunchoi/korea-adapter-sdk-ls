@@ -2967,6 +2967,43 @@ mod calendar_gate_migration {
         assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 15)), "watermark advances to the session");
     }
 
+    /// U9/R13/R29/AE5 end-to-end: a session predating the 2016-08-01 close
+    /// extension is stamped at THAT session's own close (15:00) and the ingest
+    /// range bounds admit it. Classes (a) and (b) must hold together — a 15:30
+    /// bound over a 15:00-stamped row drops the only served candle as
+    /// below-window, which ALSO ends the cursor walk, so the symbol degrades to an
+    /// empty-history gap with no error to notice.
+    #[tokio::test]
+    async fn a_pre_2016_session_is_stamped_and_admitted_at_its_own_close() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_one_row("20100615")).await;
+
+        let cal = fixture_calendar();
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // 2010-06-15 is a proven Trading Session in the fixture — and six years
+        // before the close extension, so its close is 15:00.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 15), ymd(2010, 6, 15), gate)
+            .await
+            .unwrap();
+        assert_eq!(
+            report.triples_ingested, 1,
+            "the in-range pre-2016 row must not fall outside its own scan window"
+        );
+
+        let stored = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored[0].ts_event,
+            kst_to_unix_nanos(ymd(2010, 6, 15), KRX_REGULAR_CLOSE_PRE_2016).unwrap(),
+            "stamped at the 15:00 close that session actually had, not a 15:30 that did not exist"
+        );
+    }
+
     /// Enforced, SINGLE-DATE proven Closed target: the watermark advances FROM closure
     /// evidence with NO gateway request. Seed a watermark of 2010-06-18 so the fetch range
     /// [start, last_closed] collapses to the single date 2010-06-19 (start = watermark+1),
@@ -3501,8 +3538,8 @@ mod calendar_gate_migration {
     // the calendar verdict DIFFERS from the weekday result, proving the seam acts.
     // -----------------------------------------------------------------------
 
-    use nautilus_ls::ingest::{kst_to_unix_nanos, write_bars};
-    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, write_bars};
+    use nautilus_ls::rules::{KRX_REGULAR_CLOSE, KRX_REGULAR_CLOSE_PRE_2016};
     use nautilus_model::data::{Bar, BarType};
     use nautilus_model::types::{Price, Quantity};
 
