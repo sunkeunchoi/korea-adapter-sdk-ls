@@ -695,13 +695,19 @@ fn the_priority_verb_repairs_a_store_an_older_binary_left_with_several_holders()
     for id in ["a", "b", "c"] {
         add_item(&queue, id, &format!("item {id}"), "any", &[]);
     }
-    // Seed what a binary that ignored the field could leave behind: TWO
-    // holders. The set path must CONVERGE the store, not assume it is clean.
+    // Seed what a binary that ignored the field could leave behind: TWO holders.
+    // The set path must CONVERGE the store, not assume it is clean. Written as raw
+    // JSONL because `Queue::save` now refuses to persist an ambiguous frontier —
+    // the fixture has to reproduce a field-blind writer's output rather than route
+    // through the invariant the funnel enforces.
     let store = Queue::new(&queue);
     let mut items = store.read_all().unwrap();
     items[0].priority = true;
     items[1].priority = true;
-    store.save(&items).unwrap();
+    let raw: String =
+        items.iter().map(|i| format!("{}\n", serde_json::to_string(i).unwrap())).collect();
+    std::fs::write(&queue, raw).unwrap();
+    assert_eq!(holders(&queue).len(), 2, "the fixture really does start ambiguous");
 
     let out = run(&queue, &["priority", "c"]);
     assert_eq!(out.status.code(), Some(0), "priority failed: {}", stderr(&out));

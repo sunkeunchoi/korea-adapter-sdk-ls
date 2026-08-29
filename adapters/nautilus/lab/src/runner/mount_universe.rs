@@ -461,8 +461,11 @@ pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUnive
              universe_metadata_hash. Producing the universe anyway maps every candidate to \
              Untagged, which drops the tradability gate silently: the session would trade \
              symbols on no eligibility evidence at all, and the emitted rows would not show \
-             it. Point LS_MOUNT_UNIVERSE_METADATA at the artifact the head was built from, or \
-             re-run the head against a metadata artifact so there is a hash to bind to."
+             it. Point LS_MOUNT_UNIVERSE_METADATA at a current universe-metadata artifact \
+             (lab/config/universe-metadata-*.json, the one session-morning.sh exports, or a \
+             fresh capture): a head carrying no universe_metadata_hash accepts ANY valid \
+             artifact and warns that the gate applies where the head's did not. Re-run the \
+             head against an artifact only if you want the binding to be head-bound."
         ),
         (Some(path), _) => {
             let artifact = UniverseMetadata::load(path).map_err(|e| anyhow::anyhow!(e))?;

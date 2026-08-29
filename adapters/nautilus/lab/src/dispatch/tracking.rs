@@ -52,12 +52,37 @@ pub enum TwinStatus {
         /// Why the twin failed (scrubbed free text).
         reason: String,
     },
+    /// The twin is not yet ATTEMPTABLE: its prerequisite (the post-session ingest
+    /// landing the session's own bars) has not happened yet. Distinct from
+    /// [`Self::TwinFailed`] on purpose — a failed twin is evidence the session is
+    /// not clean and reds the readiness reducer, whereas a pending one is the
+    /// ordinary state of every session at the moment it finalizes (the KRX witness
+    /// is retrospective). Collapsing the two would red readiness on every live
+    /// session forever, which is a self-inflicted de-escalation on a condition no
+    /// production path can clear.
+    ///
+    /// Like `TwinFailed` this is NOT `produced()`, so it never satisfies the
+    /// rung-2 cleanliness gate; it says "ask again after the ingest", not "this
+    /// session failed".
+    TwinPending {
+        /// What is still missing (scrubbed free text).
+        reason: String,
+    },
 }
 
 impl TwinStatus {
     /// Whether the twin was produced (either load-bearing or calibration).
+    /// Neither a failed nor a PENDING twin counts, so the rung-2 gate stays
+    /// fail-closed on both.
     pub fn produced(&self) -> bool {
-        !matches!(self, TwinStatus::TwinFailed { .. })
+        matches!(self, TwinStatus::Computed | TwinStatus::ReportedNotLoadBearing)
+    }
+
+    /// Whether the twin FAILED, as opposed to merely not being attemptable yet.
+    /// This is the readiness reducer's question: a failed twin is evidence about
+    /// the session, a pending one is evidence about the clock.
+    pub fn failed(&self) -> bool {
+        matches!(self, TwinStatus::TwinFailed { .. })
     }
 }
 
@@ -107,17 +132,25 @@ pub fn report_path(data_home: &Path, run_id: &str) -> PathBuf {
     reports_dir(data_home).join(format!("{run_id}.json"))
 }
 
-fn twin_failed(run_id: &str, rung: u8, reason: impl Into<String>) -> TrackingErrorReport {
+fn twin_report(run_id: &str, rung: u8, status: TwinStatus) -> TrackingErrorReport {
     TrackingErrorReport {
         run_id: run_id.to_string(),
         rung,
-        status: TwinStatus::TwinFailed { reason: scrub(&reason.into()) },
+        status,
         entries: 0,
         mean_slippage_per_share: 0.0,
         max_abs_slippage_per_share: 0.0,
         approximated_fraction: 0.0,
         per_symbol: Vec::new(),
     }
+}
+
+fn twin_failed(run_id: &str, rung: u8, reason: impl Into<String>) -> TrackingErrorReport {
+    twin_report(run_id, rung, TwinStatus::TwinFailed { reason: scrub(&reason.into()) })
+}
+
+fn twin_pending(run_id: &str, rung: u8, reason: impl Into<String>) -> TrackingErrorReport {
+    twin_report(run_id, rung, TwinStatus::TwinPending { reason: scrub(&reason.into()) })
 }
 
 /// Extract the paper-twin fills (decisions held fixed, KTD7): the intended entry price +
@@ -143,9 +176,9 @@ fn paper_fills(decisions_jsonl: &str) -> anyhow::Result<BTreeMap<String, (f64, f
 /// Produce the tracking-error report for a finalized run (KTD7). Replays the run's entry
 /// decisions (the paper-twin fills, decisions held fixed) against the live fills in the
 /// performance report; `catalog_has_range` gates twin validity — a missing range yields a
-/// twin-failed status (never a panic). Size-normalized (per-share) so rung changes never
-/// read as divergence. Idempotent per run id: the caller writes the returned report to the
-/// sidecar, overwriting any prior one.
+/// twin-PENDING status (never a panic, and never twin-FAILED: see below). Size-normalized
+/// (per-share) so rung changes never read as divergence. Idempotent per run id: the caller
+/// writes the returned report to the sidecar, overwriting any prior one.
 ///
 /// Rung ≤ 1 → *reported-not-load-bearing* (calibration, KD6/AE4); rung ≥ 2 → *computed*
 /// (load-bearing).
@@ -156,13 +189,18 @@ pub fn produce_report(
     catalog_has_range: bool,
 ) -> TrackingErrorReport {
     // Twin prerequisite: the session's bars must be present in the catalog (F1's
-    // post-session ingest). A missing range → twin-failed, re-runnable later (KTD7).
+    // post-session ingest). That has NOT happened at the moment a session finalizes
+    // — the KRX witness is retrospective — so this arm is the ordinary state of
+    // every fresh run, not a failure of it. It returns PENDING rather than FAILED
+    // precisely because the readiness reducer treats a failed twin as a safety
+    // signal: reporting "failed" here would red readiness on every live session and
+    // pin the ladder to probation on a condition no production path can clear.
     if !catalog_has_range {
-        return twin_failed(
+        return twin_pending(
             run_id,
             rung,
-            "missing catalog range for the session — twin not producible until the post-session \
-             ingest lands (re-runnable per run id)",
+            "the session's catalog range has not landed yet — the twin becomes producible \
+             after the post-session ingest, and is re-runnable per run id",
         );
     }
 
@@ -250,16 +288,25 @@ pub fn produce_report(
 ///
 /// # Errors
 ///
-/// A directory-create or file-write failure.
+/// A directory-create, file-write or rename failure.
 pub fn write_report(data_home: &Path, report: &TrackingErrorReport) -> anyhow::Result<PathBuf> {
     let dir = reports_dir(data_home);
     std::fs::create_dir_all(&dir)?;
     let mut scrubbed = report.clone();
-    if let TwinStatus::TwinFailed { reason } = &mut scrubbed.status {
-        *reason = scrub(reason);
+    match &mut scrubbed.status {
+        TwinStatus::TwinFailed { reason } | TwinStatus::TwinPending { reason } => {
+            *reason = scrub(reason);
+        }
+        TwinStatus::Computed | TwinStatus::ReportedNotLoadBearing => {}
     }
     let path = report_path(data_home, &report.run_id);
-    std::fs::write(&path, serde_json::to_string_pretty(&scrubbed)?)?;
+    // Atomic tmp+rename, the same idiom `Queue::save` and the ingest checkpoint use.
+    // A torn write here is not a benign lost update: `readiness::build_catalog` maps an
+    // unreadable report to "no twin failure", so a half-written file would read as an
+    // absent one and fail OPEN on a signal the reducer treats as load-bearing.
+    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&scrubbed)?)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(path)
 }
 
@@ -377,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_catalog_range_is_twin_failed_and_writes_nothing_in_the_run_dir() {
+    fn missing_catalog_range_is_twin_pending_and_writes_nothing_in_the_run_dir() {
         let tmp = TempDir::new().unwrap();
         let run_dir = stage_run(
             tmp.path(),
@@ -388,8 +435,13 @@ mod tests {
         );
         let before = std::fs::read(run_dir.join(DATA_QUALITY_FILE)).unwrap();
         let report = produce_report(&run_dir, "run-c", 2, false);
-        assert!(matches!(report.status, TwinStatus::TwinFailed { .. }), "twin failed on a missing range");
-        assert!(!report.status.produced());
+        assert!(
+            matches!(report.status, TwinStatus::TwinPending { .. }),
+            "a missing range is PENDING, not failed: the post-session ingest has simply not \
+             run, and reporting a failure reds the readiness reducer on every live session"
+        );
+        assert!(!report.status.produced(), "pending still never satisfies the rung-2 gate");
+        assert!(!report.status.failed(), "and is not a safety signal");
         // The finalized run dir is byte-identical after the pass (immutable).
         assert_eq!(std::fs::read(run_dir.join(DATA_QUALITY_FILE)).unwrap(), before);
     }

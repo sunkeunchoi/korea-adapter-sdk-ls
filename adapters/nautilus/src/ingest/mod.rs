@@ -1394,6 +1394,20 @@ fn overlap_window_start(watermark: NaiveDate, overlap_days: usize) -> NaiveDate 
     watermark - ChronoDuration::days(overlap_days as i64 * 3 + 10)
 }
 
+/// The overlap tail's inclusive END bound: the watermark session's OWN regular
+/// close (R13/R29 consumer class c).
+///
+/// Named rather than inlined so a test can observe the value the production path
+/// actually computes. Asserting a re-implementation of this expression against
+/// itself is a tautology that holds for a flat-constant regression too.
+///
+/// # Errors
+///
+/// When the KST instant cannot be converted (see [`kst_to_unix_nanos`]).
+fn overlap_end_bound(watermark: NaiveDate) -> AdapterResult<UnixNanos> {
+    kst_to_unix_nanos(watermark, regular_close(SessionRegime::for_date(watermark)))
+}
+
 /// The verdict of an overlap comparison (KTD-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverlapVerdict {
@@ -3057,8 +3071,7 @@ impl Ingestor {
         // the watermark session's own bar out of the overlap and the shift
         // verdict then compares an empty tail.
         let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?;
-        let we_ns =
-            kst_to_unix_nanos(watermark, regular_close(SessionRegime::for_date(watermark)))?;
+        let we_ns = overlap_end_bound(watermark)?;
         let mut stored = overlap_tail(
             read_bars_scoped(&self.config.catalog_path, bar_type, Some(ws_ns), Some(we_ns)).await?,
             self.config.overlap_days,
@@ -4208,6 +4221,56 @@ mod tests {
         }
     }
 
+    /// U9/R29 consumer class (b), the `collect_daily` half. Its sibling in
+    /// `backfill::pull_window` has a spanning test; this one did not, and a
+    /// single-date window cannot see the regression: resolving ONE regime for the
+    /// pair puts the pre-reform endpoint below a 15:30 start bound (or the
+    /// post-reform endpoint above a 15:00 end bound). The lost row then sets
+    /// `page_reached_below_window`, so the symbol degrades to an empty-history gap
+    /// with no error — a silent truncation, not a failure.
+    #[tokio::test]
+    async fn a_daily_window_spanning_the_close_reform_keeps_both_endpoints() {
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let mut resp = T8410Response {
+            rsp_cd: "00000".to_string(),
+            // Newest-first, as the gateway serves. 2016-07-29 closes at 15:00 and
+            // 2016-08-02 at 15:30 — the window straddles CLOSE_REFORM_DATE.
+            outblock1: vec![
+                daily_row("20160802"),
+                daily_row("20160801"),
+                daily_row("20160729"),
+            ],
+            ..Default::default()
+        };
+        resp.outblock.cts_date = String::new();
+        let fetcher = FixedDaily { resp, calls: AtomicUsize::new(0) };
+        let outcome =
+            collect_daily(&fetcher, "005930", bar_type, "20160729", "20160802").await.unwrap();
+        let bars = match outcome {
+            TripleOutcome::Bars(b) => b,
+            _ => panic!("a spanning window must serve bars, not a gap or a cap"),
+        };
+        let dates: Vec<String> = bars
+            .iter()
+            .map(|b| {
+                let secs = (b.ts_event.as_u64() / 1_000_000_000) as i64
+                    + KST_UTC_OFFSET_HOURS as i64 * 3600;
+                chrono::DateTime::from_timestamp(secs, 0)
+                    .unwrap()
+                    .naive_utc()
+                    .date()
+                    .format("%Y%m%d")
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            dates,
+            ["20160729", "20160801", "20160802"],
+            "both endpoints survive the trim: the pre-reform sdate row is not below a 15:30 \
+             start bound, and the post-reform edate row is not above a 15:00 end bound"
+        );
+    }
+
     #[tokio::test]
     async fn daily_rows_outside_the_requested_window_are_trimmed() {
         // A degenerate single-day window (sdate == edate) makes the gateway
@@ -4860,43 +4923,48 @@ mod tests {
     }
 
     /// U9/R29 consumer class (c): THE WATERMARK TAIL. Witnessed separately from
-    /// (a) and (b) because its blast radius is different in kind — see the
-    /// comment in `detect_shift`. The bound this asserts is latent today: a flat
-    /// 15:30 over-reaches a pre-2016 watermark into a period with no bars, so the
-    /// selected tail is unchanged. What must hold, and what a future regime with
-    /// an EARLIER close would break, is that the end bound never falls before the
-    /// watermark session's own close — otherwise the watermark's own bar drops out
-    /// of the overlap and the shift verdict compares a short or empty tail
-    /// against the freshly served one, reporting a shift that did not happen.
+    /// (a) and (b) because its blast radius differs in kind — see the comment in
+    /// `detect_shift`. This observes the value the PRODUCTION path computes
+    /// ([`overlap_end_bound`], the expression `detect_shift` uses) against literal
+    /// per-regime constants, so reverting the bound to a flat `KRX_REGULAR_CLOSE`
+    /// fails it. An earlier version of this test compared a re-implementation of
+    /// the bound to a copy of itself, which held for the flat-constant regression
+    /// too — the class had a named test and no coverage.
     #[test]
-    fn the_overlap_end_bound_never_falls_before_the_watermark_sessions_own_close() {
-        let bound = |d: NaiveDate| {
-            kst_to_unix_nanos(d, regular_close(SessionRegime::for_date(d))).unwrap().as_u64()
-        };
-        let stamped = |d: NaiveDate| {
-            // Exactly how `build_daily_bar` stamps that session (class a).
-            kst_to_unix_nanos(d, regular_close(SessionRegime::for_date(d))).unwrap().as_u64()
-        };
-        for (y, m, day) in [(2010, 6, 15), (2016, 7, 29), (2016, 8, 1), (2024, 1, 3)] {
-            let d = NaiveDate::from_ymd_opt(y, m, day).unwrap();
-            assert!(
-                bound(d) >= stamped(d),
-                "{d}: the overlap end bound {} excludes the session's own bar at {}",
-                bound(d),
-                stamped(d)
-            );
-        }
-        // And the bound tracks the regime rather than a constant: the pre-reform
-        // watermark's bound is thirty minutes earlier in its own session day than
-        // the post-reform one.
+    fn the_overlap_end_bound_resolves_the_watermark_sessions_own_close() {
+        let at = |d: NaiveDate, t: NaiveTime| kst_to_unix_nanos(d, t).unwrap();
         let pre = NaiveDate::from_ymd_opt(2016, 7, 29).unwrap();
         let post = NaiveDate::from_ymd_opt(2016, 8, 1).unwrap();
-        let midnight = |d: NaiveDate| kst_to_unix_nanos(d, NaiveTime::MIN).unwrap().as_u64();
+
+        // Pinned to the literal constants, NOT to a re-derivation: a flat-constant
+        // bound stamps the pre-reform watermark thirty minutes late and fails here.
         assert_eq!(
-            (bound(post) - midnight(post)) - (bound(pre) - midnight(pre)),
-            30 * 60 * 1_000_000_000,
-            "the tail's end bound is regime-resolved, not a flat constant"
+            overlap_end_bound(pre).unwrap(),
+            at(pre, KRX_REGULAR_CLOSE_PRE_2016),
+            "a pre-reform watermark's tail ends at the 15:00 close that session had"
         );
+        assert_eq!(
+            overlap_end_bound(post).unwrap(),
+            at(post, KRX_REGULAR_CLOSE),
+            "the reform day itself ends at 15:30"
+        );
+        assert_ne!(
+            overlap_end_bound(pre).unwrap(),
+            at(pre, KRX_REGULAR_CLOSE),
+            "and is NOT the flat constant — this is the assertion the regression trips"
+        );
+
+        // The bound must never fall before the bar `build_daily_bar` stamps for that
+        // same session, or the watermark's own bar drops out of the overlap and the
+        // shift verdict compares a short tail against the freshly served one.
+        for d in [NaiveDate::from_ymd_opt(2010, 6, 15).unwrap(), pre, post] {
+            let stamped = ohlc_bar(&d.format("%Y%m%d").to_string(), 100).ts_event;
+            assert!(
+                overlap_end_bound(d).unwrap() >= stamped,
+                "{d}: the tail's end bound {} excludes the bar production stamped at {stamped}",
+                overlap_end_bound(d).unwrap()
+            );
+        }
     }
 
     #[tokio::test]

@@ -106,7 +106,10 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 
    - `LS_DATA_HOME` — unconditionally required; without it the binary exits immediately with
      `LS_DATA_HOME is required`.
-   - `LS_MOUNT_UNIVERSE_METADATA` — required **because the head is metadata-driven**. The
+   - `LS_MOUNT_UNIVERSE_METADATA` — **unconditionally required** (it was previously needed
+     only against a metadata-driven head; the producer now also refuses when NEITHER the
+     artifact nor a head `universe_metadata_hash` is present, because that combination used to
+     drop the tradability gate silently). Against this head it is a metadata-driven refusal. The
      producer refuses with `the head is METADATA-DRIVEN (its run carries universe_metadata_hash
      90005f88…) but LS_MOUNT_UNIVERSE_METADATA is unset — producing the universe without it
      silently drops the tradability gate and trades symbols the head excluded`. Point it at the

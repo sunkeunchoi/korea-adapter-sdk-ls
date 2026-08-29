@@ -3118,6 +3118,82 @@ mod catalog_watermark_tests {
         catalog_with_bars(tmp, watermarks, &bars)
     }
 
+    /// U8/R12 — the twin prerequisite. This gate decides whether a paper twin is
+    /// `Computed`, and a `Computed` twin at rung >= 2 is load-bearing evidence for
+    /// escalating real capital, so a FALSE POSITIVE here fabricates evidence while
+    /// a false negative merely defers. Every unestablished input must therefore
+    /// resolve to `false`. The live-session tests only ever reach the false branch
+    /// (no ingest has run in their rigs), so these cover the admitting branch and
+    /// each fail-closed exit directly.
+    #[test]
+    fn the_twin_prerequisite_admits_only_a_watermark_past_the_session_with_bars_present() {
+        let tmp = TempDir::new().unwrap();
+        let sym = vec!["005930.XKRX".to_string()];
+
+        // Watermark reached the session AND the series is on disk -> admitted.
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        assert!(session_range_in_catalog(&catalog, "20260728", &sym), "watermark AT the session");
+        assert!(
+            session_range_in_catalog(&catalog, "20260727", &sym),
+            "a watermark PAST the session is coverage too"
+        );
+
+        // Watermark short of the session -> deferred. This is the ordinary
+        // finalize-time state, because the KRX witness is retrospective.
+        assert!(
+            !session_range_in_catalog(&catalog, "20260729", &sym),
+            "a watermark behind the session cannot attest it"
+        );
+
+        // The destructive-heal trap: a current watermark over a wiped series. A
+        // watermark alone is not data presence, which is why the predicate asks both.
+        let wiped = catalog_with(&tmp2(), &[("005930.XKRX", "2026-07-28")], false);
+        assert!(
+            !session_range_in_catalog(&wiped, "20260728", &sym),
+            "a fresh watermark over a wiped series must not attest coverage"
+        );
+    }
+
+    /// The fail-closed exits, each named because a future refactor that drops one
+    /// turns a deferral into fabricated evidence. The empty-symbol case is the
+    /// sharp one: `iter().all()` over an empty slice is TRUE, so removing the
+    /// guard would admit a twin for a session that traded nothing.
+    #[test]
+    fn the_twin_prerequisite_fails_closed_on_every_unestablished_input() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        let sym = vec!["005930.XKRX".to_string()];
+
+        assert!(
+            !session_range_in_catalog(&catalog, "20260728", &[]),
+            "an empty symbol set must NOT pass vacuously — all() over empty is true"
+        );
+        assert!(
+            !session_range_in_catalog(&catalog, "not-a-date", &sym),
+            "an unparseable trading date establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(&tmp.path().join("no-such-catalog"), "20260728", &sym),
+            "an unreadable checkpoint establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(&catalog, "20260728", &["000660.XKRX".to_string()]),
+            "an instrument with no watermark of its own establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(
+                &catalog,
+                "20260728",
+                &["005930.XKRX".to_string(), "000660.XKRX".to_string()]
+            ),
+            "one unattested instrument defers the whole session — all(), not any()"
+        );
+    }
+
+    fn tmp2() -> TempDir {
+        TempDir::new().unwrap()
+    }
+
     /// AE2/R5. The whole point: with no stub and a clean ingest, the check stands on its own.
     /// Before this, an unset stub read `(false, false)` unconditionally, so a flawless ingest
     /// still reddened and spent one of the three deferrals the pre-registration allows per

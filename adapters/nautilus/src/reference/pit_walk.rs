@@ -53,8 +53,15 @@ use crate::ingest::DailyFetcher;
 use crate::reference::universe_metadata::{CapTier, MarketClass, UniverseMetadata};
 
 /// The pre-registered history floor (parent plan KD2): the KRX 15:00 → 15:30
-/// close move's effective date, below which `rules.rs`' pinned close would
-/// mis-stamp bars.
+/// close move's effective date.
+///
+/// The close is now effective-dated ([`crate::rules::SessionRegime`]), so
+/// STAMPING no longer blocks deepening below this floor — that was the original
+/// reason for it. What still does: three pre-reform `unknown` calendar days
+/// (2010-06-02, 2011-12-30, 2015-08-14) that accumulate-forward will not cross,
+/// tracked as queue item `calendar-resolve-3-pre-2016-unknown-days`. The floor
+/// stays pre-registered regardless — moving it is a governed act, not a
+/// consequence of the stamping fix.
 pub fn default_floor() -> NaiveDate {
     NaiveDate::from_ymd_opt(2016, 8, 1).expect("static date")
 }

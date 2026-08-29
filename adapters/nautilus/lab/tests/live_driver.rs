@@ -947,12 +947,13 @@ async fn a_finalized_session_writes_its_tracking_report_through_the_production_p
 
 /// The twin's prerequisite is the post-session ingest, and the KRX witness is
 /// retrospective — so at finalize the session's own daily bar is normally NOT in
-/// the catalog and the honest answer is `TwinFailed`, explicitly re-runnable per
-/// run id. The point of U8 is that the predicate now REACHES A VERDICT at all:
-/// before it, `read_report` returned `None` and the rung-2 refusal was structural
-/// rather than informative.
+/// the catalog. The honest status is `TwinPending`, NOT `TwinFailed`: pending is
+/// the ordinary state of every fresh run, and reporting a failure here would red
+/// `readiness_verdict` on every live session (it treats a failed twin as a safety
+/// signal), pinning the ladder to probation on a condition no production path can
+/// clear. Pending is still not `produced()`, so the rung-2 gate stays fail-closed.
 #[tokio::test]
-async fn the_finalize_time_twin_is_re_runnable_rather_than_fabricated() {
+async fn the_finalize_time_twin_is_pending_rather_than_failed_or_fabricated() {
     use nautilus_ls_lab::dispatch::tracking::{read_report, TwinStatus};
 
     let server = MockServer::start().await;
@@ -969,19 +970,23 @@ async fn the_finalize_time_twin_is_re_runnable_rather_than_fabricated() {
 
     let report = read_report(r.home.path(), &c.run_id).unwrap().unwrap();
     match &report.status {
-        TwinStatus::TwinFailed { reason } => {
+        TwinStatus::TwinPending { reason } => {
             assert!(
                 reason.contains("catalog range"),
-                "the failure names the missing prerequisite, not a generic error: {reason}"
+                "the pending status names the missing prerequisite: {reason}"
             );
             assert!(
                 reason.contains("re-runnable"),
                 "and says the report can be produced again once the ingest lands: {reason}"
             );
         }
-        other => panic!("no post-session ingest ran, so the twin cannot be produced: {other:?}"),
+        other => panic!(
+            "no post-session ingest ran, so the twin is PENDING, not {other:?} — a TwinFailed \
+             here would red readiness on every live session"
+        ),
     }
-    assert!(!report.status.produced(), "an unproduced twin must not satisfy the rung-2 gate");
+    assert!(!report.status.produced(), "a pending twin must not satisfy the rung-2 gate");
+    assert!(!report.status.failed(), "and must not read as a safety signal");
 }
 
 /// R5's always-emit guarantee outranks the report. The producer sits AFTER

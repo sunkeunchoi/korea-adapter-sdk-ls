@@ -3539,7 +3539,9 @@ mod calendar_gate_migration {
     // -----------------------------------------------------------------------
 
     use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, write_bars};
-    use nautilus_ls::rules::{KRX_REGULAR_CLOSE, KRX_REGULAR_CLOSE_PRE_2016};
+    use nautilus_ls::rules::{
+        regular_close, SessionRegime, KRX_REGULAR_CLOSE_PRE_2016,
+    };
     use nautilus_model::data::{Bar, BarType};
     use nautilus_model::types::{Price, Quantity};
 
@@ -3655,7 +3657,12 @@ mod calendar_gate_migration {
     }
 
     fn daily_bar(bt: BarType, date: NaiveDate, close: i64) -> Bar {
-        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        // Stamp exactly as `build_daily_bar` does — regime-resolved per session date
+        // (R13). This module seeds 2010/2011 dates, so a flat post-2016 close would
+        // plant bars at an instant those sessions never had, and the seeded catalog
+        // would disagree with the ingest side by thirty minutes for precisely the
+        // dates these tests exercise.
+        let ts = kst_to_unix_nanos(date, regular_close(SessionRegime::for_date(date))).unwrap();
         Bar::new(
             bt,
             Price::from((close - 5).to_string().as_str()),

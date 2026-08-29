@@ -508,21 +508,25 @@ impl OrbParams {
             }
         }
         // R30/KTD15 — the time-flat must never exceed the session's own regular
-        // close. Before `CLOSE_REFORM_DATE` (2016-08-01) the close was 15:00, not
-        // 15:30, so this is the arm that a licensed backfill reaching below the
-        // reform would otherwise trip silently: a flat past the close cannot
-        // execute, and the position ends censored rather than flat. Checked
-        // against the EARLIER regime because it is the binding one — passing it
-        // implies the post-2016 close, and the reverse does not hold.
-        let pre_reform_close = regular_close(SessionRegime::Pre2016);
-        if self.flat_time > pre_reform_close {
+        // close. `validate` is DATE-BLIND, so it enforces the bound for the regime
+        // every stamped ORB run actually uses: post-2016, because ORB needs the
+        // 09:00-09:15 opening range and is undefinable on pre-2016 daily history.
+        // Enforcing the PRE-reform 15:00 bound here instead would refuse every flat
+        // in (15:00, 15:30] — legal for every session this repo can trade, and
+        // exactly the range a later-flat lever candidate would explore, which is the
+        // escape hatch the default's own comment prescribes. The pre-reform bound
+        // belongs where a session date is in scope; see the run-site note above.
+        let close = regular_close(SessionRegime::Post2016);
+        if self.flat_time > close {
             return Err(format!(
-                "flat_time {} is after the pre-2016 KRX regular close {} — a session \
-                 dated before {} has no bar at that instant, so the time-flat exit \
-                 could never fire and the position would end censored (R30)",
+                "flat_time {} is after the KRX regular close {} — no session has a bar at \
+                 that instant, so the time-flat exit could never fire and the position \
+                 would end censored (R30). A run whose range reaches below {} closes at \
+                 {} instead, and must pass a flat no later than that.",
                 self.flat_time,
-                pre_reform_close,
-                nautilus_ls::rules::CLOSE_REFORM_DATE
+                close,
+                nautilus_ls::rules::CLOSE_REFORM_DATE,
+                regular_close(SessionRegime::Pre2016)
             ));
         }
         // ATR is consumed by the ATR stop mode and by the OR-width gate; its window
@@ -1064,16 +1068,17 @@ mod tests {
     }
 
     #[test]
-    fn the_time_flat_never_exceeds_the_sessions_own_effective_close() {
-        // R30/KTD15. The default 15:00 flat reads as "thirty minutes before the
-        // close" only for modern sessions; before CLOSE_REFORM_DATE (2016-08-01)
-        // 15:00 IS the close. Both readings must satisfy the same invariant, and
-        // the pre-reform close is the binding one.
+    fn the_time_flat_never_exceeds_the_regular_close_but_the_later_lever_range_stays_open() {
+        // R30/KTD15. `validate` is date-blind, so it enforces the close of the
+        // regime every stamped ORB run uses — post-2016. The half hour between the
+        // two regimes' closes must stay CONFIGURABLE: it is legal for every session
+        // this repo can trade, and it is exactly what a later-flat lever candidate
+        // would explore.
         let p = OrbParams::default();
         assert_eq!(
             p.flat_time,
             regular_close(SessionRegime::Pre2016),
-            "the default flat sits exactly AT the pre-2016 close, not inside it"
+            "the default flat sits exactly AT the pre-2016 close — 15:00 was the close then"
         );
         assert!(
             p.flat_time < regular_close(SessionRegime::Post2016),
@@ -1081,21 +1086,27 @@ mod tests {
         );
         assert!(p.validate().is_ok(), "the default configuration satisfies R30");
 
-        // The observable consequence: a flat past the pre-2016 close is refused,
-        // because a session dated before the reform has no bar at that instant —
-        // the exit could never fire and the position would end censored.
-        let mut past_close = OrbParams::default();
-        past_close.flat_time = NaiveTime::from_hms_opt(15, 20, 0).unwrap();
-        let err = past_close.validate().expect_err("a flat after the pre-2016 close is refused");
-        assert!(err.contains("15:00"), "the refusal names the binding close: {err}");
-        assert!(err.contains("2016-08-01"), "and the reform date: {err}");
-        assert!(err.contains("censored"), "and the harm: {err}");
+        // The lever range: a flat inside the post-2016 session must be ACCEPTED.
+        // Refusing it would close the escape hatch the default's own comment
+        // prescribes for a strategy that passes its own flat.
+        for (h, m) in [(15u32, 1u32), (15, 20), (15, 30)] {
+            let mut later = OrbParams::default();
+            later.flat_time = NaiveTime::from_hms_opt(h, m, 0).unwrap();
+            assert!(
+                later.validate().is_ok(),
+                "{h}:{m:02} is inside the post-2016 close and must stay configurable"
+            );
+        }
 
-        // A flat exactly at the post-2016 close is likewise refused — it is past
-        // the earlier regime's close, which is the whole point of the check.
-        let mut at_modern_close = OrbParams::default();
-        at_modern_close.flat_time = regular_close(SessionRegime::Post2016);
-        assert!(at_modern_close.validate().is_err());
+        // The observable refusal: a flat PAST the regular close can never fire,
+        // because no session has a bar at that instant.
+        let mut past_close = OrbParams::default();
+        past_close.flat_time = NaiveTime::from_hms_opt(15, 31, 0).unwrap();
+        let err = past_close.validate().expect_err("a flat after the close is refused");
+        assert!(err.contains("15:30"), "the refusal names the binding close: {err}");
+        assert!(err.contains("2016-08-01"), "and points at the earlier regime: {err}");
+        assert!(err.contains("15:00"), "naming the close a deeper run must respect: {err}");
+        assert!(err.contains("censored"), "and the harm: {err}");
     }
 
     #[test]
