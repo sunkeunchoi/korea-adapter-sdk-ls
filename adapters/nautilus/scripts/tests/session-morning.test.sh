@@ -840,11 +840,16 @@ drop_fixture
 # because they are a hand-listed set: a typo in one would otherwise be invisible.
 #
 # The last two are the ROOT-CRATE manifests, and they are the reason the workspace-root Cargo.toml
-# is not enough on its own. `$R/Cargo.toml` carries [workspace] members and shared dependency
-# versions; a feature default flipped in crates/ls-core/Cargo.toml, or a dependency added there
-# under an already-pinned version, dirties every binary while moving neither the workspace root
-# manifest nor Cargo.lock. Those two crates are exactly the ones the seven binaries LINK — every
-# other root member is a dev-dependency or a separate tool, and adding them would over-report.
+# is not enough on its own. A feature default flipped in crates/ls-core/Cargo.toml dirties every
+# binary while moving no lockfile at all — a lockfile records resolved VERSIONS, not feature sets —
+# and `$R/Cargo.toml` carries only [workspace] members and shared version pins, not another crate's
+# [features]. Those two crates are exactly the ones the seven binaries LINK; every other root member
+# is a dev-dependency or a separate tool, and adding them would over-report.
+#
+# Note the case names say "dep-info lists no manifest", which holds for the five nautilus-ls
+# binaries. lab-research and lab-mount-universe already carry these manifests through
+# lab/build.rs's rerun-if-changed projection, so for them the entry is redundant rather than
+# load-bearing — see the measured split in session-morning.sh's BIN_EXTRA_FRESHNESS_INPUTS comment.
 for MANIFEST in Cargo.toml Cargo.lock adapters/nautilus/Cargo.toml adapters/nautilus/Cargo.lock \
                 adapters/nautilus/rust-toolchain.toml adapters/nautilus/lab/Cargo.toml \
                 adapters/nautilus/nautilus-ls-calendar/Cargo.toml \

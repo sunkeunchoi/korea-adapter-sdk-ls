@@ -290,11 +290,21 @@ fi
 #
 # THE SET SPANS BOTH WORKSPACES, because the dependency edge does. The binaries live in the
 # adapter workspace but link crates/ls-sdk and crates/ls-core by path, so their manifests are
-# build inputs to every one of the seven — and the workspace-root manifest does NOT stand in for
-# them. `$R/Cargo.toml` carries [workspace] members plus shared dependency versions; a feature
-# default flipped in crates/ls-core/Cargo.toml, or a dependency added there under a version the
-# root already pins, dirties every binary while moving neither `$R/Cargo.toml` nor `$R/Cargo.lock`.
-# Omitting them was therefore the same false green this list exists to close, one workspace over.
+# build inputs to every one of the seven — and neither the workspace-root manifest nor a lockfile
+# stands in for them. A FEATURE DEFAULT flipped in crates/ls-core/Cargo.toml is the sharp case: a
+# lockfile records resolved VERSIONS, not feature sets, so that edit dirties every binary while
+# moving no lockfile at all, and `$R/Cargo.toml` only carries [workspace] members and shared
+# version pins, not another crate's [features]. (A dependency ADDED to ls-core is not that case —
+# it rewrites ls-core's own package entry in the lockfile — so it is not the example to reach for.)
+# Omitting these two was therefore the same false green this list exists to close, one workspace over.
+#
+# MEASURED, because the "dep-info records no manifest" premise above is true for FIVE of the seven,
+# not all seven. The five nautilus-ls binaries record zero `Cargo.toml` paths, so the hand list is
+# entirely load-bearing for them; `lab-research.d` and `lab-mount-universe.d` each already record
+# six of these manifests — including both root-crate ones — because adapters/nautilus/lab/build.rs
+# emits them as rerun-if-changed and cargo folds those into dep-info. For those two the entries are
+# redundant, not wrong (dep_freshness takes a max, so a doubly-counted input changes no verdict).
+# Do not prune this list off a lab-binary spot-check: the five that need it record nothing.
 #
 # ONLY those two, and the exclusion is the "does not OVER-report" rule applied to manifests. The
 # root workspace has seven members; ls-metadata and ls-sdk-test-support reach the binaries through
