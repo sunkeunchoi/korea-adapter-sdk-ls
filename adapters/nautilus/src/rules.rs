@@ -51,6 +51,13 @@ pub const TICK_REFORM_DATE: NaiveDate = match NaiveDate::from_ymd_opt(2023, 1, 2
 };
 
 /// The KRX regular-session close extension effective date (Monday 2016-08-01).
+///
+/// PROVENANCE, because this date is now load-bearing for catalog bytes: it rests
+/// on agreeing SECONDARY sources, not a primary KRX notice — the 2016 press
+/// release and the rulebook revision were not publicly reachable. Recorded as
+/// PARTIALLY SETTLED in the effective-date convention under `docs/solutions/`
+/// and in the Part A findings' in-window regime table. If a primary source ever
+/// contradicts it, every bar stamped below the date is re-derived.
 /// Sessions dated on or after this use [`SessionRegime::Post2016`] and close at
 /// [`KRX_REGULAR_CLOSE`]; earlier sessions use [`SessionRegime::Pre2016`] and
 /// close at [`KRX_REGULAR_CLOSE_PRE_2016`].

@@ -704,14 +704,14 @@ fn daily_bars_present(catalog: &Path, instrument: &str) -> bool {
 ///
 /// Fails closed on every unestablished input (unreadable checkpoint, unparseable
 /// trading date, an instrument with no watermark): a false here is
-/// `TwinFailed`, which is explicitly re-runnable per run id, so the conservative
+/// `TwinPending`, which is explicitly re-runnable per run id, so the conservative
 /// answer costs nothing but a later re-production.
 ///
 /// NOTE on ordering, because it decides what a finalize-time call can produce:
 /// the KRX witness is retrospective, so at the moment a session finalizes its own
 /// daily bar is normally NOT yet ingested and this returns false. That is the
 /// honest answer — the report written at finalize records a re-runnable
-/// `TwinFailed` rather than a fabricated twin, which is already a strict
+/// `TwinPending` rather than a fabricated twin, which is already a strict
 /// improvement on the previous state (no report at all, so `read_report` returned
 /// `None` and the rung-2 refusal was structural rather than informative). A
 /// *Computed* twin additionally requires re-production after that ingest lands.
@@ -3147,7 +3147,16 @@ mod catalog_watermark_tests {
 
         // The destructive-heal trap: a current watermark over a wiped series. A
         // watermark alone is not data presence, which is why the predicate asks both.
-        let wiped = catalog_with(&tmp2(), &[("005930.XKRX", "2026-07-28")], false);
+        // The tempdir is BOUND, not a temporary: `catalog_with(&tmp2(), ..)` would
+        // drop it at the end of the statement and delete the tree, so the assertion
+        // would pass through the unreadable-checkpoint exit rather than the branch it
+        // names — vacuously green against exactly the regression it guards.
+        let wiped_tmp = TempDir::new().unwrap();
+        let wiped = catalog_with(&wiped_tmp, &[("005930.XKRX", "2026-07-28")], false);
+        assert!(
+            wiped.join("ingest-checkpoint.json").exists(),
+            "the checkpoint must be READABLE, or the false below proves nothing about bars"
+        );
         assert!(
             !session_range_in_catalog(&wiped, "20260728", &sym),
             "a fresh watermark over a wiped series must not attest coverage"
@@ -3188,10 +3197,6 @@ mod catalog_watermark_tests {
             ),
             "one unattested instrument defers the whole session — all(), not any()"
         );
-    }
-
-    fn tmp2() -> TempDir {
-        TempDir::new().unwrap()
     }
 
     /// AE2/R5. The whole point: with no stub and a clean ingest, the check stands on its own.

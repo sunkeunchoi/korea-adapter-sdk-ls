@@ -151,12 +151,17 @@ pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) 
         // state of every session between finalize and the next post-session ingest,
         // so counting it here would red the reducer on every live session and pin
         // the ladder to probation on a condition no production path can clear.
-        // A read/parse error stays false, matching this reducer's existing shape.
-        let twin_failed = read_report(data_home, &run_id)
-            .ok()
-            .flatten()
-            .map(|r| r.status.failed())
-            .unwrap_or(false);
+        // An UNREADABLE report is a refusal, not an absence: it fails CLOSED, matching
+        // `clean_session_verdict`'s treatment of the same error. Collapsing the two
+        // would let a torn or corrupt sidecar read as "no twin failure" on a signal
+        // this reducer treats as load-bearing — the refusal-versus-empty collapse the
+        // sidecar's atomic write closes from the other side. A genuinely ABSENT report
+        // stays false: no report is no evidence, which is the pre-diff state.
+        let twin_failed = match read_report(data_home, &run_id) {
+            Ok(Some(r)) => r.status.failed(),
+            Ok(None) => false,
+            Err(_) => true,
+        };
         let deferral_count = manifest
             .dispatch
             .as_ref()

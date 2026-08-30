@@ -20,8 +20,11 @@
 //! - The priority marker (R1) is single-holder ON WRITE: `set_priority` clears
 //!   every OTHER holder in the same read-mutate-save (a binary predating the
 //!   field could have left several behind), `done` releases it and `supersede`
-//!   transfers it to the superseder (R21) — so the marker survives the
-//!   transitions its holder takes without a second store to reconcile.
+//!   transfers it to the superseder when that superseder is itself open,
+//!   RELEASING it otherwise (R21) — the marker follows the work its holder's
+//!   transition leads to, and no transition can park it on terminal work, which
+//!   the report renders nowhere. `save` refuses to persist a second holder, so
+//!   the invariant does not depend on which verb reached the write.
 //!
 //! Writes are whole-file read → mutate → atomic tmp+rename (mirroring the
 //! ingest-checkpoint idiom at `nautilus-ls/src/ingest/checkpoint.rs`), so a crash
@@ -1120,5 +1123,48 @@ mod tests {
         let held: Vec<&str> =
             back.iter().filter(|i| i.priority).map(|i| i.id.as_str()).collect();
         assert_eq!(held, ["successor"], "still exactly one holder, unchanged");
+    }
+
+    #[test]
+    fn superseding_onto_terminal_work_releases_the_marker_rather_than_parking_it() {
+        // R1/R21. The report renders only actionable items, so transferring the one
+        // scarce marker onto a superseder that is itself already done would hide the
+        // frontier from every section while reporting success. Releasing it is the
+        // honest outcome: no holder, and the operator re-pins the live successor.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("head", Window::Any)).unwrap();
+        q.add(item("already-done", Window::Any)).unwrap();
+        q.done("already-done", "2026-08-01T00:00:00+00:00").unwrap();
+        q.set_priority("head").unwrap();
+
+        assert_eq!(q.supersede("head", "already-done").unwrap(), TransitionOutcome::Completed);
+        let back = q.read_all().unwrap();
+        assert!(
+            back.iter().all(|i| !i.priority),
+            "the marker is RELEASED, not parked on work the report cannot show"
+        );
+    }
+
+    #[test]
+    fn the_write_funnel_refuses_a_second_priority_holder() {
+        // R1 enforced where every mutator passes, not only in the verb that sets it.
+        // `supersede` transfers the marker, so without this guard a store carrying a
+        // stale holder could gain a second one through a path `move_priority` never
+        // touches. Asserted directly against `save`, because the multi-holder
+        // fixtures elsewhere write raw JSONL specifically to bypass it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("a", Window::Any)).unwrap();
+        q.add(item("b", Window::Any)).unwrap();
+        let before = std::fs::read(q.path()).unwrap();
+
+        let mut two = q.read_all().unwrap();
+        two[0].priority = true;
+        two[1].priority = true;
+        let err = q.save(&two).unwrap_err().to_string();
+        assert!(err.contains("2 priority holders"), "the refusal counts them: {err}");
+        assert!(err.contains('a') && err.contains('b'), "and names them: {err}");
+        assert_eq!(std::fs::read(q.path()).unwrap(), before, "a refused save leaves the store");
     }
 }

@@ -1,5 +1,6 @@
 //! `lab-next` CLI (U1/U5/U6, KTD3) — the queue edit surface (`add` / `done` /
-//! `supersede` / `list`), the default window-aware entry report, and the
+//! `supersede` / `priority` / `block` / `unblock` / `list`), the default
+//! window-aware entry report, and the
 //! `probe` resume-probe gate (U6, R14; KTD5).
 //!
 //! Mirrors `lab-mount-universe`'s read-only posture: no nonce, no chain
