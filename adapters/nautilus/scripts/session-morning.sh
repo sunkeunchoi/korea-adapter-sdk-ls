@@ -282,12 +282,30 @@ fi
 # therefore reports `ok` for seven binaries built from superseded dependency code, and the content
 # axis cannot help: a manifest change removes no registered literal. That is a false green of
 # exactly the class this preflight exists to close, so the manifests are folded in explicitly.
-# They are a genuinely closed set — one per workspace member plus the two lockfiles and the pinned
-# toolchain — not a source-tree scan, so KTD8's objection to a hand-listed scan does not apply: a
-# new workspace member is a repo-structure change, not a routine edit, and a manifest that goes
-# missing counts toward `vanished` so a typo here fails CLOSED rather than silently covering less.
+# They are a genuinely closed set — the manifest of every crate the seven binaries LINK, plus the
+# two lockfiles and the pinned toolchain — not a source-tree scan, so KTD8's objection to a
+# hand-listed scan does not apply: a new linked crate is a repo-structure change, not a routine
+# edit, and a manifest that goes missing counts toward `vanished` so a typo here fails CLOSED
+# rather than silently covering less.
+#
+# THE SET SPANS BOTH WORKSPACES, because the dependency edge does. The binaries live in the
+# adapter workspace but link crates/ls-sdk and crates/ls-core by path, so their manifests are
+# build inputs to every one of the seven — and the workspace-root manifest does NOT stand in for
+# them. `$R/Cargo.toml` carries [workspace] members plus shared dependency versions; a feature
+# default flipped in crates/ls-core/Cargo.toml, or a dependency added there under a version the
+# root already pins, dirties every binary while moving neither `$R/Cargo.toml` nor `$R/Cargo.lock`.
+# Omitting them was therefore the same false green this list exists to close, one workspace over.
+#
+# ONLY those two, and the exclusion is the "does not OVER-report" rule applied to manifests. The
+# root workspace has seven members; ls-metadata and ls-sdk-test-support reach the binaries through
+# [dev-dependencies] alone, and ls-docgen, ls-trackers and ls-repository-engineering are separate
+# tools no binary links. Listing them would mark all seven binaries stale inside the 09:05 deadline
+# for a dependency that does not exist — the same objection that keeps adapters/nautilus/lab/src
+# out of the source axis. A crate that becomes a real dependency joins this list in the same commit
+# that adds the edge.
 BIN_EXTRA_FRESHNESS_INPUTS=(
   "$R/Cargo.toml" "$R/Cargo.lock"
+  "$R/crates/ls-sdk/Cargo.toml" "$R/crates/ls-core/Cargo.toml"
   "$NAUT/Cargo.toml" "$NAUT/Cargo.lock" "$NAUT/rust-toolchain.toml"
   "$NAUT/lab/Cargo.toml" "$NAUT/nautilus-ls-calendar/Cargo.toml"
 )
