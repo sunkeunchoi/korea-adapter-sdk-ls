@@ -26,7 +26,7 @@ use crate::artifacts::{aborted_runs, list_runs, DATA_QUALITY_FILE};
 use crate::dispatch::chain::{ChainRecord, RecordKind};
 use crate::dispatch::ladder::consumed_run_ids;
 use crate::dispatch::prereg::{ExceedanceThresholds, PreRegistration};
-use crate::dispatch::tracking::{read_report, TwinStatus};
+use crate::dispatch::tracking::read_report;
 use crate::runner::research::read_manifest;
 
 /// The readiness verdict the gate consumes as one of its checks (R11).
@@ -147,11 +147,21 @@ pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) 
     for run_id in qualifying_window(data_home, k) {
         let Ok(manifest) = read_manifest(data_home, &run_id) else { continue };
         let dq = read_dq(data_home, &run_id);
-        let twin_failed = read_report(data_home, &run_id)
-            .ok()
-            .flatten()
-            .map(|r| matches!(r.status, TwinStatus::TwinFailed { .. }))
-            .unwrap_or(false);
+        // Only a FAILED twin is a safety signal. A PENDING one is the ordinary
+        // state of every session between finalize and the next post-session ingest,
+        // so counting it here would red the reducer on every live session and pin
+        // the ladder to probation on a condition no production path can clear.
+        // An UNREADABLE report is a refusal, not an absence: it fails CLOSED, matching
+        // `clean_session_verdict`'s treatment of the same error. Collapsing the two
+        // would let a torn or corrupt sidecar read as "no twin failure" on a signal
+        // this reducer treats as load-bearing — the refusal-versus-empty collapse the
+        // sidecar's atomic write closes from the other side. A genuinely ABSENT report
+        // stays false: no report is no evidence, which is the pre-diff state.
+        let twin_failed = match read_report(data_home, &run_id) {
+            Ok(Some(r)) => r.status.failed(),
+            Ok(None) => false,
+            Err(_) => true,
+        };
         let deferral_count = manifest
             .dispatch
             .as_ref()
@@ -389,9 +399,56 @@ mod tests {
         assert_eq!(v, ReadinessVerdict::Green, "backtest residue cannot red a full clean live window");
     }
 
+    /// The interaction the finalize-time producer creates, and the one nothing
+    /// joined before: every live session now writes a sidecar, and at finalize the
+    /// post-session ingest has not landed, so that sidecar is PENDING. If pending
+    /// counted as a twin failure this reducer would go Red on every live session
+    /// and pin the ladder to probation on a condition no production path clears.
+    #[test]
+    fn a_pending_twin_is_not_a_safety_signal_but_a_failed_one_is() {
+        use crate::dispatch::tracking::{write_report, TrackingErrorReport, TwinStatus};
+        let report = |rid: &str, status: TwinStatus| TrackingErrorReport {
+            run_id: rid.into(),
+            rung: 2,
+            status,
+            entries: 0,
+            mean_slippage_per_share: 0.0,
+            max_abs_slippage_per_share: 0.0,
+            approximated_fraction: 0.0,
+            per_symbol: Vec::new(),
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let rid = "20260716T010000Z-live-orb-v30";
+        stage_run(tmp.path(), rid, Some("live"), clean_dq());
+        write_report(
+            tmp.path(),
+            &report(rid, TwinStatus::TwinPending { reason: "ingest has not landed".into() }),
+        )
+        .unwrap();
+        let catalog = build_catalog(tmp.path(), &[], 5);
+        assert!(
+            !catalog.sessions.iter().any(|s| s.twin_failed),
+            "a pending twin is the ordinary post-finalize state, not a failure"
+        );
+
+        // The same run, same rung, only the status differs: a genuine failure must
+        // still surface, so this is a discrimination test rather than a mute.
+        write_report(
+            tmp.path(),
+            &report(rid, TwinStatus::TwinFailed { reason: "decisions.jsonl unreadable".into() }),
+        )
+        .unwrap();
+        let catalog = build_catalog(tmp.path(), &[], 5);
+        assert!(
+            catalog.sessions.iter().any(|s| s.twin_failed),
+            "a twin that FAILED on available data is still a safety signal"
+        );
+    }
+
     #[test]
     fn a_twin_failed_sidecar_surfaces_and_reds() {
-        use crate::dispatch::tracking::{write_report, TrackingErrorReport};
+        use crate::dispatch::tracking::{write_report, TrackingErrorReport, TwinStatus};
         let tmp = TempDir::new().unwrap();
         let rid = "20260716T010000Z-live-orb-v30";
         stage_run(tmp.path(), rid, Some("live"), clean_dq());

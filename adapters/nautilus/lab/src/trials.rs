@@ -110,7 +110,7 @@ pub struct TrialRecord {
     pub source: Option<String>,
 }
 
-fn is_false(b: &bool) -> bool {
+pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
 

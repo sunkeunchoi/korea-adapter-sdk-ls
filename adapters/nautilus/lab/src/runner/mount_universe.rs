@@ -379,12 +379,48 @@ fn report_open_drops(drops: &OpenDrops) {
     }
 }
 
+/// The outcome of binding a universe-metadata artifact to the head's identity.
+///
+/// A closed type rather than a bare `Option` (R15/KTD14). The `Option` this
+/// replaces let *refusal* and *empty result* share one representation: `None`
+/// meant both "this head legitimately has no metadata" and "nobody supplied any
+/// and nobody checked", and the second reading silently dropped the tradability
+/// gate. Both artifact-absent arms now refuse, so **every variant of this type
+/// carries records** — there is no value here that means "the gate is off", and
+/// the mount cannot express one.
+///
+/// The two variants are the observable residue the old silence erased: which
+/// binding produced the gate is now typed rather than inferable only from a
+/// stderr line.
+enum MetadataBinding {
+    /// The head run is metadata-driven and the supplied artifact's content hash
+    /// is the one that run was built from.
+    HeadBound(HashMap<String, InstrumentMetadata>),
+    /// An artifact was supplied against a head carrying no
+    /// `universe_metadata_hash`. The gate applies where the head's did not —
+    /// narrower than a mismatch, so it warns rather than refusing (see the
+    /// `None` arm in [`resolve`]), and this variant records that divergence.
+    UngatedHead(HashMap<String, InstrumentMetadata>),
+}
+
+impl MetadataBinding {
+    /// The bound records. Both variants carry them; the distinction is
+    /// provenance, not presence.
+    fn records(&self) -> &HashMap<String, InstrumentMetadata> {
+        match self {
+            Self::HeadBound(records) | Self::UngatedHead(records) => records,
+        }
+    }
+}
+
 /// Resolve the mount universe for `cfg.session_date` from the catalog.
 ///
 /// # Errors
 ///
-/// If the catalog is absent or unreadable, the head params cannot be resolved, the metadata
-/// artifact fails validation, or no symbol survives selection.
+/// If the catalog is absent or unreadable, the head params cannot be resolved, no
+/// universe-metadata artifact binds to the head (see [`MetadataBinding`] — BOTH
+/// artifact-absent arms refuse), the metadata artifact fails validation, or no
+/// symbol survives selection.
 pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUniverseRow>> {
     let catalog = cfg.data_home.join("catalog");
     if !catalog.exists() {
@@ -405,12 +441,31 @@ pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUnive
     )
     .and_then(|(_rid, m)| m.universe_metadata_hash);
 
-    let metadata: Option<HashMap<String, InstrumentMetadata>> = match (&cfg.metadata_path, &head_metadata_hash) {
+    let metadata: MetadataBinding = match (&cfg.metadata_path, &head_metadata_hash) {
         (None, Some(expected)) => anyhow::bail!(
             "mount-universe refused: the head is METADATA-DRIVEN (its run carries \
              universe_metadata_hash {expected}) but LS_MOUNT_UNIVERSE_METADATA is unset — \
              producing the universe without it silently drops the tradability gate and trades \
              symbols the head excluded. Set it to the artifact that run was built from."
+        ),
+        // R15 — this arm used to be `=> None`, and `None` proceeded. No artifact
+        // and no head hash to bind against is not a legitimate "metadata-less
+        // head": it is the mount producing a universe whose eligibility nothing
+        // vouched for. Every candidate maps to `CandidateMeta::Untagged`, the
+        // tradability gate disappears, and the failure is invisible in the emitted
+        // artifact — the module comment above stated exactly that harm while the
+        // code did it anyway, with no diagnostic at all.
+        (None, None) => anyhow::bail!(
+            "mount-universe refused: no universe-metadata artifact to bind — \
+             LS_MOUNT_UNIVERSE_METADATA is unset AND the head run carries no \
+             universe_metadata_hash. Producing the universe anyway maps every candidate to \
+             Untagged, which drops the tradability gate silently: the session would trade \
+             symbols on no eligibility evidence at all, and the emitted rows would not show \
+             it. Point LS_MOUNT_UNIVERSE_METADATA at a current universe-metadata artifact \
+             (lab/config/universe-metadata-*.json, the one session-morning.sh exports, or a \
+             fresh capture): a head carrying no universe_metadata_hash accepts ANY valid \
+             artifact and warns that the gate applies where the head's did not. Re-run the \
+             head against an artifact only if you want the binding to be head-bound."
         ),
         (Some(path), _) => {
             let artifact = UniverseMetadata::load(path).map_err(|e| anyhow::anyhow!(e))?;
@@ -418,6 +473,8 @@ pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUnive
                 anyhow::anyhow!("metadata artifact failed validation:\n  - {}", errs.join("\n  - "))
             })?;
             let hash = artifact.content_hash();
+            let records: HashMap<String, InstrumentMetadata> =
+                artifact.records.into_iter().map(|r| (r.shcode.clone(), r)).collect();
             match &head_metadata_hash {
                 Some(expected) if expected != &hash => anyhow::bail!(
                     "mount-universe refused: metadata artifact hash mismatch — the head run was \
@@ -425,16 +482,22 @@ pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUnive
                      re-capture between the head run and now re-tiers symbols; point at the ONE \
                      artifact the head used."
                 ),
-                None => eprintln!(
-                    "mount-universe: warning — LS_MOUNT_UNIVERSE_METADATA is set but the head run \
-                     carries no universe_metadata_hash (not a metadata-driven head); the \
-                     tradability gate will apply where the head's did not"
-                ),
-                _ => {}
+                // The hashes agree: the artifact IS the one the head was built from.
+                Some(_) => MetadataBinding::HeadBound(records),
+                // Narrower than a mismatch, and deliberately not hardened (KTD14):
+                // the gate applies where the head's did not, which is a divergence
+                // worth warning about but not a reason to refuse a run whose head
+                // never claimed a metadata identity.
+                None => {
+                    eprintln!(
+                        "mount-universe: warning — LS_MOUNT_UNIVERSE_METADATA is set but the head \
+                         run carries no universe_metadata_hash (not a metadata-driven head); the \
+                         tradability gate will apply where the head's did not"
+                    );
+                    MetadataBinding::UngatedHead(records)
+                }
             }
-            Some(artifact.records.into_iter().map(|r| (r.shcode.clone(), r)).collect())
         }
-        (None, None) => None,
     };
 
     let all_bars = read_all_bars(&catalog).await.map_err(|e| anyhow::anyhow!(e))?;
@@ -519,7 +582,12 @@ pub async fn resolve(cfg: &MountUniverseConfig) -> anyhow::Result<Vec<MountUnive
         &open_vol_by_inst,
         &params,
         cfg.session_date,
-        metadata.as_ref(),
+        // Always `Some` by construction now: every `MetadataBinding` carries
+        // records, so the mount can no longer hand the builder the `None` that
+        // used to mean "gate off". The shared builder keeps its `Option` because
+        // the BACKTEST path has a legitimate metadata-less case; the mount does
+        // not, and that asymmetry is the whole of R15.
+        Some(metadata.records()),
         today_opens.as_ref(),
     );
 

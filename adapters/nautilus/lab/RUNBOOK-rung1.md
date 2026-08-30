@@ -199,10 +199,13 @@ ATR/turnover/selection helpers, so it cannot drift from the head:
 export LS_MOUNT_UNIVERSE_DATE=2026-07-27                        # the KST session date
 export LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic     # REQUIRED when the date is today
 export LS_MOUNT_UNIVERSE_METADATA=/ABSOLUTE/path/to/universe-metadata-YYYYMMDD.json
-                                                                # only if the head run was
-                                                                #   metadata-driven; omitting it
-                                                                #   against a metadata-driven head
-                                                                #   changes the tradability gate
+                                                                # ALWAYS required: the producer
+                                                                #   refuses when neither the
+                                                                #   artifact nor a head
+                                                                #   universe_metadata_hash is
+                                                                #   present, and refuses an
+                                                                #   artifact whose hash is not
+                                                                #   the head's
 cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- \
   --out /ABSOLUTE/path/to/universe.json
 ```

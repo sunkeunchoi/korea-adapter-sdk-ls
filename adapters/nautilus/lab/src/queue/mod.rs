@@ -14,8 +14,17 @@
 //!   docs/solutions/logic-errors/empty-repull-completing-destructive-heal-destroys-history.md).
 //! - Completed and stale items leave the actionable view but stay in the store
 //!   (append-forward history, R9); stale = past `deadline` or `superseded_by` a
-//!   named item; a paused in-flight sequence entry (`sequence` set with a valid
-//!   checkpoint) is never stale.
+//!   named item; neither a paused in-flight sequence entry (`sequence` set with
+//!   a valid checkpoint) nor a blocked item (`unblock_condition` set) is ever
+//!   stale — waiting work is not abandoned work.
+//! - The priority marker (R1) is single-holder ON WRITE: `set_priority` clears
+//!   every OTHER holder in the same read-mutate-save (a binary predating the
+//!   field could have left several behind), `done` releases it and `supersede`
+//!   transfers it to the superseder when that superseder is itself open,
+//!   RELEASING it otherwise (R21) — the marker follows the work its holder's
+//!   transition leads to, and no transition can park it on terminal work, which
+//!   the report renders nowhere. `save` refuses to persist a second holder, so
+//!   the invariant does not depend on which verb reached the write.
 //!
 //! Writes are whole-file read → mutate → atomic tmp+rename (mirroring the
 //! ingest-checkpoint idiom at `nautilus-ls/src/ingest/checkpoint.rs`), so a crash
@@ -101,7 +110,15 @@ pub enum CompletionSignal {
 }
 
 /// One queue item (KTD6 schema).
+///
+/// `deny_unknown_fields` is load-bearing, not tidiness (R31; mirroring
+/// [`crate::lineage_prereg::LineagePreRegistration`]). Serde reads a *missing*
+/// field as its default, so without it a mistyped key — `prioriti`, or
+/// `unblock_conditon` — would drop silently and the line would load clean as
+/// "neither priority nor blocked". A marker that decides what gets worked on
+/// next must fail loud, never default quietly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QueueItem {
     /// Schema version (gate on read).
     pub schema_version: u32,
@@ -135,6 +152,24 @@ pub struct QueueItem {
     /// when it is one. A paused in-flight sequence entry is never stale (R9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence: Option<String>,
+    /// The single-item priority marker (R1): this item outranks the ordinary
+    /// deadline-then-file-order selection. At most ONE item in the store carries
+    /// it — setting the marker elsewhere clears it — so priority is scarce by
+    /// construction rather than by discipline. Priority is a first-class queue
+    /// concept, never an encoded `deadline` (a deadline means a clock).
+    // Shares `trials::is_false` (the `TrialRecord::backfill` idiom) rather than
+    // a second copy: an unset marker stays ABSENT from the line instead of
+    // writing `"priority":false` into every committed item.
+    #[serde(default, skip_serializing_if = "crate::trials::is_false")]
+    pub priority: bool,
+    /// The act that would unblock this item; set means the item is BLOCKED (R2).
+    /// The state and its condition are ONE field — never an overload of
+    /// `sequence`, which already carries the paused-sequence label (KTD2) — so a
+    /// blocked item can never exist without naming a reachable act an identified
+    /// actor can perform (R24; a blank condition is refused by [`Queue::save`]).
+    /// A blocked item is never stale (KTD3): it is waiting, not abandoned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unblock_condition: Option<String>,
     /// Free-form operator notes (rich migrated content lives here per R13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -164,20 +199,41 @@ impl QueueItem {
             done_utc: None,
             reconcile: None,
             sequence: None,
+            priority: false,
+            unblock_condition: None,
             notes: None,
             refs: Vec::new(),
         }
     }
 
+    /// Whether the item is blocked (R2): a recorded [`Self::unblock_condition`]
+    /// IS the blocked state, so the two can never disagree. The edit surface and
+    /// the entry report both ask through this one predicate.
+    pub fn is_blocked(&self) -> bool {
+        self.unblock_condition.is_some()
+    }
+
+    /// The recorded act that would unblock this item, for display (R3/R24).
+    ///
+    /// The fallback is UNREACHABLE by construction and exists only to avoid an
+    /// `expect` on a display path: [`Self::is_blocked`] is defined as the
+    /// condition being present, and every caller reaches this only for an item
+    /// that predicate admitted. Both read and write additionally refuse a blank
+    /// condition, so a blocked item always names a real act.
+    pub fn unblock_reason(&self) -> &str {
+        self.unblock_condition.as_deref().unwrap_or("(unrecorded)")
+    }
+
     /// Whether the item is past its deadline at `now` (R9). A paused in-flight
-    /// sequence entry is never stale; an item with no deadline never expires.
+    /// sequence entry and a blocked item are never stale (KTD3 — waiting work is
+    /// not abandoned work); an item with no deadline never expires.
     ///
     /// # Errors
     ///
     /// When the recorded deadline is not RFC3339 (a corrupt store must be loud,
     /// never a silently-immortal item).
     pub fn is_stale(&self, now: DateTime<Utc>) -> anyhow::Result<bool> {
-        if self.sequence.is_some() {
+        if self.sequence.is_some() || self.is_blocked() {
             return Ok(false);
         }
         match &self.deadline {
@@ -245,10 +301,21 @@ impl Queue {
         &self.path
     }
 
-    /// Read every item back in file order. An absent file reads empty; a
-    /// malformed or newer-schema line is a typed per-line error naming the line
-    /// number — never a silent skip (and the mutating paths all read first, so
-    /// a malformed queue is never rewritten).
+    /// Read every item back in file order. An absent file reads empty.
+    ///
+    /// A malformed line, an unknown key, a newer schema version, or a blank
+    /// unblock condition is a typed error NAMING THE LINE — never a silent skip,
+    /// and the mutating paths all read first, so a malformed queue is never
+    /// rewritten past the problem.
+    ///
+    /// Note the blast radius, because it is wider than per-line: the error aborts
+    /// the WHOLE read, so one bad line disables every `lab-next` surface —
+    /// including the verbs that would repair it — until it is corrected by hand.
+    /// That is deliberate for a store whose whole purpose is to be authoritative
+    /// about what to do next: rendering a partial queue would answer that question
+    /// wrongly. It does mean a field added by a future binary is a hard stop for
+    /// this one (`deny_unknown_fields`), so a field addition must ship with a
+    /// rebuild of every binary that touches the file.
     ///
     /// # Errors
     ///
@@ -276,6 +343,20 @@ impl Queue {
                     QUEUE_SCHEMA_VERSION
                 );
             }
+            if item.unblock_condition.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                // `save` refuses this, but a hand-edit or a future writer could
+                // plant it. A blank condition reads as BLOCKED — exempt from
+                // staleness and from both reconciliation passes — while naming no
+                // act, so R24's guarantee of a reachable path back would silently
+                // not hold. Refuse on read too, naming the line.
+                anyhow::bail!(
+                    "queue {} line {}: item {:?} is blocked with a blank unblock condition — \
+                     a blocked item must name the act that would unblock it (R24)",
+                    self.path.display(),
+                    i + 1,
+                    item.id
+                );
+            }
             out.push(item);
         }
         Ok(out)
@@ -287,9 +368,42 @@ impl Queue {
     ///
     /// # Errors
     ///
-    /// When the parent cannot be created, or the tmp write / rename fails (the
-    /// live file is untouched in every failure case).
+    /// When an item is blocked with a blank unblock condition, when more than one
+    /// item carries the priority marker, when the parent cannot be created, or when
+    /// the tmp write / rename fails. Every refusal happens before the tmp file is
+    /// written, so the live queue is never modified by a failed save (a failed
+    /// rename can leave an orphan `.tmp-<pid>` sibling, which nothing reads).
     pub fn save(&self, items: &[QueueItem]) -> anyhow::Result<()> {
+        // R24: a blocked item must name the act that would unblock it. `save` is
+        // the single funnel every mutator writes through, so this is the one
+        // place a blank condition cannot slip past — and it is checked before
+        // any path is touched, so a refusal leaves the store exactly as it was.
+        for item in items {
+            if item.unblock_condition.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                anyhow::bail!(
+                    "item {:?}: blocked with an empty unblock condition — a blocked \
+                     item must name the act that would unblock it",
+                    item.id
+                );
+            }
+        }
+        // R1: at most ONE holder, enforced at the funnel rather than only in the
+        // verb that sets it. `move_priority` converges a store it reads, but it is
+        // not the only writer — `supersede` transfers the marker onto its
+        // superseder, which would ADD a second holder to a store that already
+        // carried a stale one. Checking here means no path can persist an
+        // ambiguous frontier, whatever route reached the write.
+        let holders: Vec<&str> =
+            items.iter().filter(|i| i.priority).map(|i| i.id.as_str()).collect();
+        if holders.len() > 1 {
+            anyhow::bail!(
+                "refusing to write {} priority holders ({}) — exactly one item holds the \
+                 marker at a time (R1); clear it with `lab-next priority --clear` and set it \
+                 on the one item that should hold it",
+                holders.len(),
+                holders.join(", ")
+            );
+        }
         let mut text = String::new();
         for item in items {
             text.push_str(&serde_json::to_string(item)?);
@@ -332,7 +446,7 @@ impl Queue {
     /// with a declared artifact, the artifact must exist and be non-empty —
     /// otherwise the item stays actionable with a reconcile flag (an empty or
     /// absent read never completes a destructive transition). A completed `done`
-    /// clears any reconcile flag.
+    /// clears any reconcile flag and releases the priority marker (R21).
     ///
     /// # Errors
     ///
@@ -340,12 +454,21 @@ impl Queue {
     /// hygiene refusal is NOT an error — it is [`TransitionOutcome::Reconcile`].
     pub fn done(&self, id: &str, now_utc: &str) -> anyhow::Result<TransitionOutcome> {
         let mut items = self.read_all()?;
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
+        let item = find_mut(&mut items, id)?;
         if item.done_utc.is_some() {
             return Ok(TransitionOutcome::Completed); // already done — idempotent
+        }
+        if item.is_blocked() {
+            // R22 at the STORE, not only in the report. The report excludes blocked
+            // items from its auto-close pass, but it reads the store, decides, and
+            // then calls back in — so a `block` landing inside that window would
+            // let the auto-close complete work whose external act never happened.
+            // Refusing here closes that race at the one funnel both paths share.
+            return Ok(TransitionOutcome::Reconcile(format!(
+                "blocked: {} — the act that would unblock it has not happened, so `done` \
+                 refuses; `lab-next unblock {id}` first if it really is finished",
+                item.unblock_reason()
+            )));
         }
         let declared = match &item.completion {
             CompletionSignal::ToolEvent { artifact: Some(path), event } => {
@@ -365,6 +488,10 @@ impl Queue {
         }
         item.done_utc = Some(now_utc.to_string());
         item.reconcile = None;
+        // R21: the marker is the arc's FRONTIER, so completed work never keeps
+        // it. Only this branch releases it — the reconcile refusal above did not
+        // complete the work, and that item still needs the marker it holds.
+        item.priority = false;
         self.save(&items)?;
         Ok(TransitionOutcome::Completed)
     }
@@ -373,7 +500,7 @@ impl Queue {
     /// The superseder must already exist in the queue — superseding by a
     /// not-yet-existing item leaves the target actionable with a reconcile flag
     /// (same hygiene as `done` on a missing artifact). A completed supersede
-    /// clears any reconcile flag.
+    /// clears any reconcile flag and transfers the priority marker (R21).
     ///
     /// # Errors
     ///
@@ -385,10 +512,7 @@ impl Queue {
             anyhow::bail!("an item cannot supersede itself ({id:?})");
         }
         let by_exists = items.iter().any(|i| i.id == by);
-        let item = items
-            .iter_mut()
-            .find(|i| i.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))?;
+        let item = find_mut(&mut items, id)?;
         if !by_exists {
             let flag = format!("supersede refused: superseding item {by:?} not in queue");
             item.reconcile = Some(flag.clone());
@@ -397,9 +521,147 @@ impl Queue {
         }
         item.superseded_by = Some(by.to_string());
         item.reconcile = None;
+        // R21: the marker follows the work. If the superseded item held it, the
+        // superseder holds it afterward — the frontier survives the transition its
+        // head takes. Taking it here also ends the `item` borrow, so the superseder
+        // is reachable in the same pass (`by_exists`, checked above, makes the
+        // lookup certain to find it).
+        //
+        // It is RELEASED rather than transferred when the superseder is itself
+        // terminal: the report renders only actionable items, so parking the marker
+        // there would lose the frontier with no holder visible anywhere. Leaving no
+        // holder is the honest outcome — the operator re-pins the live successor.
+        let carried_priority = std::mem::take(&mut item.priority);
+        if carried_priority {
+            if let Some(superseder) = items.iter_mut().find(|i| i.id == by) {
+                if superseder.done_utc.is_none() && superseder.superseded_by.is_none() {
+                    superseder.priority = true;
+                }
+            }
+        }
         self.save(&items)?;
         Ok(TransitionOutcome::Completed)
     }
+
+    /// Set the single-item priority marker on `id` (R20), clearing it from every
+    /// OTHER item in the same read-mutate-save. Returns the ids the marker was
+    /// cleared from, in file order.
+    ///
+    /// The single-holder invariant is enforced on WRITE, never assumed of the
+    /// store: a binary predating the field could have left several holders
+    /// behind, so this clears ALL of them rather than the one it expects to
+    /// find. Setting the marker on its current holder is a no-op that writes
+    /// nothing (mirroring `done`'s idempotence).
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable, no item has `id`, or the write fails.
+    pub fn set_priority(&self, id: &str) -> anyhow::Result<Vec<String>> {
+        self.move_priority(Some(id))
+    }
+
+    /// Clear the priority marker from every item (R20's `--clear`), leaving no
+    /// holder. Returns the ids cleared, in file order; nothing held means
+    /// nothing written.
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable or the write fails.
+    pub fn clear_priority(&self) -> anyhow::Result<Vec<String>> {
+        self.move_priority(None)
+    }
+
+    /// Move the single priority marker to `target`, or clear it everywhere when
+    /// `target` is `None`. One body so the single-holder-on-write rule and the
+    /// write-only-when-changed rule cannot diverge between the set and clear
+    /// verbs; the CLI already models the choice as the same `Option<&str>`.
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable, `target` names no item, or the write fails.
+    fn move_priority(&self, target: Option<&str>) -> anyhow::Result<Vec<String>> {
+        let mut items = self.read_all()?;
+        if let Some(id) = target {
+            // Checked BEFORE mutating, so a typo leaves the store untouched.
+            let Some(t) = items.iter().find(|i| i.id == id) else {
+                anyhow::bail!("no queue item with id {id:?}");
+            };
+            // Existence is not enough. The report renders only ACTIONABLE items, so
+            // parking the one scarce marker on completed or superseded work would
+            // displace the real holder, report success, and leave no holder visible
+            // in any section — losing the frontier silently, which is the opposite
+            // of the scarcity R1 exists to provide.
+            if let Some(done) = &t.done_utc {
+                anyhow::bail!("item {id:?} completed at {done} — priority marks open work");
+            }
+            if let Some(by) = &t.superseded_by {
+                anyhow::bail!("item {id:?} was superseded by {by:?} — set priority on {by:?}");
+            }
+        }
+        let mut cleared = Vec::new();
+        let mut changed = false;
+        for item in &mut items {
+            if target == Some(item.id.as_str()) {
+                changed |= !item.priority;
+                item.priority = true;
+            } else if std::mem::take(&mut item.priority) {
+                cleared.push(item.id.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.save(&items)?;
+        }
+        Ok(cleared)
+    }
+
+    /// Record the blocked state on `id` with the act that would unblock it
+    /// (R5/R20). The state and its condition are ONE field, so blocking always
+    /// names the act; re-blocking REPLACES the condition rather than stacking a
+    /// second one.
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable, no item has `id`, the condition is blank
+    /// (refused by [`Self::save`] — the one funnel — which names the item
+    /// before any path is touched), or the write fails.
+    pub fn block(&self, id: &str, condition: &str) -> anyhow::Result<()> {
+        let mut items = self.read_all()?;
+        find_mut(&mut items, id)?.unblock_condition = Some(condition.to_string());
+        self.save(&items)
+    }
+
+    /// Clear the blocked state on `id` (R20). Returns whether the item WAS
+    /// blocked — unblocking an already-unblocked item is a reported no-op that
+    /// writes nothing (mirroring `done`'s idempotence), never an error.
+    ///
+    /// # Errors
+    ///
+    /// When the queue is unreadable, no item has `id`, or the write fails.
+    pub fn unblock(&self, id: &str) -> anyhow::Result<bool> {
+        let mut items = self.read_all()?;
+        if find_mut(&mut items, id)?.unblock_condition.take().is_none() {
+            return Ok(false); // not blocked — nothing to write
+        }
+        self.save(&items)?;
+        Ok(true)
+    }
+}
+
+/// The one lookup every field-editing transition opens with, so the
+/// unknown-id refusal is worded once rather than copied per verb. Returns a
+/// mutable handle into the caller's already-read `items`, keeping the
+/// read-mutate-save shape (and, for `supersede`, letting the borrow end where
+/// that verb needs a second item in the same pass).
+///
+/// # Errors
+///
+/// When no item carries `id`.
+fn find_mut<'a>(items: &'a mut [QueueItem], id: &str) -> anyhow::Result<&'a mut QueueItem> {
+    items
+        .iter_mut()
+        .find(|i| i.id == id)
+        .ok_or_else(|| anyhow::anyhow!("no queue item with id {id:?}"))
 }
 
 /// Whether an artifact path witnesses completion: it exists and is non-empty
@@ -561,5 +823,348 @@ mod tests {
         // line this build cannot read.
         let q = Queue::new(default_queue_path().unwrap());
         q.read_all().unwrap();
+    }
+
+    #[test]
+    fn a_blocked_item_round_trips_with_its_unblock_condition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut blocked = item("parked", Window::OpenAttended);
+        blocked.unblock_condition =
+            Some("the operator authorizes a session on a margin-clearing head".into());
+        q.add(blocked).unwrap();
+        let back = q.read_all().unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(back[0].is_blocked(), "the blocked state survives the round trip");
+        assert_eq!(
+            back[0].unblock_condition.as_deref(),
+            Some("the operator authorizes a session on a margin-clearing head"),
+            "the unblock condition survives verbatim"
+        );
+    }
+
+    #[test]
+    fn priority_round_trips_and_both_new_fields_are_skipped_when_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut top = item("top", Window::Any);
+        top.priority = true;
+        q.add(top).unwrap();
+        q.add(item("plain", Window::Any)).unwrap();
+        let back = q.read_all().unwrap();
+        assert!(back[0].priority, "the priority marker survives the round trip");
+        assert!(!back[1].priority, "an unmarked item stays unmarked");
+        assert!(!back[1].is_blocked());
+        // Absent fields are skipped on write, so the committed store never
+        // churns with `"priority":false` / `"unblock_condition":null` (KTD1).
+        let text = std::fs::read_to_string(q.path()).unwrap();
+        let plain = text.lines().nth(1).unwrap();
+        assert!(!plain.contains("priority"), "absent priority is skipped: {plain}");
+        assert!(!plain.contains("unblock_condition"), "absent blocked state is skipped: {plain}");
+    }
+
+    #[test]
+    fn a_mistyped_priority_key_is_refused_naming_the_line() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("a", Window::Any)).unwrap();
+        // R31: serde reads a MISSING field as the default, so without
+        // `deny_unknown_fields` a mistyped key would drop silently and the item
+        // would load clean as "neither priority nor blocked".
+        let mut typo = serde_json::to_value(item("b", Window::Any)).unwrap();
+        typo["prioriti"] = serde_json::json!(true);
+        let mut text = std::fs::read_to_string(q.path()).unwrap();
+        text.push_str(&format!("{typo}\n"));
+        std::fs::write(q.path(), text).unwrap();
+        let err = q.read_all().unwrap_err().to_string();
+        assert!(err.contains("line 2"), "the refusal names the line: {err}");
+        assert!(err.contains("prioriti"), "the refusal names the offending key: {err}");
+    }
+
+    #[test]
+    fn a_pre_existing_line_with_neither_new_field_parses_at_version_1() {
+        // A verbatim committed line shape (queue/items.jsonl): neither new key.
+        // The fields are ADDITIVE at version 1 — a bump would make every
+        // committed line unreadable and the queue unrewritable (KTD1).
+        assert_eq!(QUEUE_SCHEMA_VERSION, 1, "the additive fields must NOT bump the version");
+        let line = r#"{"schema_version":1,"id":"session-morning-root-manifest-freshness","title":"Add root ls-sdk and ls-core manifests to the morning freshness preflight","window":"any","completion":{"kind":"explicit"},"added_utc":"2026-08-19T12:04:34.452122+00:00","notes":"Separate shell-preflight residual.","refs":["adapters/nautilus/scripts/session-morning.sh"]}"#;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        std::fs::write(q.path(), format!("{line}\n")).unwrap();
+        let back = q.read_all().unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(!back[0].priority, "a pre-existing line defaults to unmarked");
+        assert!(!back[0].is_blocked(), "a pre-existing line defaults to unblocked");
+    }
+
+    #[test]
+    fn blocked_with_a_blank_unblock_condition_is_refused() {
+        // R24: a blocked item must name an act a reachable actor can perform.
+        // The state and its condition are ONE field, so blocked-without-a-
+        // condition is unrepresentable; a BLANK condition is the residual hole,
+        // refused at `save` — the single funnel every mutator writes through.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut blank = item("blank", Window::Any);
+        blank.unblock_condition = Some("   ".into());
+        let err = q.add(blank).unwrap_err().to_string();
+        assert!(err.contains("blank"), "the refusal names the item: {err}");
+        assert!(err.contains("unblock condition"), "{err}");
+        assert!(!q.path().exists(), "the refused write never created the queue file");
+    }
+
+    #[test]
+    fn a_blocked_item_is_never_stale_and_stays_actionable() {
+        // KTD3, the `QueueItem` half: a blocked item past its deadline is not
+        // abandoned work — its recorded unblock condition is the whole point of
+        // keeping it. `is_actionable` keeps its three clauses; withholding a
+        // blocked item from the report's `next:` is the report's job (U3).
+        let now: DateTime<Utc> = "2026-07-29T12:00:00Z".parse().unwrap();
+        let mut blocked = item("parked", Window::OpenAttended);
+        blocked.deadline = Some("2026-07-28T00:00:00Z".into());
+        assert!(blocked.is_stale(now).unwrap(), "unblocked and past its deadline: stale");
+        blocked.unblock_condition = Some("a certified head clears its frozen margin".into());
+        assert!(!blocked.is_stale(now).unwrap(), "a blocked item is never stale");
+        assert!(blocked.is_actionable(now).unwrap());
+    }
+
+    #[test]
+    fn setting_priority_moves_the_marker_and_repairs_a_multi_holder_store() {
+        // R20 + R1's scarcity: the set path must NOT assume the store already
+        // holds at most one marker. An older binary ignored the field entirely,
+        // so a store can arrive with several holders; a set converges it to
+        // exactly one in the same read-mutate-save.
+        //
+        // Seeded by writing the JSONL DIRECTLY, because `Queue::save` now refuses
+        // to persist two holders — the fixture has to reproduce what a
+        // field-blind writer left behind, not route through the invariant the
+        // funnel enforces.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut seeded: Vec<QueueItem> =
+            ["a", "b", "c"].iter().map(|id| item(id, Window::Any)).collect();
+        seeded[0].priority = true;
+        seeded[1].priority = true; // what an older binary could leave behind
+        let raw: String =
+            seeded.iter().map(|i| format!("{}\n", serde_json::to_string(i).unwrap())).collect();
+        std::fs::write(q.path(), raw).unwrap();
+        assert_eq!(
+            q.read_all().unwrap().iter().filter(|i| i.priority).count(),
+            2,
+            "the fixture really does start ambiguous"
+        );
+
+        let cleared = q.set_priority("c").unwrap();
+        assert_eq!(cleared, ["a", "b"], "every OTHER holder is cleared, in file order");
+        let back = q.read_all().unwrap();
+        let held: Vec<&str> =
+            back.iter().filter(|i| i.priority).map(|i| i.id.as_str()).collect();
+        assert_eq!(held, ["c"], "exactly one holder after a set");
+
+        // Re-setting the current holder is a no-op that clears nothing.
+        assert!(q.set_priority("c").unwrap().is_empty(), "no other holder to clear");
+        let back = q.read_all().unwrap();
+        assert_eq!(back.iter().filter(|i| i.priority).count(), 1, "still exactly one holder");
+    }
+
+    #[test]
+    fn clear_priority_leaves_no_holder_and_reports_what_it_cleared() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("a", Window::Any)).unwrap();
+        q.add(item("b", Window::Any)).unwrap();
+        q.set_priority("a").unwrap();
+
+        assert_eq!(q.clear_priority().unwrap(), ["a"], "the cleared holder is named");
+        assert!(q.read_all().unwrap().iter().all(|i| !i.priority), "no holder remains");
+        assert!(q.clear_priority().unwrap().is_empty(), "clearing an unheld marker is a no-op");
+        // The cleared marker leaves the line entirely (skip_serializing_if).
+        let raw = std::fs::read_to_string(q.path()).unwrap();
+        assert!(!raw.contains("priority"), "a cleared marker writes no key: {raw}");
+    }
+
+    #[test]
+    fn the_field_editing_mutators_refuse_an_unknown_id_without_touching_the_store() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("only", Window::Any)).unwrap();
+        let before = std::fs::read_to_string(q.path()).unwrap();
+
+        let errs = [
+            q.set_priority("ghost").unwrap_err(),
+            q.block("ghost", "the operator acts").unwrap_err(),
+            q.unblock("ghost").unwrap_err(),
+        ];
+        for err in &errs {
+            assert!(err.to_string().contains("ghost"), "the refusal names the id: {err}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(q.path()).unwrap(),
+            before,
+            "a refused mutator leaves the store byte-identical"
+        );
+    }
+
+    #[test]
+    fn block_records_the_condition_and_unblock_restores_the_plain_item() {
+        // R5/R20: the verb the U4 migration runs through. Blocked-ness and its
+        // condition are ONE field, so recording the state records the act.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("parked", Window::OpenAttended)).unwrap();
+
+        q.block("parked", "the operator authorizes a margin-clearing session").unwrap();
+        let back = q.read_all().unwrap();
+        assert!(back[0].is_blocked(), "the item is blocked");
+        assert_eq!(
+            back[0].unblock_condition.as_deref(),
+            Some("the operator authorizes a margin-clearing session"),
+            "the condition is recorded verbatim"
+        );
+
+        // Re-blocking REPLACES the condition rather than stacking a second one.
+        q.block("parked", "a certified head clears its frozen margin").unwrap();
+        assert_eq!(
+            q.read_all().unwrap()[0].unblock_condition.as_deref(),
+            Some("a certified head clears its frozen margin")
+        );
+
+        assert!(q.unblock("parked").unwrap(), "the item was blocked");
+        assert!(!q.read_all().unwrap()[0].is_blocked(), "unblocked");
+        assert!(
+            !q.unblock("parked").unwrap(),
+            "unblocking an unblocked item is a reported no-op, not an error"
+        );
+        let raw = std::fs::read_to_string(q.path()).unwrap();
+        assert!(!raw.contains("unblock_condition"), "the cleared state writes no key: {raw}");
+    }
+
+    #[test]
+    fn block_with_a_blank_condition_is_refused_naming_the_item() {
+        // R24 through the ONE funnel: `save` refuses before touching any path,
+        // so `block` needs no second check and the store stays byte-identical.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("parked", Window::Any)).unwrap();
+        let before = std::fs::read_to_string(q.path()).unwrap();
+
+        let err = q.block("parked", "   ").unwrap_err().to_string();
+        assert!(err.contains("parked"), "the refusal names the item: {err}");
+        assert!(err.contains("unblock condition"), "{err}");
+        assert_eq!(std::fs::read_to_string(q.path()).unwrap(), before, "store untouched");
+    }
+
+    #[test]
+    fn done_clears_the_priority_marker_only_when_it_completes() {
+        // R21: the marker is the arc's frontier, so a COMPLETED head must not
+        // keep it. A reconcile refusal did not complete the work — the holder
+        // keeps the marker and stays actionable.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut refused = item("refused", Window::Any);
+        refused.completion = CompletionSignal::ToolEvent {
+            event: "gate-green".into(),
+            artifact: Some(tmp.path().join("absent.json").to_string_lossy().into_owned()),
+        };
+        q.add(refused).unwrap();
+        q.set_priority("refused").unwrap();
+        assert!(
+            matches!(
+                q.done("refused", "2026-07-30T00:00:00Z").unwrap(),
+                TransitionOutcome::Reconcile(_)
+            ),
+            "an absent completion artifact refuses the transition"
+        );
+        assert!(
+            q.read_all().unwrap()[0].priority,
+            "a refused done keeps the marker — the work is not done"
+        );
+
+        q.add(item("real", Window::Any)).unwrap();
+        q.set_priority("real").unwrap();
+        assert_eq!(q.done("real", "2026-07-30T00:00:00Z").unwrap(), TransitionOutcome::Completed);
+        assert!(
+            q.read_all().unwrap().iter().all(|i| !i.priority),
+            "a completed done leaves no holder"
+        );
+    }
+
+    #[test]
+    fn supersede_transfers_the_priority_marker_only_when_it_completes() {
+        // R21: the arc's frontier survives the transition its head takes. The
+        // marker follows the work to the superseder; a reconcile refusal leaves
+        // it where it was.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("head", Window::Any)).unwrap();
+        q.set_priority("head").unwrap();
+
+        assert!(
+            matches!(
+                q.supersede("head", "successor").unwrap(),
+                TransitionOutcome::Reconcile(_)
+            ),
+            "a not-yet-existing superseder refuses the transition"
+        );
+        assert!(q.read_all().unwrap()[0].priority, "a refused supersede keeps the marker");
+
+        q.add(item("successor", Window::Any)).unwrap();
+        assert_eq!(q.supersede("head", "successor").unwrap(), TransitionOutcome::Completed);
+        let back = q.read_all().unwrap();
+        let held: Vec<&str> =
+            back.iter().filter(|i| i.priority).map(|i| i.id.as_str()).collect();
+        assert_eq!(held, ["successor"], "the marker follows the work to the superseder");
+
+        // Superseding a NON-holder never grants the marker.
+        q.add(item("other", Window::Any)).unwrap();
+        q.add(item("other-new", Window::Any)).unwrap();
+        assert_eq!(q.supersede("other", "other-new").unwrap(), TransitionOutcome::Completed);
+        let back = q.read_all().unwrap();
+        let held: Vec<&str> =
+            back.iter().filter(|i| i.priority).map(|i| i.id.as_str()).collect();
+        assert_eq!(held, ["successor"], "still exactly one holder, unchanged");
+    }
+
+    #[test]
+    fn superseding_onto_terminal_work_releases_the_marker_rather_than_parking_it() {
+        // R1/R21. The report renders only actionable items, so transferring the one
+        // scarce marker onto a superseder that is itself already done would hide the
+        // frontier from every section while reporting success. Releasing it is the
+        // honest outcome: no holder, and the operator re-pins the live successor.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("head", Window::Any)).unwrap();
+        q.add(item("already-done", Window::Any)).unwrap();
+        q.done("already-done", "2026-08-01T00:00:00+00:00").unwrap();
+        q.set_priority("head").unwrap();
+
+        assert_eq!(q.supersede("head", "already-done").unwrap(), TransitionOutcome::Completed);
+        let back = q.read_all().unwrap();
+        assert!(
+            back.iter().all(|i| !i.priority),
+            "the marker is RELEASED, not parked on work the report cannot show"
+        );
+    }
+
+    #[test]
+    fn the_write_funnel_refuses_a_second_priority_holder() {
+        // R1 enforced where every mutator passes, not only in the verb that sets it.
+        // `supersede` transfers the marker, so without this guard a store carrying a
+        // stale holder could gain a second one through a path `move_priority` never
+        // touches. Asserted directly against `save`, because the multi-holder
+        // fixtures elsewhere write raw JSONL specifically to bypass it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        q.add(item("a", Window::Any)).unwrap();
+        q.add(item("b", Window::Any)).unwrap();
+        let before = std::fs::read(q.path()).unwrap();
+
+        let mut two = q.read_all().unwrap();
+        two[0].priority = true;
+        two[1].priority = true;
+        let err = q.save(&two).unwrap_err().to_string();
+        assert!(err.contains("2 priority holders"), "the refusal counts them: {err}");
+        assert!(err.contains('a') && err.contains('b'), "and names them: {err}");
+        assert_eq!(std::fs::read(q.path()).unwrap(), before, "a refused save leaves the store");
     }
 }

@@ -104,18 +104,60 @@ async fn a_metadata_artifact_that_is_not_the_heads_is_refused() {
     assert!(err.contains("expected-hash"), "names the head's hash: {err}");
 }
 
-/// A head that is NOT metadata-driven and no artifact supplied is the legitimate case — it
-/// must not be caught by the guard above.
+/// AE13/R15. Neither an artifact nor a head metadata hash: this arm used to
+/// PROCEED, silently — absent metadata maps every candidate to
+/// `CandidateMeta::Untagged`, the tradability gate disappears, and the live
+/// session trades symbols on no eligibility evidence at all, with nothing in the
+/// emitted artifact to show it. The module's own comment stated that harm while
+/// the code did it anyway. It must refuse.
+///
+/// This test previously asserted the opposite (that the guard must NOT fire
+/// here); the contract moved, so the assertion moved with it.
 #[tokio::test]
-async fn a_non_metadata_head_without_an_artifact_passes_the_metadata_guard() {
+async fn neither_an_artifact_nor_a_head_metadata_hash_is_refused() {
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("catalog")).unwrap();
     write_head_run(tmp.path(), "20260725T000000Z-backtest-orb-v34", None);
 
     let err = resolve(&cfg(tmp.path(), None)).await.unwrap_err().to_string();
     assert!(
+        err.contains("mount-universe refused"),
+        "the bare-Option arm must refuse, not proceed: {err}"
+    );
+    assert!(
+        err.contains("tradability gate"),
+        "the refusal names the behaviour that would be dropped: {err}"
+    );
+    assert!(
+        err.contains("LS_MOUNT_UNIVERSE_METADATA"),
+        "and the knob that fixes it: {err}"
+    );
+    // The refusal is its OWN case, not the metadata-driven-head guard borrowed:
+    // that one fires when the head HAS a hash, and this head has none.
+    assert!(
         !err.contains("METADATA-DRIVEN"),
-        "the metadata guard must not fire for a non-metadata head: {err}"
+        "a head with no hash is not a metadata-driven head: {err}"
+    );
+}
+
+/// R15 step 2 — the narrower case must stay DISTINGUISHABLE from the refusal.
+/// An artifact supplied against a head carrying no `universe_metadata_hash`
+/// applies the gate where the head's did not: narrower than a mismatch, so it
+/// warns and proceeds. Hardening this arm would have closed nothing, which is
+/// why KTD14 points at the silent one instead.
+#[tokio::test]
+async fn an_artifact_against_an_untagged_head_still_proceeds_past_the_binding() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("catalog")).unwrap();
+    write_head_run(tmp.path(), "20260725T000000Z-backtest-orb-v34", None);
+    let art = tmp.path().join("universe-metadata.json");
+    std::fs::write(&art, valid_artifact_json()).unwrap();
+
+    let err = resolve(&cfg(tmp.path(), Some(&art))).await.unwrap_err().to_string();
+    assert!(
+        !err.contains("mount-universe refused"),
+        "supplying the artifact clears the binding; the run fails later on its empty \
+         catalog, which is a different question: {err}"
     );
 }
 

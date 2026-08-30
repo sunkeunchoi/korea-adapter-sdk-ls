@@ -889,3 +889,143 @@ async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
         "the operator is told the envelope was down: {dq}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// U8/R12 — the tracking report's production caller.
+// ---------------------------------------------------------------------------
+
+/// `produce_report` had ZERO non-test callers while `clean_session_verdict`
+/// required a produced twin at rung >= 2, so rung 2 was unreachable by
+/// construction: the gate read a sidecar nothing ever wrote, and eight passing
+/// unit tests sat on a capability production could never reach.
+///
+/// Driven through the REAL entry point (`run_live_session` over the mock gateway),
+/// deliberately: constructing a `TrackingErrorReport` in the test and writing it
+/// is exactly the false green the recorded escape-hatch defect warns about — a
+/// comment naming an entry point is a claim, not an entry point.
+#[tokio::test]
+async fn a_finalized_session_writes_its_tracking_report_through_the_production_path() {
+    use nautilus_ls_lab::dispatch::tracking::{read_report, report_path};
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let c = ctx(r.home.path());
+
+    // Nothing has written a report for this run id.
+    assert!(
+        !report_path(r.home.path(), &c.run_id).exists(),
+        "precondition: the sidecar does not exist before the session finalizes"
+    );
+
+    let outcome =
+        run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), returns_immediately)
+            .await
+            .expect("the session finalizes");
+
+    // The sidecar exists, and no test constructed it.
+    let report = read_report(r.home.path(), &c.run_id)
+        .expect("the sidecar is readable")
+        .expect("the finalize path produced a tracking report");
+    assert_eq!(report.run_id, c.run_id);
+    assert_eq!(report.rung, 1, "the rung comes from the run's own DispatchLink");
+
+    // The report is a SIDECAR: it lives outside the immutable run dir, so
+    // producing it cannot have disturbed the finalized artifacts.
+    assert!(outcome.run_dir.join(MANIFEST_FILE).exists());
+    assert!(outcome.run_dir.join(PERFORMANCE_FILE).exists());
+    assert!(outcome.run_dir.join(DATA_QUALITY_FILE).exists());
+    assert!(
+        !outcome.run_dir.join("tracking.json").exists(),
+        "the report never lands inside the run dir"
+    );
+    assert!(aborted_runs(r.home.path()).is_empty(), "no `.tmp-` residue");
+}
+
+/// The twin's prerequisite is the post-session ingest, and the KRX witness is
+/// retrospective — so at finalize the session's own daily bar is normally NOT in
+/// the catalog. The honest status is `TwinPending`, NOT `TwinFailed`: pending is
+/// the ordinary state of every fresh run, and reporting a failure here would red
+/// `readiness_verdict` on every live session (it treats a failed twin as a safety
+/// signal), pinning the ladder to probation on a condition no production path can
+/// clear. Pending is still not `produced()`, so the rung-2 gate stays fail-closed.
+#[tokio::test]
+async fn the_finalize_time_twin_is_pending_rather_than_failed_or_fabricated() {
+    use nautilus_ls_lab::dispatch::tracking::{read_report, TwinStatus};
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let c = ctx(r.home.path());
+
+    run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), returns_immediately)
+        .await
+        .expect("the session finalizes");
+
+    let report = read_report(r.home.path(), &c.run_id).unwrap().unwrap();
+    match &report.status {
+        TwinStatus::TwinPending { reason } => {
+            assert!(
+                reason.contains("catalog range"),
+                "the pending status names the missing prerequisite: {reason}"
+            );
+            assert!(
+                reason.contains("re-runnable"),
+                "and says the report can be produced again once the ingest lands: {reason}"
+            );
+        }
+        other => panic!(
+            "no post-session ingest ran, so the twin is PENDING, not {other:?} — a TwinFailed \
+             here would red readiness on every live session"
+        ),
+    }
+    assert!(!report.status.produced(), "a pending twin must not satisfy the rung-2 gate");
+    assert!(!report.status.failed(), "and must not read as a safety signal");
+}
+
+/// R5's always-emit guarantee outranks the report. The producer sits AFTER
+/// `finalize_session` and is fail-soft, so a sidecar that cannot be written must
+/// not cost the operator the session's artifacts — skipping `finalize` would leave
+/// `.tmp-` residue, which `scan_limit_events` classifies as a limit event and the
+/// ladder then de-escalates on. Here the sidecar directory is pre-empted by a
+/// FILE, so the writer's `create_dir_all` cannot succeed.
+#[tokio::test]
+async fn a_report_write_failure_does_not_suppress_the_finalized_artifacts() {
+    use nautilus_ls_lab::dispatch::tracking::reports_dir;
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let c = ctx(r.home.path());
+
+    // Block the sidecar directory with a regular file at its exact path.
+    let dir = reports_dir(r.home.path());
+    std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+    std::fs::write(&dir, b"not a directory").unwrap();
+
+    let outcome =
+        run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), returns_immediately)
+            .await
+            .expect("a sidecar write failure is NOT a session failure");
+
+    assert!(outcome.run_dir.join(MANIFEST_FILE).exists(), "the manifest survived");
+    assert!(outcome.run_dir.join(PERFORMANCE_FILE).exists(), "the performance report survived");
+    assert!(
+        outcome.run_dir.join(DATA_QUALITY_FILE).exists(),
+        "the data-quality report — written INSIDE finalize_session — survived"
+    );
+    assert!(
+        aborted_runs(r.home.path()).is_empty(),
+        "and the run finalized, so there is no `.tmp-` residue for the ladder to read as a \
+         limit event"
+    );
+}

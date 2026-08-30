@@ -1,5 +1,6 @@
 //! `lab-next` CLI (U1/U5/U6, KTD3) — the queue edit surface (`add` / `done` /
-//! `supersede` / `list`), the default window-aware entry report, and the
+//! `supersede` / `priority` / `block` / `unblock` / `list`), the default
+//! window-aware entry report, and the
 //! `probe` resume-probe gate (U6, R14; KTD5).
 //!
 //! Mirrors `lab-mount-universe`'s read-only posture: no nonce, no chain
@@ -7,7 +8,7 @@
 //! [`crate::queue::Queue`]. `main_cli` mirrors `research.rs`: scrub install
 //! first, mandatory calendar startup record, scrubbed terminal errors.
 //!
-//! ## The default report (U5 — R1/R2/R4/R5/R12/R13; KTD1/KTD3)
+//! ## The default report (U5/U3 — R1/R2/R3/R4/R5/R12/R13/R22/R23; KTD1/KTD3/KTD4/KTD5)
 //!
 //! One `now` is read at the top (test override: [`NOW_UNIX_ENV`], the
 //! `LS_DISPATCH_NOW_UNIX` stub idiom), the calendar is resolved ONCE and
@@ -16,10 +17,34 @@
 //! plus the U4 gate leg ([`gate_sequence`], parsing `gate-run.sh --status`;
 //! test override: [`GATE_STATUS_FILE_ENV`], a file of pre-captured `--status`
 //! output). Selection is R4: a current-window-compatible in-flight sequence
-//! outranks new items; remaining eligible items order by recorded deadline,
-//! then queue order; window-incompatible in-flight sequences stay visible as
-//! `[paused]` resumable work. Every offer carries an executable command or
-//! exact step (R5) and the item's reference paths (R13).
+//! outranks new items (KTD5 — priority orders ITEMS only, so a resumable
+//! sequence never loses the offer slot); remaining eligible items order by
+//! the single priority marker (R1), then recorded deadline, then queue order
+//! ([`by_priority_then_deadline`], sorted stably); window-incompatible
+//! in-flight sequences stay visible as `[paused]` resumable work. Every offer
+//! carries an executable command or exact step (R5) and the item's reference
+//! paths (R13).
+//!
+//! Sections print in this order: `window:`, `repair:` (genuinely-unknown
+//! only), `attended chain:` (presumed-open only), `in-flight:`, `reconciled:`,
+//! `standing:`, `next:`, `queue:`.
+//!
+//! ## Standing work (R3/R23; KTD4)
+//!
+//! A blocked item ([`QueueItem::is_blocked`] — the recorded unblock condition
+//! IS the state) renders in the `standing:` section between `reconciled:` and
+//! `next:`, and NOWHERE else: it is never the `next:` offer and never listed
+//! under `queue:`, so one item is one rendering even when it also carries a
+//! paused-sequence label. Standing work is sourced BEFORE the window filter
+//! (R23) — the external act it waits on does not care which seam we are in,
+//! so it renders whatever window is derived; only the offer path stays
+//! window-gated. The section is deliberately OUTSIDE the executable-offer
+//! guard (R5, enforced by `tests/next_cli.rs`'s `assert_offers_are_executable`
+//! over `in-flight:` / `next:` / `queue:`): a blocked head has no executable
+//! line by construction, so its detail line is `blocked: <condition>` rather
+//! than `run:`. When EVERY open item is blocked, the `next:` line names the
+//! head's unblock condition and its `lab-next unblock` command instead of
+//! advising `lab-next add`.
 //!
 //! ## R12 reconciliation rule (documented contract)
 //!
@@ -31,6 +56,12 @@
 //! past-deadline yet actionable). With a TTY on stdin the ask is a
 //! `done? [y/N]` prompt; without one (agent sessions, tests) it is a flagged
 //! `confirm:` line and the item stays actionable.
+//!
+//! Blocked items are excluded from BOTH passes (R4/R22): never auto-closed
+//! (a present artifact is not the external party's act) and never prompted.
+//! The staleness exemption behind that is wired at BOTH sites — the store's
+//! [`QueueItem::is_stale`] and this module's [`deadline_passed`] (KTD3);
+//! exempting only the first would keep blocked work in the confirmation pass.
 //!
 //! ## The resume probe (U6 — R14; KTD5)
 //!
@@ -95,7 +126,7 @@ pub const PROBE_REPORT_PATH_ENV: &str = "LS_PROBE_REPORT_PATH";
 pub const PROBE_REPORT_RELPATH: &str = "queue/probe-report.json";
 
 /// A usage string enumerating the valid subcommands (KTD3).
-const USAGE: &str = "usage: lab-next [report] | probe | list [--all] | add --id <id> --title <t> --window <open-attended|closed|any> [--event <name> [--artifact <path>]] [--deadline <rfc3339>] [--sequence <name>] [--note <text>] [--ref <path>]... | done <id> | supersede <id> --by <id>";
+const USAGE: &str = "usage: lab-next [report] | probe | list [--all] | add --id <id> --title <t> --window <open-attended|closed|any> [--event <name> [--artifact <path>]] [--deadline <rfc3339>] [--sequence <name>] [--note <text>] [--ref <path>]... | done <id> | supersede <id> --by <id> | priority <id> | priority --clear | block <id> --until <condition> | unblock <id>";
 
 /// The CLI entry point: install scrub, emit the mandatory calendar startup
 /// record, dispatch the subcommand, and scrub any terminal error. A hygiene
@@ -126,6 +157,9 @@ fn dispatch() -> anyhow::Result<ExitCode> {
         Some("add") => run_add(&args[1..]),
         Some("done") => run_done(&args[1..]),
         Some("supersede") => run_supersede(&args[1..]),
+        Some("priority") => run_priority(&args[1..]),
+        Some("block") => run_block(&args[1..]),
+        Some("unblock") => run_unblock(&args[1..]),
         Some(other) => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
 }
@@ -177,6 +211,20 @@ fn report_now() -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
+/// The queue order (R1; KTD5): the single priority holder first, then recorded
+/// deadline (dated before undated), then queue file order — the callers sort
+/// stably, so equal keys keep the order the store was read in. Priority is a
+/// PRE-key on the existing deadline sort: it orders ITEMS only, and never
+/// reaches the sequence-versus-item precedence the offer slot is decided by.
+fn by_priority_then_deadline(a: &&QueueItem, b: &&QueueItem) -> std::cmp::Ordering {
+    b.priority.cmp(&a.priority).then_with(|| match (parse_deadline(a), parse_deadline(b)) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    })
+}
+
 /// The default subcommand: reconcile (R12), derive the window (KTD1), read the
 /// in-flight sequences (U3 + the gate leg), select (R4), and print the
 /// line-oriented report — every offer executable (R5) with refs (R13).
@@ -222,22 +270,35 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
     let (active, paused): (Vec<&SequenceReport>, Vec<&SequenceReport>) =
         sequences.iter().partition(|s| window.state.admits(sequence_window(s)));
 
-    // Eligible items: actionable AND admitted by the current window (R3 falls
-    // out of `admits` — genuinely-unknown admits only `any`), ordered by
-    // recorded deadline then queue order (stable sort keeps file order).
+    // Standing work (R3/R23) and eligible work, from ONE read. Standing is
+    // sourced BEFORE the window filter — a blocked item renders whatever
+    // window is derived, because the external act it waits on does not care
+    // which seam we are in; only the offer stays window-gated. Eligible items
+    // are actionable, unblocked AND admitted by the current window (R3 falls
+    // out of `admits` — genuinely-unknown admits only `any`). Both orders are
+    // [`by_priority_then_deadline`]; `open_unblocked` records whether any
+    // actionable unblocked work exists at all, in any window.
     let items = queue.read_all()?;
+    let mut standing: Vec<&QueueItem> = Vec::new();
     let mut eligible: Vec<&QueueItem> = Vec::new();
+    let mut open_unblocked = false;
     for item in &items {
-        if item.is_actionable(now)? && window.state.admits(item.window) {
+        if !item.is_actionable(now)? {
+            continue;
+        }
+        // A blocked item is standing work and nothing else: withholding it
+        // from the offer sections is what keeps one item to one rendering.
+        if item.is_blocked() {
+            standing.push(item);
+            continue;
+        }
+        open_unblocked = true;
+        if window.state.admits(item.window) {
             eligible.push(item);
         }
     }
-    eligible.sort_by(|a, b| match (parse_deadline(a), parse_deadline(b)) {
-        (Some(x), Some(y)) => x.cmp(&y),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
+    standing.sort_by(by_priority_then_deadline);
+    eligible.sort_by(by_priority_then_deadline);
 
     // ---- render ----------------------------------------------------------
     let mut out: Vec<String> = Vec::new();
@@ -272,9 +333,21 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
         out.extend(reconciled);
     }
 
+    // KTD4 — standing work renders in its own section between `reconciled:`
+    // and `next:`: visible, never offered. It is deliberately OUTSIDE the
+    // executable-offer guard (a blocked head has no executable line by
+    // construction — the act that would unblock it is not ours to run), so
+    // the detail line is the unblock condition instead.
+    if !standing.is_empty() {
+        out.push("standing:".to_string());
+        for item in &standing {
+            push_standing(&mut out, item);
+        }
+    }
+
     // R4 top offer: the first current-window-compatible in-flight sequence,
     // else the first eligible item; R5 even when nothing is eligible.
-    let mut remaining = eligible.clone();
+    let mut remaining = eligible;
     if let Some(seq) = active.first() {
         out.push("next:".to_string());
         push_sequence(&mut out, seq, None);
@@ -282,6 +355,14 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
         let top = remaining.remove(0);
         out.push("next:".to_string());
         push_item(&mut out, top);
+    } else if let (false, Some(head)) = (open_unblocked, standing.first()) {
+        // Every open item is blocked: the repair action and `lab-next add`
+        // are both the wrong advice — name the act that would free the work.
+        out.push(format!(
+            "next: none offerable — every open item is standing work; when {}: lab-next unblock {}",
+            head.unblock_reason(),
+            head.id
+        ));
     } else if matches!(window.state, WindowState::GenuinelyUnknown(_)) {
         out.push(
             "next: none eligible — run the repair action above, or queue window-agnostic work: lab-next add --window any"
@@ -385,6 +466,24 @@ fn push_item(out: &mut Vec<String>, item: &QueueItem) {
         ),
     };
     out.push(format!("    run: {run}"));
+    push_refs_and_notes(out, item);
+}
+
+/// One standing-work block (R3; KTD4): the same head every other section uses
+/// — so a blocked item that also carries a paused-sequence label keeps that
+/// label rather than being claimed twice — then the unblock condition in the
+/// executable line's slot, then refs (R13) and notes. There is no `run:` here
+/// by construction: the act that would unblock the item is not ours to run.
+fn push_standing(out: &mut Vec<String>, item: &QueueItem) {
+    out.push(item_head(item));
+    out.push(format!("    blocked: {}", item.unblock_reason()));
+    push_refs_and_notes(out, item);
+}
+
+/// The detail tail both offer and standing blocks carry: reference paths (R13)
+/// then notes, each omitted when empty. Shared so the R13 contract the module
+/// doc states for BOTH sections has one edit site rather than two.
+fn push_refs_and_notes(out: &mut Vec<String>, item: &QueueItem) {
     if !item.refs.is_empty() {
         out.push(format!("    refs: {}", item.refs.join(", ")));
     }
@@ -396,8 +495,12 @@ fn push_item(out: &mut Vec<String>, item: &QueueItem) {
 /// Whether the item's recorded deadline has passed (unlike
 /// [`QueueItem::is_stale`], WITHOUT the sequence exemption — reconciliation
 /// asks about exactly the entries the exemption keeps actionable).
+///
+/// KTD3 — the BLOCKED exemption is wired here as well as in
+/// [`QueueItem::is_stale`]: this is the second staleness site, so exempting
+/// only the first would leave blocked work asked to confirm it is done (R4).
 fn deadline_passed(item: &QueueItem, now: DateTime<Utc>) -> bool {
-    parse_deadline(item).is_some_and(|d| now > d)
+    !item.is_blocked() && parse_deadline(item).is_some_and(|d| now > d)
 }
 
 /// R12 sit-down reconciliation (see the module doc for the confirmation rule).
@@ -413,8 +516,11 @@ fn reconcile(queue: &Queue, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
 
     // Auto-close: a declared tool-completion artifact that now witnesses the
     // event completes the item through the ordinary hygiene-checked `done`.
+    // R22 — a BLOCKED item is excluded: the artifact may sit there while the
+    // external act the item waits on has not happened, and a witnessed file is
+    // not the operator's authorization.
     for item in &items {
-        if !item.is_actionable(now)? {
+        if !item.is_actionable(now)? || item.is_blocked() {
             continue;
         }
         let CompletionSignal::ToolEvent { event, artifact: Some(path) } = &item.completion else {
@@ -440,10 +546,15 @@ fn reconcile(queue: &Queue, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
     }
 
     // Done-or-not confirmation for explicit-signal items (reconcile-flagged
-    // or past a recorded deadline — the documented rule).
+    // or past a recorded deadline — the documented rule). R4/R22 — blocked
+    // items are excluded here too: work awaiting an external party is never
+    // asked to confirm it is done.
     let tty = std::io::stdin().is_terminal();
     for item in &items {
-        if !item.is_actionable(now)? || item.completion != CompletionSignal::Explicit {
+        if !item.is_actionable(now)?
+            || item.is_blocked()
+            || item.completion != CompletionSignal::Explicit
+        {
             continue;
         }
         let why = if let Some(flag) = &item.reconcile {
@@ -967,4 +1078,61 @@ fn run_supersede(rest: &[String]) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
     }
+}
+
+/// `priority <id>` | `priority --clear` (R20): move the single-item priority
+/// marker, or leave no holder. Setting it clears every other holder, so the
+/// store converges to exactly one even when it arrived with several (KTD6).
+fn run_priority(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let target = match rest {
+        [flag] if flag == "--clear" => None,
+        [id] if !id.starts_with("--") => Some(id.as_str()),
+        other => anyhow::bail!("priority takes <id> or --clear, got {other:?}\n{USAGE}"),
+    };
+    let queue = Queue::from_env()?;
+    let cleared = match target {
+        Some(id) => {
+            let cleared = queue.set_priority(id)?;
+            println!("priority: {id}");
+            cleared
+        }
+        None => {
+            let cleared = queue.clear_priority()?;
+            println!("priority: none");
+            cleared
+        }
+    };
+    if !cleared.is_empty() {
+        println!("cleared: {}", cleared.join(", "));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `block <id> --until <condition>` (R5/R20): record the blocked state with the
+/// act that would unblock it. The condition is mandatory — a blocked item that
+/// names no reachable act is refused by the store (R24).
+fn run_block(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let (id, condition) = match rest {
+        [id, flag, condition] if flag == "--until" => (id, condition),
+        other => anyhow::bail!("block takes <id> --until <condition>, got {other:?}\n{USAGE}"),
+    };
+    let queue = Queue::from_env()?;
+    queue.block(id, condition)?;
+    println!("blocked: {id} — until {condition}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `unblock <id>` (R20): clear the blocked state. Unblocking an item that is not
+/// blocked is a reported no-op, mirroring `done`'s idempotence.
+fn run_unblock(rest: &[String]) -> anyhow::Result<ExitCode> {
+    let [id] = rest else {
+        anyhow::bail!("unblock takes exactly one <id>\n{USAGE}");
+    };
+    let queue = Queue::from_env()?;
+    if queue.unblock(id)? {
+        println!("unblocked: {id}");
+    } else {
+        println!("unblocked: {id} (was not blocked)");
+    }
+    Ok(ExitCode::SUCCESS)
 }

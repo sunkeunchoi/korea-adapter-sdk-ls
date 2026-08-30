@@ -13,8 +13,15 @@
 //! ```sh
 //! export LS_DATA_HOME=/ABSOLUTE/path/to/data-home
 //! export LS_MOUNT_UNIVERSE_DATE=2026-07-27          # the KST session date
-//! export LS_MOUNT_UNIVERSE_METADATA=/…/universe-metadata-YYYYMMDD.json   # if the head is
-//!                                                                       #   metadata-driven
+//! export LS_MOUNT_UNIVERSE_METADATA=/…/universe-metadata-YYYYMMDD.json   # ALWAYS required:
+//!                                                                       #   the producer refuses
+//!                                                                       #   when neither this nor
+//!                                                                       #   a head
+//!                                                                       #   universe_metadata_hash
+//!                                                                       #   is present, and
+//!                                                                       #   refuses an artifact
+//!                                                                       #   whose hash is not the
+//!                                                                       #   head's
 //! export LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic            # REQUIRED when the
 //!                                                                       #   date is today
 //! cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- \

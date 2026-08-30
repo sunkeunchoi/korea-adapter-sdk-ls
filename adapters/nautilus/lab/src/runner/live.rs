@@ -693,6 +693,46 @@ fn daily_bars_present(catalog: &Path, instrument: &str) -> bool {
     })
 }
 
+/// Whether the catalog covers the session's OWN trading date for every traded
+/// instrument — `produce_report`'s `catalog_has_range` gate (U8/R12).
+///
+/// This is the twin's prerequisite, not a freshness check: the paper twin replays
+/// the session's decisions, so it is only meaningful once the post-session ingest
+/// has landed that session's bars. Asked PER TRADED INSTRUMENT and against the
+/// daily watermark, mirroring [`evaluate_catalog`]'s discipline — a whole-tree
+/// sample would be satisfied by the minute series beside the daily ones.
+///
+/// Fails closed on every unestablished input (unreadable checkpoint, unparseable
+/// trading date, an instrument with no watermark): a false here is
+/// `TwinPending`, which is explicitly re-runnable per run id, so the conservative
+/// answer costs nothing but a later re-production.
+///
+/// NOTE on ordering, because it decides what a finalize-time call can produce:
+/// the KRX witness is retrospective, so at the moment a session finalizes its own
+/// daily bar is normally NOT yet ingested and this returns false. That is the
+/// honest answer — the report written at finalize records a re-runnable
+/// `TwinPending` rather than a fabricated twin, which is already a strict
+/// improvement on the previous state (no report at all, so `read_report` returned
+/// `None` and the rung-2 refusal was structural rather than informative). A
+/// *Computed* twin additionally requires re-production after that ingest lands.
+fn session_range_in_catalog(catalog: &Path, trading_date: &str, symbols: &[String]) -> bool {
+    let Ok(session) = chrono::NaiveDate::parse_from_str(trading_date, "%Y%m%d") else {
+        return false;
+    };
+    let Ok(checkpoint) = Checkpoint::load(&catalog.join("ingest-checkpoint.json")) else {
+        return false;
+    };
+    if symbols.is_empty() {
+        return false;
+    }
+    symbols.iter().all(|instrument| {
+        checkpoint
+            .watermark(instrument, DAILY_BAR_TYPE)
+            .is_some_and(|wm| wm >= session)
+            && daily_bars_present(catalog, instrument)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_context(
     cfg: &DispatchCliConfig,
@@ -2151,7 +2191,42 @@ fn stage_and_finalize(
              its outcome could not be recorded; treat the account as NOT flat and reconcile"
         ));
     }
-    finalize_session(writer, dq, report, dedup_hits)
+    // R5's always-emit guarantee: this is the mandatory side effect, and NOTHING
+    // fallible may precede it (a `?` here would abort before `write_data_quality`
+    // + `finalize`, leaving `.tmp-` residue that `scan_limit_events` classifies as
+    // a limit event — a self-inflicted de-escalation).
+    let run_dir = finalize_session(writer, dq, report, dedup_hits)?;
+
+    // U8/R12 — the ONLY production caller of `produce_report`.
+    // `clean_session_verdict` requires a produced twin at rung >= 2, so removing
+    // this call makes rung 2 unreachable by construction: the gate would read a
+    // sidecar nothing writes.
+    //
+    // Placed AFTER `finalize_session` for two independent reasons: the producer
+    // reads the FINALIZED run dir (`decisions.jsonl`, `performance.json`,
+    // `data-quality.json`, which exist only after the atomic rename), and it must
+    // not sit ahead of the always-emit tail above. It is FAIL-SOFT for the same
+    // reason: the sidecar lives outside the immutable run dir and is idempotent
+    // per run id, so a write failure is re-runnable and must never cost the
+    // operator the session's artifacts.
+    let tracking_rung = ctx.dispatch.as_ref().map_or(ctx.chain_rung, |d| d.rung);
+    let catalog_has_range =
+        session_range_in_catalog(&ctx.data_home.join("catalog"), &ctx.trading_date, &ctx.symbols);
+    let tracking = crate::dispatch::tracking::produce_report(
+        &run_dir,
+        &ctx.run_id,
+        tracking_rung,
+        catalog_has_range,
+    );
+    if let Err(e) = crate::dispatch::tracking::write_report(&ctx.data_home, &tracking) {
+        eprintln!(
+            "live: warning — the tracking report for {} could not be written ({}); the run's \
+             own artifacts are finalized and the report is re-runnable per run id",
+            ctx.run_id,
+            nautilus_ls::scrub::scrub_secrets(&e.to_string())
+        );
+    }
+    Ok(run_dir)
 }
 
 /// Record one of the mounted session's gateway dispatches (an order call, a t0425 poll)
@@ -3041,6 +3116,87 @@ mod catalog_watermark_tests {
     fn catalog_with(tmp: &TempDir, watermarks: &[(&str, &str)], with_bars: bool) -> std::path::PathBuf {
         let bars: Vec<&str> = if with_bars { watermarks.iter().map(|(i, _)| *i).collect() } else { vec![] };
         catalog_with_bars(tmp, watermarks, &bars)
+    }
+
+    /// U8/R12 — the twin prerequisite. This gate decides whether a paper twin is
+    /// `Computed`, and a `Computed` twin at rung >= 2 is load-bearing evidence for
+    /// escalating real capital, so a FALSE POSITIVE here fabricates evidence while
+    /// a false negative merely defers. Every unestablished input must therefore
+    /// resolve to `false`. The live-session tests only ever reach the false branch
+    /// (no ingest has run in their rigs), so these cover the admitting branch and
+    /// each fail-closed exit directly.
+    #[test]
+    fn the_twin_prerequisite_admits_only_a_watermark_past_the_session_with_bars_present() {
+        let tmp = TempDir::new().unwrap();
+        let sym = vec!["005930.XKRX".to_string()];
+
+        // Watermark reached the session AND the series is on disk -> admitted.
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        assert!(session_range_in_catalog(&catalog, "20260728", &sym), "watermark AT the session");
+        assert!(
+            session_range_in_catalog(&catalog, "20260727", &sym),
+            "a watermark PAST the session is coverage too"
+        );
+
+        // Watermark short of the session -> deferred. This is the ordinary
+        // finalize-time state, because the KRX witness is retrospective.
+        assert!(
+            !session_range_in_catalog(&catalog, "20260729", &sym),
+            "a watermark behind the session cannot attest it"
+        );
+
+        // The destructive-heal trap: a current watermark over a wiped series. A
+        // watermark alone is not data presence, which is why the predicate asks both.
+        // The tempdir is BOUND, not a temporary: `catalog_with(&tmp2(), ..)` would
+        // drop it at the end of the statement and delete the tree, so the assertion
+        // would pass through the unreadable-checkpoint exit rather than the branch it
+        // names — vacuously green against exactly the regression it guards.
+        let wiped_tmp = TempDir::new().unwrap();
+        let wiped = catalog_with(&wiped_tmp, &[("005930.XKRX", "2026-07-28")], false);
+        assert!(
+            wiped.join("ingest-checkpoint.json").exists(),
+            "the checkpoint must be READABLE, or the false below proves nothing about bars"
+        );
+        assert!(
+            !session_range_in_catalog(&wiped, "20260728", &sym),
+            "a fresh watermark over a wiped series must not attest coverage"
+        );
+    }
+
+    /// The fail-closed exits, each named because a future refactor that drops one
+    /// turns a deferral into fabricated evidence. The empty-symbol case is the
+    /// sharp one: `iter().all()` over an empty slice is TRUE, so removing the
+    /// guard would admit a twin for a session that traded nothing.
+    #[test]
+    fn the_twin_prerequisite_fails_closed_on_every_unestablished_input() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        let sym = vec!["005930.XKRX".to_string()];
+
+        assert!(
+            !session_range_in_catalog(&catalog, "20260728", &[]),
+            "an empty symbol set must NOT pass vacuously — all() over empty is true"
+        );
+        assert!(
+            !session_range_in_catalog(&catalog, "not-a-date", &sym),
+            "an unparseable trading date establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(&tmp.path().join("no-such-catalog"), "20260728", &sym),
+            "an unreadable checkpoint establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(&catalog, "20260728", &["000660.XKRX".to_string()]),
+            "an instrument with no watermark of its own establishes nothing"
+        );
+        assert!(
+            !session_range_in_catalog(
+                &catalog,
+                "20260728",
+                &["005930.XKRX".to_string(), "000660.XKRX".to_string()]
+            ),
+            "one unattested instrument defers the whole session — all(), not any()"
+        );
     }
 
     /// AE2/R5. The whole point: with no stub and a clean ingest, the check stands on its own.
