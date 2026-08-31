@@ -141,7 +141,8 @@ make_fixture() { # [sed_expr] -> repo root on stdout
   # every source and the DEFAULT fixture is fresh. Staleness is then manufactured explicitly by
   # the touch -t knobs at the end of this function, never by accident of ordering.
   local src_bin="$naut/src/bin" src_core="$root/crates/ls-core/src" src_meta="$root/metadata/constraints"
-  mkdir -p "$src_bin" "$src_core" "$src_meta" "$naut/lab" "$naut/nautilus-ls-calendar"
+  mkdir -p "$src_bin" "$src_core" "$src_meta" "$naut/lab" "$naut/nautilus-ls-calendar" \
+           "$root/crates/ls-sdk"
   printf '%s\n' 'fn main() {}' >"$src_core/lib.rs"
   printf '%s\n' 'fixture: true' >"$src_meta/fixture.yaml"
   # The MANIFESTS cargo's dep-info records nowhere, which the preflight folds in by hand because a
@@ -150,7 +151,8 @@ make_fixture() { # [sed_expr] -> repo root on stdout
   # they count toward `vanished` when absent, so a fixture missing one would mark every stub stale.
   local m
   for m in "$root/Cargo.toml" "$root/Cargo.lock" "$naut/Cargo.toml" "$naut/Cargo.lock" \
-           "$naut/rust-toolchain.toml" "$naut/lab/Cargo.toml" "$naut/nautilus-ls-calendar/Cargo.toml"; do
+           "$naut/rust-toolchain.toml" "$naut/lab/Cargo.toml" "$naut/nautilus-ls-calendar/Cargo.toml" \
+           "$root/crates/ls-sdk/Cargo.toml" "$root/crates/ls-core/Cargo.toml"; do
     printf '%s\n' '# fixture manifest' >"$m"
   done
   for sb in $FIXTURE_STUB_BINS; do
@@ -333,7 +335,8 @@ STUB
     find "$src_bin" "$src_core" "$src_meta" -type f -exec touch -t 202512310000 {} +
     touch -t 202512310000 "$root/Cargo.toml" "$root/Cargo.lock" "$naut/Cargo.toml" \
       "$naut/Cargo.lock" "$naut/rust-toolchain.toml" "$naut/lab/Cargo.toml" \
-      "$naut/nautilus-ls-calendar/Cargo.toml"
+      "$naut/nautilus-ls-calendar/Cargo.toml" \
+      "$root/crates/ls-sdk/Cargo.toml" "$root/crates/ls-core/Cargo.toml"
     touch "$root/$FIXTURE_STALE_VIA"
   fi
 
@@ -835,9 +838,22 @@ drop_fixture
 # reported `ok` for seven binaries built from superseded dependency code, and the content axis
 # cannot help — a manifest change removes no registered literal. Each manifest gets its own case
 # because they are a hand-listed set: a typo in one would otherwise be invisible.
+#
+# The last two are the ROOT-CRATE manifests, and they are the reason the workspace-root Cargo.toml
+# is not enough on its own. A feature default flipped in crates/ls-core/Cargo.toml dirties every
+# binary while moving no lockfile at all — a lockfile records resolved VERSIONS, not feature sets —
+# and `$R/Cargo.toml` carries only [workspace] members and shared version pins, not another crate's
+# [features]. Those two crates are exactly the ones the seven binaries LINK; every other root member
+# is a dev-dependency or a separate tool, and adding them would over-report.
+#
+# Note the case names say "dep-info lists no manifest", which holds for the five nautilus-ls
+# binaries. lab-research and lab-mount-universe already carry these manifests through
+# lab/build.rs's rerun-if-changed projection, so for them the entry is redundant rather than
+# load-bearing — see the measured split in session-morning.sh's BIN_EXTRA_FRESHNESS_INPUTS comment.
 for MANIFEST in Cargo.toml Cargo.lock adapters/nautilus/Cargo.toml adapters/nautilus/Cargo.lock \
                 adapters/nautilus/rust-toolchain.toml adapters/nautilus/lab/Cargo.toml \
-                adapters/nautilus/nautilus-ls-calendar/Cargo.toml; do
+                adapters/nautilus/nautilus-ls-calendar/Cargo.toml \
+                crates/ls-sdk/Cargo.toml crates/ls-core/Cargo.toml; do
   FIXTURE_STALE_VIA="$MANIFEST"
   run_chain --dry-run
   assert_eq "a binary older than $MANIFEST refuses (64) — dep-info lists no manifest" \

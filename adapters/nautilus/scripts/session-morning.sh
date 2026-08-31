@@ -282,12 +282,40 @@ fi
 # therefore reports `ok` for seven binaries built from superseded dependency code, and the content
 # axis cannot help: a manifest change removes no registered literal. That is a false green of
 # exactly the class this preflight exists to close, so the manifests are folded in explicitly.
-# They are a genuinely closed set — one per workspace member plus the two lockfiles and the pinned
-# toolchain — not a source-tree scan, so KTD8's objection to a hand-listed scan does not apply: a
-# new workspace member is a repo-structure change, not a routine edit, and a manifest that goes
-# missing counts toward `vanished` so a typo here fails CLOSED rather than silently covering less.
+# They are a genuinely closed set — the manifest of every crate the seven binaries LINK, plus the
+# two lockfiles and the pinned toolchain — not a source-tree scan, so KTD8's objection to a
+# hand-listed scan does not apply: a new linked crate is a repo-structure change, not a routine
+# edit, and a manifest that goes missing counts toward `vanished` so a typo here fails CLOSED
+# rather than silently covering less.
+#
+# THE SET SPANS BOTH WORKSPACES, because the dependency edge does. The binaries live in the
+# adapter workspace but link crates/ls-sdk and crates/ls-core by path, so their manifests are
+# build inputs to every one of the seven — and neither the workspace-root manifest nor a lockfile
+# stands in for them. A FEATURE DEFAULT flipped in crates/ls-core/Cargo.toml is the sharp case: a
+# lockfile records resolved VERSIONS, not feature sets, so that edit dirties every binary while
+# moving no lockfile at all, and `$R/Cargo.toml` only carries [workspace] members and shared
+# version pins, not another crate's [features]. (A dependency ADDED to ls-core is not that case —
+# it rewrites ls-core's own package entry in the lockfile — so it is not the example to reach for.)
+# Omitting these two was therefore the same false green this list exists to close, one workspace over.
+#
+# MEASURED, because the "dep-info records no manifest" premise above is true for FIVE of the seven,
+# not all seven. The five nautilus-ls binaries record zero `Cargo.toml` paths, so the hand list is
+# entirely load-bearing for them; `lab-research.d` and `lab-mount-universe.d` each already record
+# six of these manifests — including both root-crate ones — because adapters/nautilus/lab/build.rs
+# emits them as rerun-if-changed and cargo folds those into dep-info. For those two the entries are
+# redundant, not wrong (dep_freshness takes a max, so a doubly-counted input changes no verdict).
+# Do not prune this list off a lab-binary spot-check: the five that need it record nothing.
+#
+# ONLY those two, and the exclusion is the "does not OVER-report" rule applied to manifests. The
+# root workspace has seven members; ls-metadata and ls-sdk-test-support reach the binaries through
+# [dev-dependencies] alone, and ls-docgen, ls-trackers and ls-repository-engineering are separate
+# tools no binary links. Listing them would mark all seven binaries stale inside the 09:05 deadline
+# for a dependency that does not exist — the same objection that keeps adapters/nautilus/lab/src
+# out of the source axis. A crate that becomes a real dependency joins this list in the same commit
+# that adds the edge.
 BIN_EXTRA_FRESHNESS_INPUTS=(
   "$R/Cargo.toml" "$R/Cargo.lock"
+  "$R/crates/ls-sdk/Cargo.toml" "$R/crates/ls-core/Cargo.toml"
   "$NAUT/Cargo.toml" "$NAUT/Cargo.lock" "$NAUT/rust-toolchain.toml"
   "$NAUT/lab/Cargo.toml" "$NAUT/nautilus-ls-calendar/Cargo.toml"
 )

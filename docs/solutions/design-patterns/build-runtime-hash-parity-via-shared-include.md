@@ -119,8 +119,11 @@ The boundary is closed and carries no package-specific deferral: a repository-lo
 crate the lab *links into its binaries* is either declared here or reported by the
 coverage oracle. Dev-only dependency sources are outside it by the same rule — they
 cannot change a shipped binary. The morning shell preflight's omission of the root SDK/core
-manifests is also a distinct residual; this runtime fingerprint does not silently
-discharge that shell boundary.
+manifests was a distinct residual, closed separately by adding
+`crates/ls-sdk/Cargo.toml` and `crates/ls-core/Cargo.toml` to that script's own
+hand-listed `BIN_EXTRA_FRESHNESS_INPUTS`. The two boundaries stay separate on
+purpose: this runtime fingerprint does not discharge the shell one, and the shell's
+mtime axis does not read this digest.
 
 ## Operator Consequences
 
