@@ -50,9 +50,49 @@ jobs:
         with:
           workspaces: adapters/nautilus
 
+      # This job links very large test binaries — the nautilus crates pull in
+      # datafusion and arrow, and `cargo test --workspace` links one binary per
+      # target. On a standard runner that step sits close to the free-disk limit,
+      # and crossing it does NOT surface as a clean ENOSPC: `rust-lld` mmaps the
+      # output file, so a full filesystem raises SIGBUS inside llvm::parallelFor and
+      # the job dies with `ld terminated with signal 7 [Bus error], core dumped` plus
+      # an LLVM "please file a bug" banner. The give-away that it is resource
+      # exhaustion and not a code defect is that the crashing TARGET moves between
+      # runs on an identical tree (observed: node_wiring and
+      # capture-universe-metadata, then nautilus-ls-lab's lib test), and that the
+      # same tree passed and failed with the same cache key and runner image.
+      #
+      # Reclaim the preinstalled toolchains this job never uses. These are inlined
+      # rather than delegated to a third-party action so the step stays auditable and
+      # adds no supply-chain surface. `df` brackets the build so the log records the
+      # actual headroom — if a future failure shows ample free space, the diagnosis
+      # above is wrong and the next lever is the debug-info size of the profile
+      # (CARGO_PROFILE_TEST_DEBUG), not more deletions.
+      - name: Reclaim runner disk
+        run: |
+          echo "--- before reclaim"
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/share/swift \
+            /usr/local/share/chromium
+          echo "--- after reclaim"
+          df -h /
+
       - name: Test adapter workspace (offline)
         run: cargo test --workspace
         working-directory: adapters/nautilus
+
+      # Records the high-water mark whether the build passed or crashed, so the next
+      # reader can tell a genuine test failure from another disk exhaustion without
+      # re-running anything.
+      - name: Report disk after build
+        if: always()
+        run: df -h /
 
       # Mechanical merge-block (issue #189 U5, KTD1/R7): fails the PR if a consumer's weekday
       # primitive was deleted without a present-and-PASS gate-verdict record. Runs the
