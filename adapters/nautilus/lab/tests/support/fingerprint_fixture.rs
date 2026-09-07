@@ -36,6 +36,10 @@ fn seed(root: &Path) {
     for directory in [
         "adapters/nautilus/lab/src/runner",
         "adapters/nautilus/src",
+        // The real tree's `src/bin` members are declared but never linked by the lab, so
+        // they reach Cargo's dep-info only through the watch projection. Seeding one keeps
+        // that shape reachable from the fixture instead of only from the built repository.
+        "adapters/nautilus/src/bin",
         "adapters/nautilus/nautilus-ls-calendar/src",
         "adapters/nautilus/state",
         "crates/ls-sdk/src",
@@ -72,6 +76,10 @@ fn seed(root: &Path) {
             "pub fn research() {}\n",
         ),
         ("adapters/nautilus/src/lib.rs", "pub fn adapter() {}\n"),
+        (
+            "adapters/nautilus/src/bin/calendar-refresh.rs",
+            "fn main() {}\n",
+        ),
         (
             "adapters/nautilus/nautilus-ls-calendar/Cargo.toml",
             "[package]\nname = \"calendar\"\n",
