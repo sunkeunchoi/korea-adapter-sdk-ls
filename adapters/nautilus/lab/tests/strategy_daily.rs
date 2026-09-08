@@ -44,7 +44,7 @@ mod gates;
 #[path = "strategy_daily/records.rs"]
 mod records;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use nautilus_ls_lab::agent::envelope::SignalKind;
 use nautilus_ls_lab::agent::sink::DecisionSink;
@@ -572,14 +572,23 @@ async fn concurrency_reaches_target_m_times_hold_and_does_not_exceed_it() {
 /// settled at the **same** bar's `ts_init`, so anything still in flight when a new
 /// session ordinal arrives never opened and never will.
 ///
-/// **The lever is the off-grid price** documented in this module's fixture facts: the
-/// top-ranked name's whole series sits at `50,050 + i × 100`, off the masters' 100 KRW
-/// grid, so the matching engine skips the fill with a WARN. The order really is
-/// submitted — there is a recorded `OrderPlaced` and the run's own
-/// `unopened_entry_orders` diagnostic carries its client order id — and no position ever
-/// opens. (The alternative lever, a starting balance too small for the notional, denies
-/// the order at the *risk engine* instead — a rejection rather than a silent non-fill,
-/// and account-wide, so it cannot be aimed at one of the two symbols.)
+/// **The lever is a zero-volume session.** The matching engine derives its per-bar tick
+/// sizes from the bar's volume (`BarTickSizes::from_volume`) and returns early on a zero
+/// size, so a bar that prints prices but no volume generates no trade tick and an order
+/// submitted on it is never filled. The order really is submitted — there is a recorded
+/// `OrderPlaced` and the run's own `unopened_entry_orders` diagnostic carries its client
+/// order id — and no position ever opens. It is also aimable at ONE symbol, which the
+/// two rejected alternatives are not: a starting balance too small for the notional
+/// denies the order at the *risk engine*, a rejection rather than a silent non-fill and
+/// account-wide either way.
+///
+/// This scenario used to use an off-grid price as its lever — a series at
+/// `50,050 + i × 100` against the masters' 100 KRW increment, which the matching engine
+/// declined to fill. That lever no longer exists: the daily runner now re-grids each
+/// instrument onto a `price_increment` that divides every in-range price
+/// (`regrid_instruments_for_range`), because on the real catalog that same silent skip
+/// dropped 7,981 fills and left 5,167 entry orders unopened. The regression under test
+/// is unchanged; only the way it is provoked is.
 ///
 /// `max_concurrent` is 1, so the leak is unambiguous: the off-grid name goes dark after
 /// the first session, and the second name — takeable on the second session and priced on
@@ -589,14 +598,16 @@ async fn concurrency_reaches_target_m_times_hold_and_does_not_exceed_it() {
 #[tokio::test]
 async fn a_submitted_entry_that_never_opens_does_not_hold_a_concurrency_slot() {
     let dir = tempdir().unwrap();
-    // The off-grid name outranks the on-grid one (turnover is prior close × prior
-    // volume), so session 0's single take is the entry that will never fill. It then
-    // contributes no bar to session 1 — legal, because it never opened a position, so
-    // the held-symbol data-gap gate has nothing in flight to protect.
-    let mut never_fills = SymbolSpec::new(CODES[0], 50_050, 900_000);
+    // The illiquid name outranks the other one (turnover is PRIOR close × PRIOR volume,
+    // and only the take session's own volume is zeroed), so session 0's single take is
+    // the entry that will never fill. It then contributes no bar to session 1 — legal,
+    // because it never opened a position, so the held-symbol data-gap gate has nothing
+    // in flight to protect.
+    let mut never_fills = SymbolSpec::new(CODES[0], 50_000, 900_000);
+    never_fills.volumes = HashMap::from([(FIRST_IN_RANGE, 0)]);
     never_fills.gaps = BTreeSet::from([FIRST_IN_RANGE + 1]);
-    let on_grid = SymbolSpec::new(CODES[1], 50_000, 100_000);
-    let specs = vec![never_fills, on_grid];
+    let fills = SymbolSpec::new(CODES[1], 50_000, 100_000);
+    let specs = vec![never_fills, fills];
     build_fixture(dir.path(), &specs).await;
 
     let sink = DecisionSink::new();
@@ -611,8 +622,8 @@ async fn a_submitted_entry_that_never_opens_does_not_hold_a_concurrency_slot() {
     .unwrap();
 
     let (stale, later) = (specs[0].id(), specs[1].id());
-    assert_eq!(outcome.batches[0].taken, vec![stale], "session 0 took the off-grid name");
-    assert_eq!(outcome.batches[1].taken, vec![later], "session 1 took the on-grid one");
+    assert_eq!(outcome.batches[0].taken, vec![stale], "session 0 took the zero-volume name");
+    assert_eq!(outcome.batches[1].taken, vec![later], "session 1 took the liquid one");
 
     // The order really was submitted: the strategy recorded it, and the run's own
     // unopened-entry diagnostic carries exactly one client order id that never opened.

@@ -25,6 +25,8 @@ mod entry_risk;
 mod fixture;
 #[path = "backtest_daily_run/observation.rs"]
 mod observation;
+#[path = "backtest_daily_run/tick_grid.rs"]
+mod tick_grid;
 
 use std::collections::{BTreeSet, HashMap};
 

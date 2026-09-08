@@ -81,6 +81,81 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Fix — the daily backtest's silent fill-skip CLOSED: the catalog is adjustment-adjusted, so its prices sit on NO exchange tick grid and an effective-dated ladder would not have fixed it; the run now mounts a per-symbol GCD grid and skips ZERO fills — 7,981 → 0, unopened 5,167 → 0, positions 1,311 → 5,922; no strategy code, no param (2026-09-08) — plan 2026-09-08-1215, queue `daily-backtest-historical-tick-grid-fill-skip`
+
+- **What did NOT change.** No governed param, no ingest, no catalog, no frozen artifact.
+  `strategy_code_hash` is unchanged at **`d39b2159…`** across both probe runs — the fix touches
+  `runner/backtest_daily.rs` and nothing under `strategy/`, so it does not compete with the
+  single identity move U2 still owes the lineage. **The adapter is untouched**:
+  `nautilus_ls::instruments::map_equity` still derives `price_increment` from today's reference
+  price under `TickRegime::Post2023`, which is correct for live order placement and is the
+  behaviour the rehearsal chain (U7..U13) depends on.
+- **The first diagnosis was half right, and the tests are what corrected it.** The R30 entry
+  below attributes the skip to a regime/band mismatch — today's tick applied to a 2016 price —
+  and names `TickRegime::for_date` as the unused switch. That is real but it is not sufficient,
+  and a fix built only on it would have closed less than half the defect while looking complete.
+  Writing the guard test first surfaced the rest: **the catalog is adjustment-adjusted**
+  (`checkpoint.adjusted_prices == true`), and an adjusted price sits on **no exchange tick grid
+  at all**. Checked against the ladder that actually governed each date: `000660` 33,550 / tick
+  50 — on grid; `005930` 30,340 / tick 50 — **off**; `006400` 112,589 / tick 500 — **off**;
+  `011200` 6,333 / tick 10 — **off**; `068270` 92,700 / tick 100 — on grid. Three of five. The
+  30,340 is 005930's pre-split price carried through the 2018 50:1 split. An effective-dated
+  ladder lookup would still have refused those three, and the run would still have finalized
+  green having silently traded a subsample.
+- **What the run mounts instead.** Per symbol, `gcd(g, f)` where `g` is the GCD of every in-range
+  OHLC price and `f` is the adapter's increment. Three properties, and the first is the one that
+  matters: it **divides every price the engine will see, by construction** — so no fill can be
+  skipped as a structural fact rather than a runtime check that has to fire to help. It is never
+  coarser than `f` (when `f` already divides everything, `gcd(g, f) == f` and nothing moves, so a
+  sparse symbol cannot invent a coarse grid from one bar). And for a symbol no corporate action
+  touched it recovers the **real exchange tick** — `000660` re-grids to 50, not to 1 — so the
+  increment keeps as much of its original meaning as the data still supports. Nothing is rounded
+  and no price is invented: the daily path submits market orders and fills at real catalog bar
+  prices, so the increment is only a fill-price *validator* here.
+- **Run-scoped, and NOT per session — nautilus 0.60 forecloses the obvious shape.**
+  `SimulatedExchange::add_instrument` on an id that already exists constructs a **new**
+  `OrderMatchingEngine` and inserts it over the old one, discarding that engine's book and state,
+  and derives `raw_id` from `self.instruments.len()`, which does not grow on a replace — so every
+  symbol swapped within one session would collide on a single raw id. Recorded because the
+  per-session swap is the design a reader will reach for first.
+- **The measurement, same binary profile and same range as the probe below.** Run
+  `20260908T122223Z-backtest-daily-ms-v0`, release, `20160801..20191231`, home
+  `data/next-daily-2016`:
+
+  | | before | after |
+  |---|---|---|
+  | `Skipping fill` warnings | 7,981 | **0** |
+  | entry orders never opened | 5,167 | **0** |
+  | positions | 1,311 | **5,922** |
+  | open at range end | 31 | 99 |
+  | instruments re-gridded | — | 243 of 286 |
+  | wall clock | 94 s | 106 s |
+
+  843 of the 6,696 nominal entries (837 sessions x `target_m = 8`) still do not open, and that is
+  the honest remainder rather than a residue of this defect: those are sessions with fewer than
+  eight takeable candidates after the already-held exclusion. `unopened_entry_orders` is **zero**,
+  which is the direct statement that no order the strategy submitted failed to become a position.
+- **`HeldSymbolMissingBar` still does not fire, and the answer is now much better evidenced.**
+  The probe below cleared Stop condition (5) on 1,311 positions. The same range at 4.5x the
+  position count — **5,922** positions, 99 still open at range end — clears it again. The guard
+  was exercised far harder and stayed silent.
+- **What is now admissible, and what still is not.** Neither run's net RoR is evidence: both ran
+  the **Placeholder** signal (`ranking_signal_is_placeholder: true`), which is a diagnostic, not a
+  candidate. Recorded only so the two are comparable: `+0.0412` before, `+0.0385` after. The
+  candidate declaration (U4) may now proceed on a substrate where a ranking is compared on its
+  merits rather than on its interaction with a 2026 tick grid.
+- **`LAB_SRC_FINGERPRINT` moves `fb1e8e59…` → `1d42010f…`** (`backtest_daily.rs`'s own bytes; the
+  new test file is under `lab/tests/`, which no declared entry covers). Every prebuilt lab binary
+  refuses once at this transition, as at every digest move; the recovery is a release rebuild in
+  the adapter workspace.
+- **Why P7 never saw it, in P7's own words.** `lab/tests/backtest_daily_run/fixture.rs` already
+  carries the comment: *"Every price is a multiple of 100 — the KRX instrument masters this
+  fixture ingests carry `price_increment = 100`, and the matching engine skips the fill (a WARN,
+  not an error) for any price off that grid, so an off-grid fixture silently trades nothing."*
+  The behaviour was known and worked around **in the fixture**, which is exactly why the first
+  contact with a real deep-history catalog was the first time it could bite. A fixture built to
+  satisfy a validator cannot test that validator.
+
 ## Probe — R30 diagnostic pass over the daily specification window: `HeldSymbolMissingBar` does NOT fire, one run costs 94 s — but the pass surfaced a SILENT fill-path defect that would corrupt every candidate comparison and the holdout judgment: 7,981 fills skipped on an off-grid price, 5,167 entry orders never opened (2026-09-08) — plan 2026-09-08-1215, queue `daily-probe-heldsymbol-missing-bar`
 
 - **What this run is, and is not.** A NON-EVALUATIVE diagnostic (R30), deliberately upstream of

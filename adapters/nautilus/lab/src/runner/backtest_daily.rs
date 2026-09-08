@@ -73,7 +73,7 @@ use nautilus_model::enums::{AccountType, BookType, OmsType};
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, PositionId, Venue};
 use nautilus_model::instruments::{Instrument, InstrumentAny};
 use nautilus_model::position::Position;
-use nautilus_model::types::{Currency, Money};
+use nautilus_model::types::{Currency, Money, Price};
 use nautilus_trading::strategy::{Strategy, StrategyNative};
 
 use crate::agent::sink::DecisionSink;
@@ -387,6 +387,28 @@ where
     // so the finalize re-check compares against the catalog the run actually read.
     let fingerprint_start = range_fingerprint(&all_bars, start_ns, end_ns);
 
+    // Mount a price grid the catalog's own in-range prices sit on, so the matching
+    // engine cannot silently decline a fill (R30 probe, 2026-09-08). The adapter's
+    // live-derived increment stays untouched — see `regrid_instruments_for_range`.
+    let (instruments, tick_regrids) =
+        regrid_instruments_for_range(&instruments, &all_bars, start_ns, end_ns);
+    if !tick_regrids.is_empty() {
+        tracing::info!(
+            "re-gridded price_increment on {} of {} instruments for the historical range \
+             (the adapter's increment is derived from today's reference price and this \
+             catalog carries adjusted prices); e.g. {}",
+            tick_regrids.len(),
+            instruments.len(),
+            tick_regrids
+                .iter()
+                .take(3)
+                .map(|m| format!("{} {}->{}", m.instrument_id, m.from_increment, m.to_increment))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    let tick_regrid_count = tick_regrids.len();
+
     // The ATR bridge (see `DailyBacktestConfig::assembly_params`) — the frozen daily ATR
     // window reaches the shared assembly here, and nowhere else.
     let params = cfg.assembly_params();
@@ -419,7 +441,7 @@ where
         }
     };
 
-    Ok(LockedDailyRun { outcome, fingerprint_start, start_ns, end_ns })
+    Ok(LockedDailyRun { outcome, fingerprint_start, start_ns, end_ns, tick_regrids: tick_regrid_count })
 }
 
 /// Whether a failure occurred before the blocking engine started (a refusal) or after
@@ -443,6 +465,8 @@ struct LockedDailyRun {
     fingerprint_start: String,
     start_ns: u64,
     end_ns: u64,
+    /// How many instruments were mounted on a re-gridded increment (R30 probe).
+    tick_regrids: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +490,11 @@ pub struct DailyRunResult {
     pub observation: RunObservation,
     /// The engine phase's full outcome.
     pub outcome: DailyRunOutcome,
+    /// How many instruments this run mounted on a re-gridded `price_increment` (R30
+    /// probe, 2026-09-08). Reported in the summary block rather than only logged: a
+    /// log line scrolls away under the engine's per-session INFO volume, and a zero
+    /// here on a deep-history catalog is itself worth noticing.
+    pub tick_regrids: usize,
 }
 
 /// Run the daily multi-session path to a **finalized registry run** (R18).
@@ -571,6 +600,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         data_range,
         starting_balance,
         catalog_path: &catalog_path,
+        tick_regrids: locked.tick_regrids,
     })
 }
 
@@ -606,6 +636,8 @@ struct FinalizeDaily<'a> {
     data_range: DataRange,
     starting_balance: f64,
     catalog_path: &'a Path,
+    /// How many instruments were mounted on a re-gridded increment (R30 probe).
+    tick_regrids: usize,
 }
 
 /// Assemble and write the run's artifacts, then finalize the run directory.
@@ -735,6 +767,7 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         performance,
         observation,
         outcome: p.outcome,
+        tick_regrids: p.tick_regrids,
     })
 }
 
@@ -801,13 +834,15 @@ pub fn daily_summary_block(result: &DailyRunResult) -> String {
         .count();
     format!(
         "\n=== lab-backtest-daily summary ===\nrun:       {}\nstrategy:  {} v{}\nsessions:  {}\n\
-         positions: {} ({censored} open at range end)\nunopened:  {}\ndir:       {}\n",
+         positions: {} ({censored} open at range end)\nunopened:  {}\nre-gridded: {}\n\
+         dir:       {}\n",
         result.run_id,
         result.manifest.strategy_id,
         result.manifest.strategy_version,
         result.outcome.selection.sessions.len(),
         result.outcome.positions.len(),
         result.outcome.unopened_entry_orders.len(),
+        result.tick_regrids,
         result.run_dir.display(),
     )
 }
@@ -1092,6 +1127,135 @@ where
 /// mounted universe paired with each instrument's daily bar type (R2).
 ///
 /// The venue is `OmsType::Hedging` (KTD12). Under `Netting` the position id is
+// ---------------------------------------------------------------------------
+// Historical price grid (found by the R30 probe, 2026-09-08)
+// ---------------------------------------------------------------------------
+
+/// One instrument whose `price_increment` moved for a historical run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickRegrid {
+    /// The instrument re-gridded.
+    pub instrument_id: InstrumentId,
+    /// The increment the adapter's master mapping produced (today's exchange tick).
+    pub from_increment: i64,
+    /// The increment this run mounts instead.
+    pub to_increment: i64,
+}
+
+/// Re-grid each instrument's `price_increment` so every in-range bar price the engine
+/// will see sits ON that grid.
+///
+/// # The defect this closes
+///
+/// nautilus's matching engine runs every fill price through
+/// `normalize_price_for_current_instrument` and, when the price is not a multiple of
+/// the instrument's `price_increment`, logs `Skipping fill …` at WARN and leaves the
+/// order **unfilled**. The run exits 0 with a clean data-quality report and a healthy
+/// summary. The R30 probe measured it over 2016-08-01..2019-12-31: 7,981 fills skipped
+/// across 136 of 286 symbols, 5,167 entry orders never opened, `target_m = 8`
+/// delivering 1.57 entries per session — and the fills that DID land were the subset
+/// whose price happened to divide the mounted increment, a price-correlated subsample
+/// rather than a random one.
+///
+/// # Why the adapter's increment cannot serve a historical run
+///
+/// Two independent reasons, and the second is the one that decides the fix.
+///
+/// 1. `nautilus_ls::instruments::map_equity` derives `price_increment` ONCE, from the
+///    master row's *current* reference price under a hardcoded `TickRegime::Post2023`.
+///    That is correct for live order placement — today's order is priced in today's
+///    band under today's ladder — and this function deliberately leaves it alone. It is
+///    simply the wrong band for a 2016 price: `000660` closed at 33,550 on a 50 KRW
+///    grid and carries today's 1,000 KRW tick.
+/// 2. **The catalog is adjustment-adjusted** (`checkpoint.adjusted_prices == true`), so
+///    its prices lie on no exchange tick grid at all. `005930`'s 2016 close reads 30,340
+///    — its pre-split price divided through by the 2018 50:1 split — and 30,340 is not a
+///    multiple of 50, the tick that actually governed it. An effective-dated ladder
+///    lookup (`TickRegime::for_date`, which exists and is correct) therefore does NOT
+///    fix this: it would still refuse three of every five real prices. Adjustment
+///    destroys the exchange grid, and no ladder can describe the series afterwards.
+///
+/// # What it mounts instead
+///
+/// Per symbol, `gcd(g, f)` where `g` is the GCD of every in-range OHLC price and `f` is
+/// the adapter's increment. That divides every price the engine will see, so **no fill
+/// can be skipped, by construction** rather than by a runtime check; it is never coarser
+/// than `f` (when `f` already divides everything, `gcd(g, f) == f` and nothing moves);
+/// and for a symbol untouched by a corporate action it recovers the real exchange tick
+/// rather than collapsing to 1. Nothing is rounded and no price is invented: the daily
+/// path submits market orders and fills at real catalog bar prices, so the increment is
+/// only a fill-price *validator* here.
+///
+/// # Why run-scoped rather than per session
+///
+/// nautilus 0.60 cannot swap an instrument mid-run:
+/// `SimulatedExchange::add_instrument` on an existing id constructs a **new**
+/// `OrderMatchingEngine` and inserts it over the old one, discarding that engine's book
+/// and state, and derives `raw_id` from `self.instruments.len()`, which does not grow on
+/// a replace — so every symbol swapped in one session would collide on one raw id. One
+/// run-scoped increment per symbol needs none of that.
+///
+/// Out-of-range bars are ignored: the engine never sees them, so letting a pre-range
+/// lookback bar pull the grid finer would weaken the increment for no gain. A symbol
+/// with no in-range bars trades nothing and is passed through untouched.
+#[must_use]
+pub fn regrid_instruments_for_range(
+    instruments: &[InstrumentAny],
+    bars: &[Bar],
+    start_ns: u64,
+    end_ns: u64,
+) -> (Vec<InstrumentAny>, Vec<TickRegrid>) {
+    let mut price_gcd: HashMap<InstrumentId, i64> = HashMap::new();
+    for b in bars {
+        if !crate::runner::backtest::is_daily(b) {
+            continue;
+        }
+        let ts = b.ts_event.as_u64();
+        if ts < start_ns || ts > end_ns {
+            continue;
+        }
+        let slot = price_gcd.entry(b.bar_type.instrument_id()).or_insert(0);
+        for p in [b.open, b.high, b.low, b.close] {
+            *slot = gcd(*slot, p.as_f64() as i64);
+        }
+    }
+
+    let mut regridded = Vec::with_capacity(instruments.len());
+    let mut moves = Vec::new();
+    for inst in instruments {
+        let id = inst.id();
+        let from = inst.price_increment().as_f64() as i64;
+        let to = match price_gcd.get(&id) {
+            Some(&g) if g > 0 && from > 0 => gcd(g, from),
+            // No in-range bars, or a degenerate price/increment: leave it alone.
+            _ => from,
+        };
+        match inst {
+            InstrumentAny::Equity(e) if to != from && to > 0 => {
+                let mut e = e.clone();
+                e.price_increment = Price::from(to.to_string().as_str());
+                regridded.push(InstrumentAny::Equity(e));
+                moves.push(TickRegrid { instrument_id: id, from_increment: from, to_increment: to });
+            }
+            _ => regridded.push(inst.clone()),
+        }
+    }
+
+    moves.sort_by_key(|m| m.instrument_id);
+    (regridded, moves)
+}
+
+/// Greatest common divisor, with `gcd(0, n) == n` so it folds over a price stream.
+fn gcd(a: i64, b: i64) -> i64 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
 /// `{instrument_id}-{strategy_id}` — one constant id per symbol for the whole run —
 /// so re-entering a symbol takes the `reopen_position` path, which snapshots the
 /// closed position out of the live index that `cache.positions()` reads. Every
