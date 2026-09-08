@@ -81,6 +81,80 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — the daily lineage's OPENING is re-prioritized AHEAD of the procurement verdict: the 2026-08-27 "stay frozen and unopened until the quote clears" decision is REVERSED as its own recorded act; every frozen artifact stays byte-identical, no strategy code, no param, no run (2026-09-08) — plan 2026-09-08-1215, queue `daily-lineage-reprioritization`
+
+- **What did NOT change.** No strategy code, no governed param, no ingest, no catalog, no
+  backtest, no gateway call. `strategy_code_hash` is untouched, so head identity does not move
+  and the documented head stays **v35**. All three frozen governance artifacts are
+  byte-identical, confirmed by digest and not by memory:
+  `config/lineage-preregistration.json` **`0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`**,
+  `config/preregistration.json` **`abdb90a1f15b73d6180864e3e0c707f3be10e56b324a7d744a5bddf8122342e9`**,
+  `config/sample-margin.json` **`e4f1bba9b89096a7cfe3d6ffd306a5c6a01f9c7d46fa209ea2559b03ca48b6a6`**.
+  The ORB lineage remains **CLOSED** (2026-08-10, declared 2026-08-11) under the pre-registered
+  Lineage-closure rule. **This entry does not open anything**: the "Open lineage (STANDING)"
+  block above still reads `currently open: NONE`, and it moves only in the separate opening
+  commit, which is gated on the pre-turn admissibility re-check clearing.
+- **The decision this reverses, and where it came from.** Plan `2026-08-27-1453`, Key Decision
+  2: *"`daily-resolution-v1` stays frozen and unopened until the quote clears the ceiling"* —
+  chosen over withdrawing the freeze up front, on the reasoning that a withdrawal plus a
+  price-driven stand-down would leave no strategy program at all. That reasoning survives; its
+  **ordering** does not. The condition it waits on is a third party's lead time, and it is
+  unbounded: the verifying-sample ask has not returned, so the procurement verdict
+  (`arc-procurement-verdict`) has no clock. Meanwhile the chain from "open lineage" to "attended
+  paper session" is entirely in-tree work. Holding the opening behind an unbounded external wait
+  buys nothing and spends the whole calendar. The `suspend-vs-amend` convention requires a
+  changed decision to be a separately recorded act rather than an implication of the commit that
+  acts on it, which is why this entry exists and why it precedes any opening.
+- **What the reversal SPENDS — recorded up front, because none of it is recoverable.** Opening
+  the daily lineage now consumes four things:
+  1. **The lineage's single holdout judgment.** `N_max = 1` over the 1,566-session holdout
+     (`2020-01-02 ..= 2026-05-20`), enforced by `lineage_prereg::judge_holdout` against
+     `ledger/lineage-holdout-judgments.jsonl`. Once judged, this lineage has no second look at
+     that window, whatever the procurement arc later returns.
+  2. **Its role as the procurement arc's fallback.** The 08-27 decision kept the freeze intact
+     precisely so a quote above the ceiling would still leave a strategy program standing. After
+     this reversal the fallback is being spent in parallel with the thing it was insurance
+     against; a REFUSE at the re-check or a FAIL at the judgment therefore leaves the arc with
+     no held-back alternative.
+  3. **The one-lineage queue position.** Exactly one lineage is open at a time (CONCEPTS.md
+     "Strategy lineage"). If the procurement verdict later clears its ceiling, the #241 portfolio
+     epoch **queues behind this lineage** rather than opening beside it — 08-27 R16's new search
+     epoch waits on this lineage reaching a terminal.
+  4. **The selection-tax reset's availability.** 08-27 R18 asks whether the one-time reset the
+     daily freeze spent is available to a #241 epoch. That question is now answered against a
+     lineage that is open and being judged, not against one held in reserve.
+- **The new order.** R30 diagnostic probe (does `HeldSymbolMissingBar` fire on the real
+  352-symbol catalog over the specification window, and how long does one run take) → identity
+  move (all live hooks and the ranking-signal variants land in **one** hash move, before any
+  judgment) → candidate declaration and signal freeze on the specification window
+  (`2016-08-01 ..= 2019-12-31`) → **exactly one** pre-turn admissibility re-check → CLEAR opens
+  the lineage / REFUSE closes this plan against it → the single holdout judgment. In parallel,
+  and deliberately not gated on the judgment: the daily paper **rehearsal** runner (see
+  CONCEPTS.md "Paper rehearsal"). Rehearsal sessions run under the mount safety envelope with
+  **no dispatch chain**, count toward no rung's N, and are marked no-evidence by a typed
+  `rehearsal: Some(true)` field rather than by prose — driver defects found after a judgment are
+  paid for twice.
+- **The queue now carries this plan's ladder, and the single priority marker MOVED.** Fifteen
+  items staged through `lab-next` (the two probes plus U2..U13, each carrying its dependency as
+  a recorded `block` condition), and three existing items superseded rather than edited, because
+  their unblock prose asserted the ordering this entry reverses:
+  `rung1-ladder-reentry-successor-margin-head` -> `rung1-ladder-reentry-daily-certified-head`
+  (its unblock routed through "the procurement verdict"; it now waits on this lineage's own
+  judgment), `arc-procurement-verdict` -> `arc-procurement-verdict-post-reprioritization` (its
+  note asserted the daily freeze is held intact as the only fallback), and
+  `orb-cost-artifact-hash-and-head-identity` ->
+  `orb-cost-artifact-hash-and-head-identity-rehearsal-scoped` (unchanged in substance, plus one
+  scope sentence: it blocks ORB and ladder paper sessions, not the daily rehearsal). Exactly one
+  item holds priority at a time, so **priority moved off `arc-send-verifying-sample-ask` onto
+  `daily-probe-heldsymbol-missing-bar`** — deliberate, and the operational half of this
+  reversal: the ask is blocked on the operator's signature and an unbounded external lead time,
+  the probe is the frontier of work that can actually start. The ask keeps its `block` condition
+  and loses nothing but the marker.
+
+- **The procurement arc is NOT stood down and is NOT blocked by this.** Every `arc-*` queue item
+  stays actionable on its own schedule. What changed is only that the daily lineage no longer
+  waits on the arc's terminal; the arc no longer waits on anything here.
+
 ## Governance — the two freshness oracles RECONCILED: the watch projection expands a declared tree node by node, so a `src/bin/**` edit the morning preflight could not see now reaches it; `LAB_SRC_FINGERPRINT` moves `a5a7472b…` → `fb1e8e59…`; no strategy code, no param, no run (2026-09-07) — queue `fingerprint-src-bin-freshness-oracle-divergence`
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
