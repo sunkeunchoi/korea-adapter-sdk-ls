@@ -81,6 +81,63 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Probe — R30 diagnostic pass over the daily specification window: `HeldSymbolMissingBar` does NOT fire, one run costs 94 s — but the pass surfaced a SILENT fill-path defect that would corrupt every candidate comparison and the holdout judgment: 7,981 fills skipped on an off-grid price, 5,167 entry orders never opened (2026-09-08) — plan 2026-09-08-1215, queue `daily-probe-heldsymbol-missing-bar`
+
+- **What this run is, and is not.** A NON-EVALUATIVE diagnostic (R30), deliberately upstream of
+  R7's candidate-declaration gate, which binds only the first candidate-EVALUATION run. It proves
+  no candidate's viability and selects nothing. `ranking_signal_is_placeholder: true`.
+- **The two questions it was asked, both answered.** (1) `HeldSymbolMissingBar` **does NOT fire**
+  on the real catalog over the specification window — exit 0, and Stop condition (5) therefore
+  does not trigger. This is a real exercise of the guard, not a vacuous pass: 1,311 positions on
+  a 16-session hold across 837 sessions. It is still not a clearance for the candidate runs, which
+  can fire on a different held set (R30's own wording). (2) One full specification-window pass
+  costs **94 seconds** wall clock (release profile, `LS_BTD_SDATE=20160801 LS_BTD_EDATE=20191231`,
+  home `data/next-daily-2016`). K <= 6 candidate runs is ten minutes, so run time constrains
+  nothing in U4.
+- **The run, for the record.** `20260908T114221Z-backtest-daily-ms-v0`. 837 sessions, 286 symbols
+  in the universe snapshot, 1,311 positions (31 open at range end, 1,280 closed), 5,167 entry
+  orders that never opened, observed net RoR `+0.0412` (a number that MUST NOT be read as evidence
+  — see the defect below). `catalog_fingerprint f538ddee…`, `strategy_code_hash d39b2159…`,
+  `lab_src_fingerprint fb1e8e59…`. The data-quality report is clean on every axis it covers:
+  zero coverage gaps, zero shallow-history symbols, zero adjustment-basis shifts, zero
+  approximated fills.
+- **THE FINDING — a silent, systematic fill failure that no gate in this plan would have caught.**
+  The run emitted **7,981** `Skipping fill … price N is not compatible with <symbol>
+  price_precision=0 price_increment=T` warnings across **136 of the 286** universe symbols (48%).
+  Nautilus's matching engine validates a fill price against the instrument's `price_increment`
+  and, when it does not sit on that grid, **silently declines the fill and leaves the order
+  unfilled** — which is exactly the 5,167 unopened entry orders. The strategy asked for
+  `target_m = 8` entries per session and got **1.57**.
+- **Root cause, and why it is a backtest problem rather than an adapter bug.**
+  `adapters/nautilus/src/instruments.rs` derives each `Equity`'s `price_increment` ONCE, from the
+  master row's *current* reference price (`recprice`, else `jnilclose`) under a hardcoded
+  `TickRegime::Post2023`. Its own comment says so: "The instrument's static increment uses today's
+  regime." For LIVE order placement that is correct — today's order is priced in today's band
+  under today's ladder. `TickRegime::for_date` exists and is correct, but `instruments.rs:113` is
+  its only production caller and it does not use it. A 2016 close of `33,550` for `000660` is
+  checked against that symbol's **2026** tick of `1,000`; `005930`'s 2016 close of `30,340`
+  against a tick of `500`. The increment histogram is exactly the shape that predicts:
+  500 (2,916), 100 (1,801), 50 (1,458), 1,000 (1,158), 10 (526), 5 (122). This is the trap
+  `docs/solutions/conventions/exchange-rule-constants-need-an-effective-date-switch-before-history-is-acquired.md`
+  names, at the one call site that never got the switch.
+- **Why it never surfaced before, and why it is worse than an abort.** The ORB lineage trades
+  minute bars from a rolling window under a year deep, so its prices sit in today's band and the
+  Post2023 regime is the right one — the defect is specific to a deep-history DAILY catalog, which
+  only P7's path reads, and P7 was proven on fixtures. The failure mode is a WARN: the run exits 0,
+  the data-quality report is clean, and the summary block looks healthy. The 1,311 fills that DID
+  land are the subset whose price happened to sit on a coarser 2026 grid — a **price-level- and
+  tick-band-correlated subsample**, not a random one. Both exits fire from `on_bar`, so a skipped
+  EXIT fill leaves a position open past its pre-registered `holding_period_sessions` with no
+  guard: the same class of silent verdict-statistic drift that `HeldSymbolMissingBar` exists to
+  refuse, arriving by a path that guard does not watch.
+- **Consequence for this plan, stated before any number is used.** Any U4 candidate comparison run
+  on this substrate ranks signals by their interaction with the 2026 tick grid as much as by their
+  own merit, and the U6 holdout judgment is `N_max = 1` — spending it on a number this path
+  produced is unrecoverable. `+0.0412` above is recorded as a diagnostic artifact and is
+  **inadmissible as evidence**. The candidate declaration (U4) does not begin until the fill path
+  is fixed and the probe re-run clean, and the fix moves no hashed strategy source: `daily.rs` and
+  `daily_signal.rs` are not involved, so it does not compete with U2's single identity move.
+
 ## Governance — the daily lineage's OPENING is re-prioritized AHEAD of the procurement verdict: the 2026-08-27 "stay frozen and unopened until the quote clears" decision is REVERSED as its own recorded act; every frozen artifact stays byte-identical, no strategy code, no param, no run (2026-09-08) — plan 2026-09-08-1215, queue `daily-lineage-reprioritization`
 
 - **What did NOT change.** No strategy code, no governed param, no ingest, no catalog, no
