@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>페이퍼 트레이딩 블로커 조사 — 2026-09-08</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --surface-2: #f4f3f0;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7873;
+    --rule: #e2e1dd;
+    --code-bg: #f4f3f0;
+    --accent: #2a78d6;
+    --danger: #c9362f;
+    --danger-bg: #fbeae9;
+    --warn: #a8690a;
+    --warn-bg: #fcf3e2;
+    --ok: #2b7a3d;
+    --ok-bg: #e8f3ea;
+    --info-bg: #e9f1fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --surface-2: #232320;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8d85;
+      --rule: #33322f;
+      --code-bg: #232320;
+      --accent: #5b9ae8;
+      --danger: #ef7a72;
+      --danger-bg: #3a2220;
+      --warn: #e2a84a;
+      --warn-bg: #3a2e18;
+      --ok: #6fc283;
+      --ok-bg: #1f3324;
+      --info-bg: #1f2a3a;
+    }
+  }
+  html { background: var(--surface-1); }
+  body {
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    max-width: 52rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+                 "Noto Sans KR", "Malgun Gothic", "Segoe UI", Roboto, sans-serif;
+    color: var(--text-primary);
+    line-height: 1.6;
+    font-size: 16px;
+    word-break: keep-all;
+  }
+  header.meta { border-bottom: 2px solid var(--rule); padding-bottom: 1.1rem; margin-bottom: 2rem; }
+  header.meta h1 { font-size: 1.6rem; line-height: 1.3; margin: 0 0 .7rem; }
+  header.meta dl { display: grid; grid-template-columns: max-content 1fr; gap: .15rem 1rem; margin: 0; font-size: .85rem; }
+  header.meta dt { color: var(--text-muted); }
+  header.meta dd { margin: 0; }
+  h2 { font-size: 1.25rem; margin: 2.4rem 0 .8rem; padding-top: .4rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.05rem; margin: 1.6rem 0 .5rem; }
+  p { margin: .6rem 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .86em; background: var(--code-bg); padding: .1em .35em; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; font-size: .85rem; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; margin: .8rem 0; }
+  th, td { border: 1px solid var(--rule); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 600; }
+  .wrap { overflow-x: auto; }
+  .callout { border-left: 4px solid var(--accent); background: var(--info-bg); padding: .8rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+  .callout.danger { border-color: var(--danger); background: var(--danger-bg); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-bg); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-bg); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: .72rem; font-weight: 600; padding: .1em .5em; border-radius: 999px; vertical-align: middle; letter-spacing: .02em; }
+  .tag.danger { color: var(--danger); background: var(--danger-bg); }
+  .tag.warn { color: var(--warn); background: var(--warn-bg); }
+  .tag.ok { color: var(--ok); background: var(--ok-bg); }
+  .tag.muted { color: var(--text-secondary); background: var(--surface-2); }
+  .chain { list-style: none; padding: 0; margin: 1rem 0; counter-reset: step; }
+  .chain li { position: relative; padding: .55rem .8rem .55rem 3rem; margin: 0; border-left: 2px solid var(--rule); }
+  .chain li::before { counter-increment: step; content: counter(step); position: absolute; left: -1px; top: .55rem; transform: translateX(-50%); width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--surface-2); border: 2px solid var(--rule); color: var(--text-secondary); font-size: .75rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .chain li.root { border-left-color: var(--danger); }
+  .chain li.root::before { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+  .chain li.now { border-left-color: var(--ok); }
+  .chain li.now::before { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); }
+  .chain .who { display: block; font-size: .8rem; color: var(--text-muted); }
+  .timeline { list-style: none; padding: 0; margin: 0; }
+  .timeline li { display: grid; grid-template-columns: 7.2rem 1fr; gap: .8rem; padding: .4rem 0; border-bottom: 1px dashed var(--rule); font-size: .92rem; }
+  .timeline li time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .small { font-size: .85rem; color: var(--text-secondary); }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .25rem 0; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); font-size: .82rem; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<header class="meta">
+  <h1>페이퍼 트레이딩 블로커 조사<br><span class="small">왜 오늘 페이퍼 세션을 열 수 없는가, 그리고 누가 무엇을 풀어야 하는가</span></h1>
+  <dl>
+    <dt>작성 시각</dt><dd>2026-09-08 11:39 KST</dd>
+    <dt>기준 커밋</dt><dd><code>fe189c7</code> (<code>main</code>, <code>origin/main</code>과 동일, 트리 clean)</dd>
+    <dt>조사 범위</dt><dd>작업 큐(<code>queue/items.jsonl</code>), <code>make next</code> 출력, TURN-LOG, 동결 아티팩트 3종, 2026-08-27 검증 아크 계획, 2026-07-16 이후 git 이력</dd>
+    <dt>독자</dt><dd>오퍼레이터 (이 문서의 행위 항목 대부분은 오퍼레이터만 수행 가능)</dd>
+  </dl>
+</header>
+
+<h2>1. 한 줄 결론</h2>
+
+<div class="callout danger">
+<p><strong>페이퍼 트레이딩은 코드 결함이 아니라 거버넌스 체인에 막혀 있습니다.</strong> 페이퍼 세션(<code>lab-live --mount</code>)은 인증된 헤드(certified head)가 있어야 열리는데, 현재 열린 전략 리니지가 <strong>없습니다</strong>. ORB 리니지는 2026-08-10에 탐지 불가능성 판정으로 <strong>CLOSED</strong>되었고, 후속 리니지 <code>daily-resolution-v1</code>은 2026-08-15에 동결되었지만 <strong>의도적으로 개방되지 않았습니다</strong>. 개방은 KRX/Koscom 라이선스 데이터 조달 판정(procurement verdict) 뒤로 미뤄져 있고, 그 조달 아크의 첫 단계는 <strong>오퍼레이터만 할 수 있는 샘플 지출 상한 동결</strong>입니다. 이 첫 단계는 어떤 외부 요인에도 막혀 있지 않습니다.</p>
+</div>
+
+<p>즉 "지금 당장 페이퍼를 돌리려면 무엇이 필요한가"의 답은 하나의 버그가 아니라 아래 8단계 의존 사슬입니다. 사슬의 맨 끝(8번)이 오늘 오퍼레이터가 손댈 수 있는 유일한 지점입니다.</p>
+
+<h2>2. 블로커 의존 사슬</h2>
+
+<p>위에서 아래로 "A를 하려면 B가 필요하다"의 순서입니다. 번호가 클수록 근본 원인에 가깝습니다.</p>
+
+<ol class="chain">
+  <li><strong>페이퍼 세션 실행</strong> — <code>lab-live --genesis → --dispatch → --mount</code>, 종료 코드 계약 0/66/71/72/77.
+    <span class="who">필요 조건: 유효한(green) dispatch. 사다리(ladder)는 2026-07-31에 stand-down 상태로 기록되어 어떤 genesis dispatch도 재등록 전에는 금지됩니다.</span></li>
+  <li><strong>사다리 재등록 (prereg v3+)</strong> — 밴드를 새 헤드의 청산 거래 분포에서 Protective 공식으로 재도출, <code>lab/tests/prereg_derivation.rs</code> 확장, <code>RUNG1-PREFLIGHT.md</code> 3단계 리터럴 이동을 같은 커밋에서.
+    <span class="who">필요 조건: 동결 마진을 통과한 인증된 헤드. 현재 <code>config/preregistration.json</code>은 v2 그대로이며 편집은 프로토콜 위반입니다.</span></li>
+  <li><strong>인증된 헤드</strong> — 후속 리니지의 홀드아웃 판정이 <code>lineage-preregistration.json</code>의 <code>verdict.hurdle</code>(+0.0361 net RoR)을 통과해야 합니다.
+    <span class="who">필요 조건: 열린 리니지에서 턴 1이 실행되어야 함. 큐 항목 <code>rung1-ladder-reentry-successor-margin-head</code>가 이 조건으로 PARKED.</span></li>
+  <li class="root"><strong>열린 리니지 없음</strong> — TURN-LOG 표준 블록: <em>currently open: NONE</em>. ORB는 CLOSED (임계 +0.128605 vs 최선의 허용 가능 net RoR −0.0006). 데이터를 사도 재개 불가(CONCEPTS.md Lineage closure 규칙).
+    <span class="who">구조적 원인: LS 게이트웨이가 분봉을 약 359일 롤링 윈도로만 제공 → 도달 가능 세션 240 vs 필요 3,499.</span></li>
+  <li><strong><code>daily-resolution-v1</code> 개방 보류</strong> — 동결(해시 <code>0ecd9d11…</code>)은 완료, 개방은 별도 커밋. 2026-08-27 계획의 사용자 결정: <em>"조달 견적이 상한을 통과할 때까지 동결 상태로 미개방 유지"</em>. 이 동결은 조달이 실패했을 때의 유일한 대안(fallback)이라 먼저 철회하지 않습니다.
+    <span class="who">필요 조건: <code>arc-procurement-verdict</code> 종결. 개방 자체는 pre-turn admissibility re-check 통과 후 TURN-LOG 표준 블록의 기계적 편집.</span></li>
+  <li><strong>조달 판정</strong> — 생산 견적을 동결 상한과 하나의 합계로 비교해 터미널을 기록. 상한 초과면 아크 stand-down, 아무것도 인제스트하지 않음.
+    <span class="who">필요 조건: 생산 요청 발송(<code>arc-production-ask-ceiling-and-send</code>) ← 샘플 수용 테스트(<code>arc-sample-acceptance-tests</code>) ← 검증 샘플 요청 발송.</span></li>
+  <li><strong>검증 샘플 요청 발송</strong> <span class="tag warn">priority</span> — <code>arc-send-verifying-sample-ask</code>. 요청 패키지 Part B/C/D는 작성 완료, <strong>미발송</strong>. 오퍼레이터가 서명·발송해야 하며 외부 리드타임은 무제한.
+    <span class="who">필요 조건: 샘플 상한이 동결되고 해시로 인용될 것 (R6: 상한 없이 유료 행위 금지).</span></li>
+  <li class="now"><strong>샘플 지출 상한 동결</strong> <span class="tag ok">오늘 가능</span> — <code>arc-sample-spend-ceiling-freeze</code>. KRX 공시 정가로 상한을 정하고 <code>config/SAMPLE-MARGIN.md</code> + <code>sample-margin.json</code> 미러에 기록, 네 가지 조달 터미널(정상 회신 / 부분 회신 / 무응답 / 상한 초과 견적)도 함께 기록.
+    <span class="who">큐 원문: "A2의 절반은 완료 — 이것은 오퍼레이터의 행위이며 어떤 외부 요인도 이를 막지 않는다."</span></li>
+</ol>
+
+<div class="callout warn">
+<p><strong>병렬 블로커 하나가 더 있습니다.</strong> 사슬과 별개로, 페이퍼 세션을 실제로 <em>의미 있게</em> 돌리려면 큐 항목 <code>orb-cost-artifact-hash-and-head-identity</code>(U5+U6+U7)가 먼저 닫혀야 합니다. 3절 B4 참조. 이것도 오퍼레이터가 보유한 데이터 홈에서만 풀 수 있습니다.</p>
+</div>
+
+<h2>3. 블로커 상세</h2>
+
+<h3>B1. ORB 리니지 CLOSED — 구조적, 재개 불가 <span class="tag danger">근본 원인</span></h3>
+<ul>
+  <li><strong>무엇:</strong> 2026-08-10 arm C stand-down이 2026-08-11에 CONCEPTS.md의 사전 등록된 Lineage-closure 규칙에 결합되었습니다. 동결 샘플 마진의 임계값을 도달 가능 샘플 상한(237 세션)에서 평가하면 <strong>+0.128605</strong>, 리니지가 낸 최선의 허용 가능 net RoR은 v35의 <strong>−0.0006</strong>. 조건 성립, CLOSED.</li>
+  <li><strong>왜:</strong> LS 게이트웨이는 분봉을 약 359일 롤링 윈도로만 제공합니다(2026-07-09 358일, 2026-08-10 359일로 재확인). 인트라데이 리니지의 도달 가능 세션은 지출과 무관하게 약 240개인데, 2026-08-06 표본 충분성 턴은 v35의 엣지(+0.0284 R)가 탐지 하한보다 약 9배 작고 <strong>3,499 세션</strong>이 필요하다고 측정했습니다. 2026-08-07 paired-power 턴은 6개 레버 off-flip 중 0개가 귀속 가능함을 확인했습니다.</li>
+  <li><strong>중요:</strong> 폐쇄는 수익성이 아니라 <em>탐지 가능성</em>에 대한 진술이며, 데이터를 구매해도 재개되지 않습니다. 더 큰 가설 효과 크기이거나 더 깊은 공급을 가진 해상도(일봉)만이 답을 바꿉니다. v32의 0.1876, v34의 0.0398은 각각 구 카탈로그·비용 미반영이라 허용되지 않습니다.</li>
+  <li><strong>이전 단계:</strong> 2026-07-31 거래비용 모델(매도세 20bp + 수수료 1.5bp/측)을 장착하자 헤드가 순손실(net RoR −0.0006, 111 거래)로 재측정되어 rung-1 사다리가 stand-down되었습니다(PR #238). 동결 v2 밴드 [−148k, +266k]는 비용 미반영 분포에서 나온 것이라 헤드가 기대상 통과할 수 없는 밴드였습니다.</li>
+</ul>
+
+<h3>B2. 후속 리니지 <code>daily-resolution-v1</code> 동결됨, 미개방 <span class="tag warn">사용자 결정</span></h3>
+<ul>
+  <li><strong>무엇:</strong> 2026-08-15 P6에서 동결(PR #287, 콘텐츠 해시 <code>0ecd9d11…</code>). S_max 2,460 세션(2016-08-01 ~ 2026-08-12), 분할 837 / 1,566 / 57, N_max = 1(홀드아웃 판정 단 1회), 허들 +0.0361, 16세션 보유, m = 8, 동시 128 포지션.</li>
+  <li><strong>왜 미개방:</strong> 두 가지 게이트가 겹칩니다. (1) 설계상 개방은 동결과 별도 커밋이며 <em>pre-turn admissibility re-check</em>(사양 윈도에서 이 리니지 자체의 ICC·세션당 거래·참여율을 재측정)가 통과해야 합니다. 이 체크는 "개방 거부"가 가능해야 하므로 동결이 슬롯을 먼저 소비하지 않습니다. (2) 2026-08-27 검증 아크 계획이 사용자 지시로 <em>"견적이 상한을 통과할 때까지 동결 유지"</em>를 결정했습니다. 동결은 조달이 실패할 때 남는 유일한 전략 프로그램이라 미리 철회하지 않습니다.</li>
+  <li><strong>코드 준비 상태:</strong> 개방에 필요한 코드 선행 조건은 모두 완료되었습니다. P3 일봉 카탈로그 2016 플로어 풀(352/352, 741,580 바, PR #276), P4 pit-universe 걸음(PR #274), P7 다중 세션 보유 백테스트 경로(2026-08-16), 보유 종목 결측 바 fail-closed(PR #304). 실행 바이너리 <code>lab-backtest-daily</code>가 존재합니다.</li>
+  <li><strong>주의:</strong> 턴 1이 사실상 이 리니지의 유일한 기회입니다. 업그레이드 턴 하나당 약 6.4년의 전진 누적이 필요합니다.</li>
+</ul>
+
+<h3>B3. 조달 아크 — 오퍼레이터 전용 5단계, 외부 리드타임 무제한 <span class="tag warn">현재 프런티어</span></h3>
+<div class="wrap">
+<table>
+  <tr><th>순서</th><th>큐 ID</th><th>행위자</th><th>상태 / 풀리는 조건</th></tr>
+  <tr><td>1</td><td><code>arc-sample-spend-ceiling-freeze</code></td><td>오퍼레이터</td><td><strong>막힘 없음.</strong> 공시 정가(ST5001 주식 호가장 유가 10,000,000원/년, 코스닥 5,800,000원/년, EP5001 3,000,000원/년 등 6개 코드 모두 확정)로 상한을 동결하고 해시로 인용. 최소 유료 단위는 개별종목 티어.</td></tr>
+  <tr><td>2</td><td><code>arc-send-verifying-sample-ask</code></td><td>오퍼레이터</td><td><span class="tag warn">priority</span> 1번 완료 후 서명·발송. 요청 패키지(<code>docs/research/krx-licensed-sample-request-package.md</code>) Part B/C/D 작성 완료, 2026-08-03 이후 미발송. 이슈 #255의 수용 기준은 "취득 및 검증"이라 저장소 내 어떤 행위도 이를 진전시키지 못함.</td></tr>
+  <tr><td>3</td><td><code>arc-sample-acceptance-tests</code></td><td>에이전트</td><td>벤더가 샘플·부분 회신·무응답 중 하나를 돌려주면 사전 등록된 B.4 테스트를 실행. 세 경우 모두 기록된 판정으로 종결.</td></tr>
+  <tr><td>4</td><td><code>arc-production-ask-ceiling-and-send</code></td><td>오퍼레이터</td><td>샘플 결과에서 생산 상한을 동결(정가표가 아니라 샘플 증거로), 생산 요청 발송.</td></tr>
+  <tr><td>5</td><td><code>arc-procurement-verdict</code></td><td>오퍼레이터</td><td>견적을 하나의 합계로 상한과 비교. 통과하면 #241 포트폴리오 에포크 개방(v35의 6개 레버는 하나의 후보 구성으로만 진입, 증거로는 인용 불가). 초과하면 아크 stand-down, 일봉 동결 유지.</td></tr>
+  <tr><td>하류</td><td><code>arc-verdict-register-design</code></td><td>에이전트</td><td>라이선스 조항 17(콘텐츠 해시 공개 가능 여부)·18(해지 후 파생 감사 증거 보유권)에 벤더가 답해야 설계 가능. 2번 요청이 이 질문을 실어 나르므로 2번을 막지 않음(교착 해소 완료).</td></tr>
+</table>
+</div>
+<p class="small">엔타이틀먼트 인벤토리(2026-08-28)는 저장소가 이미 보유한 무료 권한(LS 페이퍼 랩 4종, KRX Open API 6개 서비스 이용신청 승인, KASI 특일정보)으로 19개 의무 중 6개를 무료로 답할 수 있음을 확인했습니다. 충실도(6~11, 14)와 계약(17~19) 축은 유료 요청 없이는 구조적으로 도달 불가입니다.</p>
+
+<h3>B4. 라이선스 독립 꼬리 결함 — U5+U6+U7, 오퍼레이터의 v35 베이스라인 필요 <span class="tag danger">페이퍼 세션 직접 관련</span></h3>
+<ul>
+  <li><strong>모순의 정체:</strong> <code>config/preregistration.json</code>의 <code>rung0_requalification</code>은 "<code>LS_TRADING_ENV=paper</code>에서 최소 3회의 clean 페이퍼 세션"을 요구합니다. 그런데 <code>is_clean_session</code>(<code>lab/src/dispatch/ladder.rs:397</code>)은 dispatch 링크의 <code>trading_env</code>가 <code>live</code>가 아니면 무조건 거부하고, 페이퍼 마운트는 <code>trading_env: "paper"</code>를 기록합니다. <strong>따라서 페이퍼 세션은 절대 clean으로 집계될 수 없고, 카운터는 1에 도달할 수 없습니다.</strong> 이 결함은 오퍼레이터가 아크의 최종 세션을 돌리려는 순간까지 보이지 않습니다.</li>
+  <li><strong>계획된 수정:</strong> 계획 2026-08-27-1453의 R11: <code>is_clean_session</code>과 구별되는 페이퍼 레인 청결 술어를 만들고, 그것이 갖춰지기 전엔 기존 <code>REREGISTER_REFUSED</code> 경로로 거부. 동결 텍스트는 그대로 둡니다(수정이 아니라 별도 술어).</li>
+  <li><strong>왜 막혔나:</strong> U5(비용 아티팩트 해시)는 <code>lab/src/strategy/orb.rs</code>를 편집해야 하는데 <code>strategy_code_hash</code>가 그 파일의 sha256이라 문서화된 헤드 다이제스트 <code>7571abef…</code>가 이동합니다. KTD13은 같은 버전 재베이스라인에서 거래·성과·핑거프린트의 <strong>정확한 일치</strong>를 요구하고 버전 범프를 금지합니다. 그 비교에는 run <code>20260731T023138Z-backtest-orb-v35</code>와 그것을 만든 카탈로그가 필요한데, 둘 다 gitignore된 <code>/data</code> 아래 오퍼레이터의 데이터 홈에만 있습니다. 새로 인제스트하면 다른 카탈로그가 됩니다.</li>
+  <li><strong>순서 제약(KTD12):</strong> U5 → U6 → U7이 <em>어떤 페이퍼 세션보다 먼저</em> 착지해야 합니다. 페이퍼 세션이 쌓인 뒤 헤드 정체성을 옮기면 그 세션들이 무효화되어 두 번 비용을 치릅니다.</li>
+  <li><strong>풀리는 조건:</strong> (a) 오퍼레이터가 v35 아티팩트가 있는 데이터 홈에서 U5 재베이스라인을 실행해 정확한 일치를 확인, 또는 (b) 헤드 정체성 이동을 자체 거버넌스 행위로 기록하기로 결정. U8(<code>produce_report</code> 생산 호출자)은 완료(<code>389197d</code>).</li>
+</ul>
+
+<h3>B5. 사다리 stand-down 상태 자체</h3>
+<ul>
+  <li>rung-1 사다리는 2026-07-31에 정지 기록(PR #238). <code>config/preregistration.json</code>은 v2로 바이트 동일하게 유지되며 기존 dispatch SHA-256 인용이 모두 유효합니다. 재진입은 새 헤드가 마진을 통과한 뒤 v3+ 재등록으로 시작하며, 그 전에 genesis dispatch를 만들면 안 됩니다.</li>
+  <li>오늘 <code>lab-live --mount</code>를 실행하면 마운트 가능한 dispatch가 없으므로 종료 코드 77(소비 없음)로 거부되는 것이 설계된 동작입니다.</li>
+</ul>
+
+<h3>B6. 보조 항목 (페이퍼를 직접 막지는 않음)</h3>
+<ul>
+  <li><code>calendar-resolve-3-pre-2016-unknown-days</code> — 2010-06-02, 2011-12-30, 2015-08-14 세 날이 Unknown이라 2016 이전 백필이 1,629 세션 중 약 100개에서 멈춥니다. 오퍼레이터가 <code>.env.calendar</code>의 KRX 키로 witness probe를 돌려야 합니다. Unknown을 closed로 읽지 않습니다.</li>
+  <li><code>lab-next-queue-file-size-split</code>, <code>agents-md-queue-verb-enumeration</code> — 2026-08-29 코드 리뷰의 유지보수 항목. <code>make next</code>가 현재 <code>next:</code>로 제안하는 것은 앞의 파일 분할입니다. 에이전트가 처리 가능하며 페이퍼와 무관합니다.</li>
+</ul>
+
+<h2>4. 페이퍼 랩에 대한 오해 정리</h2>
+
+<div class="callout">
+<p><strong>페이퍼 레인은 자격을 부여하는 단계가 아니라 반증 기회입니다.</strong> <code>LS_TRADING_ENV=paper</code>는 <code>LanePosture::Paper</code>("rung informational")로 해석되어 사다리 증거를 절대 쌓지 못합니다. 리니지 사전 등록의 <code>prospective_paper_stage</code> 게이트도 같은 말을 합니다. 홀드아웃 판정을 통과한 전략이 페이퍼 레인에서 전진 실행되며 실현 행동을 등록된 효과와 비교하는 것이 "페이퍼 트레이딩"의 이 프로젝트 내 정의입니다. 즉 페이퍼 트레이딩은 인증된 헤드의 <em>뒤에</em> 오지, 인증을 <em>만들어 내는</em> 수단이 아닙니다.</p>
+</div>
+
+<p>2026-07-28 ~ 07-31의 아침 체인 실행(75/75 GO)은 데이터 인제스트와 마운트 준비였고, 마운트는 설계상 stand-down되어 있었습니다. "페이퍼 세션을 돌렸다"는 기록은 저장소에 없습니다.</p>
+
+<h2>5. 어떻게 여기까지 왔나 — 타임라인</h2>
+
+<ul class="timeline">
+  <li><time>2026-07-16</time><span>사다리 사전 등록 v1 동결(PR #158). 밴드는 항상 직전 rung의 실측에서 동결, 백테스트에서 오지 않음.</span></li>
+  <li><time>2026-07-24</time><span>v2 재등록(헤드 v34), rung-1 준비 완료(PR #212). 밴드 [−148k, +266k].</span></li>
+  <li><time>2026-07-28~31</time><span>아침 체인 첫 실행들. 07-29 세션은 09:15 오프닝 레인지 시계를 놓쳐 하드닝에 사용. 페이퍼 레인이 clean 세션을 쌓을 수 없다는 사실이 이때 확인됨.</span></li>
+  <li><time>2026-07-31</time><span>거래비용 모델 장착(PR #237) → 헤드 v35 순손실 −0.0006. rung-1 사다리 <strong>stand-down</strong>(PR #238).</span></li>
+  <li><time>2026-08-06</time><span>표본 충분성 턴: 엣지가 탐지 하한의 1/9, 필요 세션 3,499(캘린더 세션 기준). 재진입 조건이 "net RoR &gt; 0"에서 동결 샘플 마진으로 강화.</span></li>
+  <li><time>2026-08-07</time><span>paired-power 턴: 6개 레버 중 0개 귀속 가능. stand-down이 측정 축에서도 확정.</span></li>
+  <li><time>2026-08-10</time><span>arm C 선택, ORB 아크 stand-down. 공급 재확인: 롤링 359일, 상한 240 세션.</span></li>
+  <li><time>2026-08-11</time><span>ORB 리니지 <strong>CLOSED</strong> 선언(PR #268). 후속 일봉 리니지 사다리 P0~P7 큐 등록(PR #267). t8410은 40년 이상 제공, 롤링 윈도 없음.</span></li>
+  <li><time>2026-08-13</time><span>P3 일봉 카탈로그 2016 플로어 풀 352/352 GO(PR #276). P4 pit walk S_max 2460(PR #274).</span></li>
+  <li><time>2026-08-15</time><span>P6 <code>daily-resolution-v1</code> 사전 등록 <strong>동결</strong>, 리니지 <strong>미개방</strong>(PR #287).</span></li>
+  <li><time>2026-08-16</time><span>P7 다중 세션 보유 백테스트 경로 완료. 마지막 코드 선행 조건 해소.</span></li>
+  <li><time>2026-08-25</time><span>보유 종목 결측 바 fail-closed 정책 병합(PR #304).</span></li>
+  <li><time>2026-08-27</time><span>ORB 라이선스 샘플 검증 아크 계획. 사용자 결정: 새 탐색 에포크는 #241 아래, 일봉 동결은 견적 통과 전까지 미개방, 검증 샘플이 생산 요청보다 먼저.</span></li>
+  <li><time>2026-08-28~30</time><span>큐에 priority/blocked 상태와 동사 추가(PR #307). 요청 패키지·엔타이틀먼트 인벤토리 저장소에 착지. U5~U7은 오퍼레이터 베이스라인 대기로 블록. 교착(상한 ↔ 조항 17/18) 해소.</span></li>
+  <li><time>2026-09-07~08</time><span>아침 체인 신선도 오라클 정합(PR #308), CI 러너 디스크(PR #309), 핑거프린트 watch 투영 수정(<code>f4bc10d</code>). 모두 위생 작업이며 블로커 사슬은 변동 없음. <code>main</code>이 원격과 동기화됨.</span></li>
+</ul>
+
+<h2>6. 오늘 할 수 있는 것 — 우선순위 행위 목록</h2>
+
+<div class="wrap">
+<table>
+  <tr><th>#</th><th>행위</th><th>행위자</th><th>효과</th></tr>
+  <tr><td>1</td><td><strong>샘플 지출 상한 동결</strong> — <code>arc-sample-spend-ceiling-freeze</code>. <code>config/SAMPLE-MARGIN.md</code>와 <code>sample-margin.json</code>에 공시 정가 기반 상한 + 네 터미널 규칙을 기록하고 해시 인용. <code>preregistration.json</code>에는 넣지 않음.</td><td>오퍼레이터</td><td>사슬 8번 해제. 아무 외부 요인도 이를 막지 않음.</td></tr>
+  <tr><td>2</td><td><strong>검증 샘플 요청 서명·발송</strong> — <code>arc-send-verifying-sample-ask</code>. Part B/C/D를 KRX·Koscom에 발송.</td><td>오퍼레이터</td><td>사슬 7번 해제. 이후는 벤더 리드타임 대기.</td></tr>
+  <tr><td>3</td><td><strong>U5 재베이스라인</strong> — v35 run과 카탈로그가 있는 데이터 홈에서 같은 버전으로 재실행해 정확한 일치 확인, 또는 헤드 정체성 이동을 거버넌스 행위로 기록.</td><td>오퍼레이터</td><td>B4 해제. 벤더 대기와 병렬로 진행 가능. 페이퍼 세션 전에 반드시 완료.</td></tr>
+  <tr><td>4</td><td><strong>2016 이전 Unknown 3일 witness probe</strong> — <code>.env.calendar</code> 키로 세 날짜 각각 확인, 출처와 함께 판정 기록.</td><td>오퍼레이터 + 에이전트</td><td>깊은 백필 상한 해제. 페이퍼와 무관하지만 벤더 대기 중 처리 가능.</td></tr>
+  <tr><td>5</td><td><strong>유지보수 2건</strong> — <code>next.rs</code>/<code>queue/mod.rs</code> 분할, AGENTS.md 동사 열거 + 마이그레이션 원장 갱신.</td><td>에이전트</td><td>큐 정리. 블로커와 무관.</td></tr>
+</table>
+</div>
+
+<div class="callout warn">
+<p><strong>대안 경로 (결정 변경 필요):</strong> 조달 판정을 기다리지 않고 <code>daily-resolution-v1</code>을 지금 개방하기로 결정을 바꾸면 페이퍼까지의 경로가 짧아집니다. pre-turn admissibility re-check → TURN-LOG 표준 블록 편집(문안은 TURN-LOG 2026-08-15 항목에 사전 작성됨) → 턴 1 백테스트 → 홀드아웃 판정(단 1회) → 통과 시 prospective paper stage. 다만 이것은 2026-08-27 계획의 <em>session-settled: user-directed</em> 결정을 뒤집는 것이라 기록된 거버넌스 행위여야 하며, 조달이 나중에 통과하면 이미 소비한 1회 판정과 선택세 리셋을 새 에포크가 쓸 수 없게 됩니다(R18). 어느 쪽이든 U5~U7(B4)은 먼저 닫혀야 합니다.</p>
+</div>
+
+<h2>7. 검증 근거</h2>
+
+<pre><code>$ git status -sb            → ## main...origin/main (트리 clean, .gitignore 로컬 수정만)
+$ git log -1 origin/main    → fe189c7 2026-09-08 10:59 +0900
+
+$ make next  (LS_* 환경변수 제거 후, 2026-09-08 11:3x KST)
+window:   presumed-open (09:00-15:30 KST)
+in-flight: none
+standing: 9개 블록 항목
+  - arc-send-verifying-sample-ask [priority]  ← 오퍼레이터 서명·발송 대기
+  - rung1-ladder-reentry-successor-margin-head ← 인증된 헤드 대기
+  - arc-sample-spend-ceiling-freeze           ← 오퍼레이터, 외부 게이트 없음
+  - arc-sample-acceptance-tests / arc-production-ask-ceiling-and-send /
+    arc-procurement-verdict / arc-verdict-register-design ← 벤더 회신 대기
+  - calendar-resolve-3-pre-2016-unknown-days  ← 오퍼레이터 witness probe
+  - orb-cost-artifact-hash-and-head-identity  ← 오퍼레이터 v35 재베이스라인
+next:     lab-next-queue-file-size-split (유지보수)
+queue:    agents-md-queue-verb-enumeration (유지보수)
+
+adapters/nautilus/lab/TURN-LOG.md:7
+  "Open lineage (STANDING) — currently open: NONE; ORB CLOSED 2026-08-10, declared 2026-08-11"
+
+adapters/nautilus/lab/config/PREREGISTRATION.md 상태줄
+  RE-REGISTERED v2 · LADDER STOOD DOWN 2026-07-31 · RE-ENTRY TIGHTENED 2026-08-06 · LINEAGE CLOSED 2026-08-10
+
+adapters/nautilus/lab/config/lineage-preregistration.json
+  frozen_utc 2026-08-15, holdout_judged: null, verdict.hurdle 0.036133</code></pre>
+
+<h2>8. 참조 파일</h2>
+<div class="wrap">
+<table>
+  <tr><th>파일</th><th>역할</th></tr>
+  <tr><td><code>queue/items.jsonl</code> · <code>make next</code></td><td>현재 블로커의 기계 판독 원천. 상태 변경은 <code>lab-next add/done/supersede/priority/block/unblock</code>으로만.</td></tr>
+  <tr><td><code>docs/plans/2026-08-27-1453-feat-orb-licensed-verdict-arc-plan.md</code></td><td>검증 아크 계획. R1~R32, U1~U12, 사용자 결정 기록.</td></tr>
+  <tr><td><code>adapters/nautilus/lab/TURN-LOG.md</code></td><td>표준 블록(열린 리니지, 헤드 리니지)과 모든 턴의 판정. 2026-08-11 폐쇄 선언, 2026-08-15 동결 항목에 개방 문안 사전 작성.</td></tr>
+  <tr><td><code>adapters/nautilus/lab/config/PREREGISTRATION.md</code> + <code>preregistration.json</code></td><td>사다리 사전 등록 v2(바이트 동일 유지). § Stand-down, <code>rung0_requalification</code>.</td></tr>
+  <tr><td><code>adapters/nautilus/lab/config/LINEAGE-PREREGISTRATION.md</code> + <code>lineage-preregistration.json</code></td><td>후속 일봉 리니지 동결 조건, 두 게이트(pre-turn re-check, prospective paper stage).</td></tr>
+  <tr><td><code>adapters/nautilus/lab/config/SAMPLE-MARGIN.md</code> + <code>sample-margin.json</code></td><td>동결 샘플 마진. 샘플 지출 상한이 기록될 미러.</td></tr>
+  <tr><td><code>docs/research/krx-licensed-sample-request-package.md</code></td><td>19개 의무의 요청 패키지. Part A 실행 완료, B/C/D 미발송. 공시 정가표(§B.1).</td></tr>
+  <tr><td><code>docs/research/krx-entitlement-inventory.md</code></td><td>무료 권한으로 답할 수 있는 의무와 그렇지 못한 의무의 경계.</td></tr>
+  <tr><td><code>adapters/nautilus/lab/RUNBOOK-rung1.md</code> · <code>RUNG1-PREFLIGHT.md</code></td><td>페이퍼 세션 실행 절차와 종료 코드 계약. 현재 stand-down 배너.</td></tr>
+  <tr><td><code>CONCEPTS.md</code> § Lineage closure / Search budget</td><td>폐쇄 규칙의 원문. "데이터 취득으로 재개 불가."</td></tr>
+</table>
+</div>
+
+<footer>
+  이 문서는 2026-09-08 11:39 KST 기준 저장소 상태를 조사해 작성했습니다. 자격 증명은 인용하지 않았습니다. 큐 상태가 바뀌면 <code>make next</code>가 이 문서보다 우선합니다.
+</footer>
+
+</body>
+</html>

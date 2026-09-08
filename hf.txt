@@ -1,0 +1,53 @@
+  Handoff prompt
+
+  Close the ORB sample-acquisition decision. The evidence turn is done; this turn
+  executes the operator's chosen arm and runs the one probe that was left circular.
+
+  Read first, in this order:
+    - queue item `orb-sample-acquisition-decision` (run `make next`) — NOTE its note
+      is STALE: it predates the paired-power turn and still says "do not spend a
+      lever turn before this is settled". Trust TURN-LOG over it.
+    - adapters/nautilus/lab/TURN-LOG.md, the 2026-08-07 paired-power entry (top),
+      then the 2026-08-06 sample-sufficiency entry below it
+    - docs/plans/2026-08-07-001-docs-orb-sample-acquisition-decision-plan.md —
+      its priced-options table and Outstanding Questions Q1/Q3
+
+  Where the decision stands. Absolute detectability: the head's edge is ~9x below
+  its own floor. Paired detectability, measured 2026-08-07: 0 of 6 whole-lever-OFF
+  arms attributable at the sessions held, 0 family-wide. Those arms are the largest
+  effects the design space contains, and the smallest minimum detectable paired
+  difference across them is +0.0516 — 1.8x the entire head gross edge. The arc is
+  sample-blocked for lever work on measurement, not inference. Head stays v35.
+
+  The decision: arm C (stand the arc down), with arm D's probe run FIRST.
+
+  Do these:
+
+  1. Run the supply probe the plan left circular (Q3). `probe-lookback` against a
+     non-domestic lane, to answer the one question a stand-down leaves open: does
+     another instrument's minute history reach deeper than the ~358-day rolling
+     window the domestic lane serves? Re-probe the domestic lane too (Q1) — the
+     recorded 2026-07-09 reading is treated as expired by R10, and every figure
+     downstream of 237 sessions depends on it. One paced sequence per lane,
+     credential-safe.
+  2. Record the reading. If another lane serves materially deeper, say what that
+     changes for the pivot arm and stage it as a successor item. If it does not,
+     say so — a negative here is the finding that makes the stand-down final.
+  3. Close `orb-sample-acquisition-decision` through `lab-next`, after the gate,
+     with the arm taken and the reason. Stage whatever successor the probe implies
+     so the arc does not terminate without a next step.
+  4. Note on the way past: `report-sample-catalog-read-metadata-only`'s priority
+     has fallen — its justification was the 65x catalog growth this arc now says
+     will not happen. Do not fix it here.
+
+  Constraints: the probe is the ONLY gateway call — no ingest, no acquisition, no
+  backtest, no strategy code, no governed param. `strategy_code_hash` must stay
+  7571abef and `config/preregistration.json` byte-identical at abdb90a1; verify
+  from the tree, do not assume. Queue changes only via `lab-next`, after the gate,
+  never by editing queue/items.jsonl. Needs the open window — the probe is
+  gateway-bound and the window is closed until 2026-08-10 00:00Z.
+
+  Deliverable: the probe readings with their dates, a TURN-LOG entry recording the
+  arm taken and why, and the queue routed. If the probe cannot run (credentials,
+  lane unavailable), say so and stop — do not close the decision on an unprobed
+  supply question.

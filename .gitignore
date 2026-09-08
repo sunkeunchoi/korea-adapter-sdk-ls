@@ -29,3 +29,4 @@ state/
 # what keeps the driver's own state file out of its fingerprint by construction.
 .gate-run/
 
+.context/compound-engineering/
