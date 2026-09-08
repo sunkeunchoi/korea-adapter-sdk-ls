@@ -81,6 +81,49 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — the two freshness oracles RECONCILED: the watch projection expands a declared tree node by node, so a `src/bin/**` edit the morning preflight could not see now reaches it; `LAB_SRC_FINGERPRINT` moves `a5a7472b…` → `fb1e8e59…`; no strategy code, no param, no run (2026-09-07) — queue `fingerprint-src-bin-freshness-oracle-divergence`
+
+- **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no
+  backtest. `strategy_code_hash` is unchanged (`lab/src/strategy/orb.rs` untouched), so head
+  identity does not move and the documented head stays **v35**. The declared inventory is
+  unchanged at 18 entries — `declared_inventory` and the hashing path were not edited, so the
+  certified boundary is exactly what the 2026-08-26 closure below established.
+- **What DID change — the WATCH PROJECTION, not the boundary.** `watch_paths_from_root`
+  expanded a `Tree` entry to its root path alone. Cargo alone was satisfied by that, because it
+  rescans a watched directory recursively — but the emitted paths have a second consumer, and
+  that is where the defect lived. Cargo folds them into the dep-info sidecar beside each lab
+  binary, and `adapters/nautilus/scripts/session-morning.sh` stats those recorded paths as its
+  freshness oracle. A directory's mtime does not move when a file nested inside it is edited, so
+  a declared file could move the digest while moving no path the preflight could observe. The
+  projection now emits every node the digest hashes: each tree root, every directory beneath it,
+  and every file inside it. The directories stay in alongside the files and are what carries the
+  ADD case — a file created since the last build is in no sidecar yet, but its parent
+  directory's mtime moves. REMOVE was already covered by the preflight's `vanished` counter.
+- **The divergence this closes, measured on both sides.** `adapters/nautilus/src/bin/**` is
+  declared as part of its parent tree (KTD4 of plan 2026-08-25-2332) but linked by no lab
+  binary, so it reached the sidecar by no other route: `lab-research.d` carried **215 paths and
+  ZERO `src/bin` entries**. An edit there moved `LAB_SRC_FINGERPRINT` and a governed turn HELDd
+  `StaleBinary`, while the morning chain reported the same artifact fresh. After this change
+  `lab-research.d` and `lab-mount-universe.d` carry **272 paths and 13 `src/bin` entries** —
+  every adapter binary source — and both oracles refuse the same edit.
+- **It does NOT over-report to the five nautilus-ls binaries.** `calendar-refresh.d` is
+  unchanged at **139 paths**, because the lab build script feeds only the lab crate's dep-info.
+  The operator-facing cost is real but is not new: a calendar-binary hotfix now marks
+  `lab-research` and `lab-mount-universe` stale at the next session morning, and the rebuild it
+  asks for is the one the governed turn was already going to demand.
+- **The digest transition, both values recorded.** `LAB_SRC_FINGERPRINT`
+  **`a5a7472b5239f298885f01a7d6d61436d27953ed619a7ed60c866939b56a4723`** →
+  **`fb1e8e59ab170665d8e2998ecde0d2b33f90b31389e7b756c39d2b94064cae79`** (debug profile,
+  recomputation equal to the embedded value). The move is caused solely by
+  `fingerprint_core.rs`'s own bytes changing — it is itself a declared File input. The test
+  fixture and test files this turn also touched are under `lab/tests/`, which no declared entry
+  covers, so they contribute nothing to the digest. The pre-change value was recovered by
+  restoring the committed `fingerprint_core.rs` and reading `recompute()` against the tree,
+  which is sound here precisely because `declared_inventory` and the hashing path did not move.
+- **Every prebuilt lab binary refuses once**, as at every digest transition: a governed turn on
+  a binary built before this change HELDs `StaleBinary` at the parent self-check, and the
+  recovery is a release rebuild in the adapter workspace.
+
 ## Governance — declared build-input fingerprint boundary CLOSED over the adapter and calendar packages: `LAB_SRC_FINGERPRINT` moves `cd6626ce…` → `56d2b88a…`; no strategy code, no param, no run (2026-08-26) — plan 2026-08-25-2332, queue `fingerprint-nautilus-ls-calendar-closure`
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no

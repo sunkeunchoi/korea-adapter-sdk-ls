@@ -273,6 +273,17 @@ fi
 #     tree at compile time, so a metadata/constraints/*.yaml edit changes every binary's behavior
 #     while moving no file under any src/ directory. calendar-refresh.d lists those paths twelve
 #     times; no src/ scan would ever reach them.
+#   * For the two LAB binaries it carries the whole GOVERNED closure, so this axis and the
+#     governed turn's digest refuse the same edits. adapters/nautilus/lab/build.rs projects the
+#     declared LAB_SRC_FINGERPRINT inventory into rerun-if-changed node by node, and cargo folds
+#     those into lab-research.d and lab-mount-universe.d. That projection used to emit a declared
+#     TREE as its root path alone, and a directory's mtime does not move when a file nested inside
+#     it is edited — so an edit under adapters/nautilus/src/bin/** (declared, but linked by no lab
+#     binary) moved the digest while this axis still read `ok`, and the governed turn then refused
+#     the same artifact as StaleBinary. The consequence of the fix is visible here: a calendar-
+#     binary hotfix now marks BOTH lab binaries stale, which is the rebuild the governed turn was
+#     going to demand anyway. It does not reach the five nautilus-ls binaries — the lab build
+#     script feeds only the lab crate's dep-info.
 #
 # WHAT DEP-INFO OMITS, AND WHY THE MANIFESTS ARE ADDED BY HAND. Cargo records SOURCE FILES only:
 # `calendar-refresh.d` contains zero `Cargo.toml`, zero `Cargo.lock`, and zero toolchain entries

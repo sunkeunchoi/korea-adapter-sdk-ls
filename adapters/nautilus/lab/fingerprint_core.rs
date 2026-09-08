@@ -145,12 +145,46 @@ pub fn compute_from_inventory(
     Ok(hex)
 }
 
+/// Project the validated inventory into the Cargo rebuild watches `build.rs` emits.
+///
+/// A `Tree` entry expands to its root directory, every directory beneath it, and every
+/// regular file inside it — the same traversal [`hash_tree`] walks, so the watch set
+/// covers exactly what the digest covers.
+///
+/// FULL EXPANSION RATHER THAN THE TREE ROOT, because the emitted paths have a SECOND
+/// consumer. Cargo alone would be satisfied by the root: it rescans a watched directory
+/// recursively, so a root-only projection triggers every rebuild the full one does. But
+/// Cargo also folds these paths into the dep-info sidecar it writes beside each lab
+/// binary, and that sidecar is the freshness oracle
+/// `adapters/nautilus/scripts/session-morning.sh` reads — it stats each recorded path and
+/// refuses a binary older than the newest one. A directory's mtime does not move when a
+/// file nested inside it is edited, so under the root-only projection a declared file
+/// could move `LAB_SRC_FINGERPRINT` while moving no path that preflight could observe:
+/// the morning chain reported the lab binaries fresh and a governed turn then refused
+/// them as StaleBinary. The sharp case was `adapters/nautilus/src/bin/**`, declared as
+/// part of its parent tree but never linked by the lab, so it reached the dep-info by no
+/// other route.
+///
+/// The directories stay in the projection alongside the files, and they are what covers
+/// the ADD case: a file created since the last build is in no sidecar yet, but the mtime
+/// of the directory holding it moves. Removal is covered by the file entries themselves —
+/// a recorded input that no longer exists is what the preflight counts as vanished.
 pub fn watch_paths_from_root(
     repo_root: &std::path::Path,
 ) -> std::io::Result<Vec<std::path::PathBuf>> {
     let inventory = declared_inventory();
     let validated = validate_inventory(repo_root, &inventory)?;
-    let mut paths: Vec<_> = validated.into_iter().map(|entry| entry.absolute).collect();
+    let mut paths = Vec::with_capacity(validated.len());
+    for entry in validated {
+        match entry.input.kind {
+            FingerprintInputKind::File => paths.push(entry.absolute),
+            FingerprintInputKind::Tree => {
+                let mut nodes = Vec::new();
+                collect_tree_nodes(&entry.absolute, &entry.absolute, &mut nodes)?;
+                paths.extend(nodes.into_iter().map(|node| node.absolute));
+            }
+        }
+    }
     paths.sort();
     Ok(paths)
 }

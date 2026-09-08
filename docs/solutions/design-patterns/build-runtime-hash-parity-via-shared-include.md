@@ -70,6 +70,15 @@ for path in watch_paths_from_root(repo_root)? {
 }
 ```
 
+Project a tree entry **node by node** — its root, every directory beneath it, and every
+file inside it — not as its root path alone. Rebuild triggering alone would not require
+this, because Cargo rescans a watched directory recursively. The emitted paths have a
+second consumer: Cargo folds them into the dep-info sidecar beside each binary, and a
+downstream freshness check that stats those recorded paths cannot see an edit nested
+inside a watched directory, whose own mtime never moves. Emit the directories as well as
+the files, so that a file *added* since the last build — recorded nowhere yet — still
+moves a watched path.
+
 Production runtime recomputation resolves the repository from the compiled
 `CARGO_MANIFEST_DIR`. Do not accept environment variables that redirect the trust
 root. Tests inject a complete temporary repository root directly into the shared
@@ -142,10 +151,15 @@ before they surprise someone mid-session:
   the whole tree is declared, so a release rebuild is required before the next
   governed turn. This includes the four calendar binaries
   `adapters/nautilus/scripts/session-morning.sh` runs as prebuilt paths.
-- **The two freshness oracles therefore disagree on those edits.** A `src/bin/**`
-  edit moves the declared digest but never reaches the lab binary's Cargo
-  dependency evidence, so the morning preflight's mtime axis reports fresh while a
-  governed turn refuses.
+- **The morning preflight now reports that rebuild too, and that is the fix rather
+  than a new cost.** The two oracles used to disagree on exactly those edits: a
+  `src/bin/**` edit moved the declared digest but reached no path in the lab binary's
+  Cargo dependency evidence, so the preflight's mtime axis reported fresh while a
+  governed turn refused as `StaleBinary`. The watch projection expands a declared tree
+  node by node, so every declared file is in that evidence and both oracles refuse the
+  same edit. Expect a calendar-binary hotfix to mark `lab-research` and
+  `lab-mount-universe` stale at the next session morning; the rebuild it asks for is the
+  one the governed turn was already going to demand.
 - **A new repository-local crate must be seeded into the shared test fixture as
   well as declared.** Validation fails closed on a missing declared input, so
   declaring a crate without adding it to `lab/tests/support/fingerprint_fixture.rs`

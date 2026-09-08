@@ -229,6 +229,9 @@ fn inventory_fails_closed_for_missing_wrong_type_and_symlink_inputs() {
     }
 }
 
+/// Every node the digest reads, and nothing else. The expectation is built by an
+/// independent walk rather than by calling the projection's own traversal, so an
+/// implementation that skipped or over-collected a class would still be caught.
 #[test]
 fn watch_projection_is_exactly_the_declared_inventory() {
     let fixture = FingerprintFixture::new();
@@ -236,11 +239,57 @@ fn watch_projection_is_exactly_the_declared_inventory() {
         .unwrap()
         .into_iter()
         .collect();
-    let expected: BTreeSet<_> = declared_inventory()
-        .into_iter()
-        .map(|input| fixture.root().join(input.relative_path()))
-        .collect();
+
+    let mut expected = BTreeSet::new();
+    for input in declared_inventory() {
+        let absolute = fixture.root().join(input.relative_path());
+        match input.kind() {
+            FingerprintInputKind::File => {
+                expected.insert(absolute);
+            }
+            FingerprintInputKind::Tree => walk_into(&absolute, &mut expected),
+        }
+    }
     assert_eq!(actual, expected);
+}
+
+/// The regression this projection exists to close. A declared file the lab never links
+/// reaches Cargo's dep-info — and therefore the morning preflight's mtime axis — only
+/// because the projection expands its tree; under the earlier tree-root-only projection
+/// an edit to it moved `LAB_SRC_FINGERPRINT` while the preflight still reported fresh.
+/// The two oracles disagreeing on the same edit is the state this asserts is gone.
+#[test]
+fn watch_projection_reaches_a_declared_file_the_lab_never_links() {
+    let fixture = FingerprintFixture::new();
+    let projected: BTreeSet<_> = watch_paths_from_root(fixture.root())
+        .unwrap()
+        .into_iter()
+        .collect();
+    for relative in [
+        // Nested one directory below a declared tree root, and not a lab compile input.
+        "adapters/nautilus/src/bin/calendar-refresh.rs",
+        // The directory that holds it: a file ADDED since the last build is in no
+        // dep-info yet, so this entry is what carries the add into the mtime axis.
+        "adapters/nautilus/src/bin",
+    ] {
+        assert!(
+            projected.contains(&fixture.path(relative)),
+            "the watch projection must reach {relative}"
+        );
+    }
+}
+
+/// Collect a directory and everything under it, mirroring what the digest hashes.
+fn walk_into(directory: &Path, into: &mut BTreeSet<PathBuf>) {
+    into.insert(directory.to_path_buf());
+    for entry in std::fs::read_dir(directory).expect("read a declared tree") {
+        let path = entry.expect("read a declared tree entry").path();
+        if path.is_dir() {
+            walk_into(&path, into);
+        } else {
+            into.insert(path);
+        }
+    }
 }
 
 #[test]
