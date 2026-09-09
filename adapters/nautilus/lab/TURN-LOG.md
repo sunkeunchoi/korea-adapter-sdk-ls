@@ -81,6 +81,57 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Identity move — the daily lineage's ONE pre-judgment hash move: ranking-signal variants, live hooks, holding seeding, instrument claims and an explicit Netting OMS all land together; `daily_strategy_code_hash` moves `d39b2159…` → `fb78cc55…`, params hash pinned at `c7980e8b…`, ORB's `7571abef…` UNTOUCHED (2026-09-09) — plan 2026-09-08-1215 U2, queue `daily-identity-move-ranking-signal-live-hooks`
+
+- **The digests, both sides, and the one that did NOT move.** `daily_strategy_code_hash`
+  **`d39b2159a80d93a7af7e666069ef80a20fdd598bb7affc17a701e513974575fe`** →
+  **`fb78cc5502a023939a8341c53cd071cbc2b89ff93d0e9826d952347cddb5a8b4`**. Part of that move is
+  definitional rather than behavioural: `DAILY_SOURCE` is now
+  `concat!(include_str!("daily.rs"), include_str!("daily_signal.rs"))`, so the hash covers two
+  files where it covered one. New: `daily_governed_params_hash(&DailyParams::default())` =
+  **`c7980e8b24625a2d0773b0c07dfb7bdaddd38eb3033a0c6b4a9d5043e04b68f0`**. Both are pinned in
+  `tests/identity_guards.rs`. **ORB's `strategy_code_hash` is unchanged at `7571abef…`** — the
+  head stays **v35** and the rung-1 ladder's sole discriminator is intact.
+- **Why `hooks.rs` re-exports instead of moving anything.** The daily strategy needs
+  `EmissionGate`, `MarkFeed` and `Heartbeats`, and the first two live in `orb.rs`. Moving their
+  definitions would have been the tidy refactor and would have moved ORB's digest for zero
+  behavioural reason — and there is deliberately no "inert edit" exemption
+  (`docs/solutions/architecture-patterns/head-identity-hash-is-file-scoped-so-live-only-wiring-forces-a-rebaseline.md`).
+  `strategy/hooks.rs` is therefore eight lines of `pub use`. The same rule is why the pinned
+  digest `7571abef…` is asserted above rather than assumed.
+- **What the move carries, all of it before any judgment (KTD7).** `RankingSignalKind` as a
+  freezable `DailyParams` variant with `Placeholder` kept as a REAL `#[serde(default)]` variant,
+  so `judgment_arguments()`'s refusal keeps a producer; candidate implementations in
+  `daily_signal.rs`, each declaring its warmup lookback; the `signal_unavailable` rejection;
+  `with_emission_gate` / `with_heartbeats` / `with_mark_feed`; `seed_open_legs(&[BookLeg])` with
+  position ids derived as `{instrument}-{strategy}`; an `on_position_opened` that joins a restored
+  leg instead of panicking; and `with_external_order_claims`, which is also the only place
+  `oms_type = Netting` is set. **Bar delivery is deliberately NOT here** — KTD15 puts that seam in
+  the lab's data client, which is U9.
+- **The live/backtest split is asserted, not assumed.** A test pins that the backtest
+  `StrategyConfig` carries `oms_type: None` and `external_order_claims: None`, and that only the
+  live builder sets `Some(OmsType::Netting)` and the claim list. That separation is what makes the
+  backtest equation hold across this move.
+- **`FROZEN_RANKING_SIGNAL` is `None`, and a test says so.** Choosing a signal is U4 and an
+  attended governance act; `validate()` will reject any other variant once the constant is `Some`.
+  Nothing in this turn selects, evaluates or ranks a candidate.
+- **After this, `daily.rs` and `daily_signal.rs` are closed.** Touching either costs a
+  same-version re-baseline, so U9 must not need a new strategy API — that is precisely why every
+  live hook landed here rather than when its consumer arrives. U6's judgment does not run until
+  U9's whole-day integration test has driven a session through this exact hook set.
+- **Authorship and verification, recorded separately.** The unit was authored by **Codex
+  (`gpt-5.6-sol`)** under the `ce-work` cross-model contract, in a detached worktree with no
+  commit, push or canonical authority; the served model is reported `unverified` by the adapter
+  receipt and is recorded as such rather than relabelled. Scope inspection, the authoritative
+  `cargo test --workspace`, and the canonical commit `e6c3ebf` are host-owned. The transport
+  carried exactly the eleven expected paths — no `orb.rs`, no frozen artifact, no adapter-crate
+  file, no formatting churn.
+- **Two dead ends worth not repeating, both cheap to avoid.** A first attempt reformatted seven
+  files with `rustfmt` and moved ORB's digest to `0596a1cf…` before undoing it; a second reported
+  itself BLOCKED because the wiremock-backed suite binds sockets that its sandbox denies, which
+  discarded complete work. Authoritative verification is host-owned and a sandbox `EPERM` is not
+  evidence of breakage — both are now stated in the unit packet.
+
 ## Fix — the daily backtest's silent fill-skip CLOSED: the catalog is adjustment-adjusted, so its prices sit on NO exchange tick grid and an effective-dated ladder would not have fixed it; the run now mounts a per-symbol GCD grid and skips ZERO fills — 7,981 → 0, unopened 5,167 → 0, positions 1,311 → 5,922; no strategy code, no param (2026-09-08) — plan 2026-09-08-1215, queue `daily-backtest-historical-tick-grid-fill-skip`
 
 - **What did NOT change.** No governed param, no ingest, no catalog, no frozen artifact.
