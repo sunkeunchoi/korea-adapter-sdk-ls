@@ -50,16 +50,16 @@
 //! wick-and-recover session exits *above* it). Revisit this before the lineage's
 //! first judged turn, not before.
 //!
-//! # The Hedging exit trap (KTD12)
+//! # Live Netting and backtest Hedging (KTD12)
 //!
-//! The daily venue is `OmsType::Hedging`. Under it, a fill whose client order id has
-//! no cached position mints a **fresh** position and the netting fallback that would
-//! otherwise match the open long is disabled — so an exit submitted *without* a
-//! position id opens an opposite-side short instead of closing the long, and the
-//! account type does not reject it. Every exit here therefore goes through
-//! [`Strategy::close_position`], which submits with `Some(position.id)`. ORB's
-//! `submit_order(order, None, …)` plus `reduce_only` exit is a **Netting-only**
-//! pattern and is not copied.
+//! The attended live strategy explicitly registers `OmsType::Netting`, matching the
+//! LS account: an exit reduces the existing quantity to zero, and a later entry
+//! increases/reopens that instrument rather than minting a new hedged position. The
+//! historical backtest venue deliberately remains Hedging so repeated round trips
+//! retain distinct position records. Both paths exit through
+//! [`Strategy::close_position`] with `reduce_only = true`; therefore the restored
+//! live leg cannot cross zero into a short, while the unchanged backtest still closes
+//! the exact `PositionId` it opened.
 //!
 //! # The two fail-closed gates
 //!
@@ -96,9 +96,9 @@ use chrono::{Datelike, NaiveDate};
 use nautilus_common::actor::{DataActor, DataActorNative};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_model::data::Bar;
-use nautilus_model::enums::{OrderSide, PositionSide, TimeInForce};
+use nautilus_model::enums::{OmsType, OrderSide, PositionSide, TimeInForce};
 use nautilus_model::events::{PositionClosed, PositionOpened};
-use nautilus_model::identifiers::{InstrumentId, PositionId, StrategyId};
+use nautilus_model::identifiers::{ClientOrderId, InstrumentId, PositionId, StrategyId};
 use nautilus_model::orders::Order;
 use nautilus_model::types::Quantity;
 use nautilus_trading::nautilus_strategy;
@@ -110,11 +110,13 @@ use crate::agent::envelope::{
 };
 use crate::agent::sink::DecisionSink;
 use crate::artifacts::performance::{ClientOrderEntryRiskLedger, EntryRisk};
-use crate::params_daily::DailyParams;
+use crate::params_daily::{DailyParams, RankingSignalKind};
 use crate::runner::backtest_daily::{
     DailyPathStrategy, DailySessionContext, DailySessionSignals, MountedSymbol, OpenPositionBook,
 };
 use crate::strategy::orb::UniverseCandidate;
+use crate::strategy::hooks::{EmissionGate, Heartbeats, MarkFeed};
+use crate::strategy::orb::SymbolMark;
 
 /// The daily bar-type label the catalog records adjustment-basis shifts under.
 pub const DAILY_BAR_TYPE_LABEL: &str = "1-DAY";
@@ -137,6 +139,14 @@ pub struct RankingSignal {
     pub placeholder: bool,
 }
 
+impl RankingSignal {
+    /// Derive the recorded signal identity from the governed parameter variant.
+    #[must_use]
+    pub const fn from_kind(kind: RankingSignalKind) -> Self {
+        RankingSignal { name: kind.name(), placeholder: kind.is_placeholder() }
+    }
+}
+
 /// The placeholder ranking signal this unit ships: **prior-session turnover,
 /// descending, symbol-ascending on ties**.
 ///
@@ -146,7 +156,131 @@ pub struct RankingSignal {
 /// and is out of this plan's scope; shipping a *plausible-looking* placeholder without
 /// this marker is exactly how a placeholder run gets judged as a real one.
 pub const PLACEHOLDER_RANKING_SIGNAL: RankingSignal =
-    RankingSignal { name: "prior_turnover_desc", placeholder: true };
+    RankingSignal::from_kind(RankingSignalKind::Placeholder);
+
+/// One signal dispatch's complete result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalRanking {
+    /// Scored symbols, best first.
+    pub ranked: Vec<String>,
+    /// Candidates the selected signal could not score, in symbol order.
+    pub unavailable: Vec<String>,
+}
+
+/// Dispatch the governed ranking signal over one session's candidates.
+///
+/// `prior_closes` contains each symbol's closes strictly before the decision
+/// session, oldest-to-newest. Keeping that history out of `UniverseCandidate`
+/// avoids moving ORB's identity-bearing source merely to serve this sibling.
+#[must_use]
+pub fn rank_by_signal(
+    kind: RankingSignalKind,
+    candidates: &[UniverseCandidate],
+    prior_closes: &BTreeMap<String, Vec<f64>>,
+) -> SignalRanking {
+    let mut scored: Vec<(&UniverseCandidate, f64)> = Vec::new();
+    let mut unavailable = Vec::new();
+    for candidate in candidates {
+        let score = match kind {
+            RankingSignalKind::Placeholder | RankingSignalKind::PriorTurnoverDesc => {
+                crate::strategy::daily_signal::prior_turnover_desc(candidate)
+            }
+            RankingSignalKind::Momentum12x1 => prior_closes
+                .get(&candidate.symbol)
+                .and_then(|closes| crate::strategy::daily_signal::momentum_12x1(closes)),
+        };
+        match score {
+            Some(score) => scored.push((candidate, score)),
+            None => unavailable.push(candidate.symbol.clone()),
+        }
+    }
+    scored.sort_by(|(a, a_score), (b, b_score)| {
+        b_score
+            .partial_cmp(a_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.symbol.cmp(&b.symbol))
+    });
+    unavailable.sort();
+    SignalRanking {
+        ranked: scored.into_iter().map(|(candidate, _)| candidate.symbol.clone()).collect(),
+        unavailable,
+    }
+}
+
+/// Emit one selection record per candidate under the selected signal, including
+/// the fail-closed `signal_unavailable` rejection.
+pub fn record_signal_decisions(
+    sink: &DecisionSink,
+    params: &DailyParams,
+    ts: u64,
+    candidates: &[UniverseCandidate],
+    prior_closes: &BTreeMap<String, Vec<f64>>,
+    ranking: &SignalRanking,
+) {
+    let signal = RankingSignal::from_kind(params.ranking_signal);
+    let ranks: BTreeMap<&str, usize> = ranking
+        .ranked
+        .iter()
+        .enumerate()
+        .map(|(rank, symbol)| (symbol.as_str(), rank))
+        .collect();
+    let unavailable: BTreeSet<&str> = ranking.unavailable.iter().map(String::as_str).collect();
+    let mut ordered: Vec<&UniverseCandidate> = candidates.iter().collect();
+    ordered.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+    for candidate in ordered {
+        let instrument_id = InstrumentId::from(candidate.symbol.as_str());
+        let (decision, filter, values) = if unavailable.contains(candidate.symbol.as_str()) {
+            (
+                Decision::Reject,
+                Some("signal_unavailable".to_string()),
+                BTreeMap::from([
+                    (
+                        "available_prior_bars".to_string(),
+                        prior_closes.get(&candidate.symbol).map_or(0, Vec::len) as f64,
+                    ),
+                    (
+                        "required_prior_bars".to_string(),
+                        params.ranking_signal.warmup_bars() as f64,
+                    ),
+                ]),
+            )
+        } else {
+            (
+                Decision::Accept,
+                None,
+                BTreeMap::from([
+                    ("prior_turnover".to_string(), candidate.prior_turnover),
+                    ("rank".to_string(), ranks[candidate.symbol.as_str()] as f64),
+                ]),
+            )
+        };
+        let detail = DecisionDetail {
+            kind: SignalKind::Universe,
+            symbol: candidate.symbol.clone(),
+            decision: Some(decision),
+            filter,
+            values,
+            tags: None,
+        };
+        sink.emit(DecisionEnvelope::telemetry(
+            ts,
+            DecisionTrigger::MarketData { instrument_id },
+            detail,
+            AgentContext::telemetry(
+                params.strategy_id.clone(),
+                params.strategy_version,
+                BTreeMap::from([
+                    (format!("ranking_signal_{}", signal.name), 1.0),
+                    (
+                        "ranking_signal_placeholder".to_string(),
+                        f64::from(u8::from(signal.placeholder)),
+                    ),
+                ]),
+                BTreeMap::from([("decisions".to_string(), sink.len() as u64)]),
+            ),
+        ));
+    }
+}
 
 /// Rank a session's candidates by [`PLACEHOLDER_RANKING_SIGNAL`], best first.
 ///
@@ -329,6 +463,26 @@ struct PendingLeg {
     risk_per_share: f64,
     qty: f64,
     entry_index: usize,
+    /// Restored holdings remain joinable until reconciliation emits their open event;
+    /// ordinary same-session entry pendings are swept at the next session.
+    seeded: bool,
+}
+
+/// One broker-confirmed overnight holding restored from the rehearsal book.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookLeg {
+    /// Mounted instrument held long.
+    pub instrument_id: InstrumentId,
+    /// Entry fill's client order id, used to seed the risk ledger join.
+    pub opening_order_id: ClientOrderId,
+    /// Realized entry price.
+    pub entry_price: f64,
+    /// Fixed stop price carried across sessions.
+    pub stop_price: f64,
+    /// Positive share quantity.
+    pub quantity: f64,
+    /// Calendar/session ordinal on which the leg opened.
+    pub entry_session_ordinal: usize,
 }
 
 /// The daily multi-session-hold strategy.
@@ -353,6 +507,13 @@ pub struct DailyStrategy {
     /// concurrency slot for the rest of the run.
     pending_leg: HashMap<InstrumentId, PendingLeg>,
     open: HashMap<InstrumentId, OpenLeg>,
+    /// Live-only order-emission interlock. Open by default so an unset hook leaves
+    /// backtest behavior unchanged.
+    emission: EmissionGate,
+    /// Live dead-man feeder; absent in backtests.
+    heartbeats: Option<Heartbeats>,
+    /// Live per-symbol mark feed; absent in backtests.
+    mark_feed: Option<MarkFeed>,
     /// The last session ordinal whose take refusals were recorded — the per-session
     /// record is emitted exactly once, on the session's first bar callback.
     last_recorded_session: Option<usize>,
@@ -387,8 +548,94 @@ impl DailyStrategy {
             entry_risk: ClientOrderEntryRiskLedger::new(),
             pending_leg: HashMap::new(),
             open: HashMap::new(),
+            emission: EmissionGate::open(),
+            heartbeats: None,
+            mark_feed: None,
             last_recorded_session: None,
         }
+    }
+
+    /// Replace the live order-emission gate.
+    #[must_use]
+    pub fn with_emission_gate(mut self, emission: EmissionGate) -> Self {
+        self.emission = emission;
+        self
+    }
+
+    /// Thread the live dead-man feeder into bar processing.
+    #[must_use]
+    pub fn with_heartbeats(mut self, heartbeats: Heartbeats) -> Self {
+        self.heartbeats = Some(heartbeats);
+        self
+    }
+
+    /// Thread the live per-symbol mark feed into bar processing.
+    #[must_use]
+    pub fn with_mark_feed(mut self, mark_feed: MarkFeed) -> Self {
+        self.mark_feed = Some(mark_feed);
+        self
+    }
+
+    /// Configure the live strategy to claim every mounted instrument under an
+    /// explicit Netting OMS. Backtests never call this builder, leaving both
+    /// `StrategyConfig` fields `None` exactly as before.
+    #[must_use]
+    pub fn with_external_order_claims(mut self, instrument_ids: Vec<InstrumentId>) -> Self {
+        self.core.config.oms_type = Some(OmsType::Netting);
+        self.core.config.external_order_claims = Some(instrument_ids);
+        self
+    }
+
+    /// Seed broker-confirmed overnight holdings before live reconciliation emits
+    /// their `PositionOpened` events.
+    ///
+    /// # Errors
+    ///
+    /// Refuses internally inconsistent legs; callers must repair/adopt the rehearsal
+    /// book rather than inventing entry-fixed risk or a stop.
+    pub fn seed_open_legs(&mut self, legs: &[BookLeg]) -> Result<(), String> {
+        for leg in legs {
+            let risk_per_share = leg.entry_price - leg.stop_price;
+            if !leg.entry_price.is_finite()
+                || !leg.stop_price.is_finite()
+                || leg.stop_price <= 0.0
+                || risk_per_share <= 0.0
+                || !leg.quantity.is_finite()
+                || leg.quantity <= 0.0
+            {
+                return Err(format!(
+                    "seeded daily leg {} is inconsistent: entry={}, stop={}, qty={}",
+                    leg.instrument_id, leg.entry_price, leg.stop_price, leg.quantity
+                ));
+            }
+            let position_id = PositionId::from(
+                format!("{}-{}", leg.instrument_id, self.params.strategy_id).as_str(),
+            );
+            let pending = PendingLeg {
+                risk_per_share,
+                qty: leg.quantity,
+                entry_index: leg.entry_session_ordinal,
+                seeded: true,
+            };
+            self.pending_leg.insert(leg.instrument_id, pending);
+            self.open.insert(
+                leg.instrument_id,
+                OpenLeg {
+                    position_id,
+                    entry_price: leg.entry_price,
+                    stop: leg.stop_price,
+                    risk_per_share,
+                    qty: leg.quantity,
+                    entry_index: leg.entry_session_ordinal,
+                },
+            );
+            self.entry_risk.record(
+                leg.opening_order_id,
+                EntryRisk { risk_per_share, qty: leg.quantity },
+            );
+            self.book.seed_held(leg.instrument_id);
+        }
+        Ok(())
     }
 
     /// A factory for [`crate::runner::backtest_daily::run_daily`]'s `make_strategy`
@@ -419,7 +666,7 @@ impl DailyStrategy {
     /// The decision context every record rides: the daily parameter set as numbers,
     /// plus the placeholder marker (R26 — U6 makes it structural, this carries it).
     fn context(&self) -> AgentContext {
-        let summary = BTreeMap::from([
+        let mut summary = BTreeMap::from([
             ("holding_period_sessions".to_string(), self.params.holding_period_sessions as f64),
             ("target_m".to_string(), self.params.target_m as f64),
             ("max_concurrent".to_string(), self.params.max_concurrent as f64),
@@ -428,9 +675,13 @@ impl DailyStrategy {
             ("notional_per_position".to_string(), self.params.notional_per_position),
             (
                 "ranking_signal_placeholder".to_string(),
-                f64::from(u8::from(PLACEHOLDER_RANKING_SIGNAL.placeholder)),
+                f64::from(u8::from(self.params.ranking_signal.is_placeholder())),
             ),
         ]);
+        summary.insert(
+            format!("ranking_signal_{}", self.params.ranking_signal.name()),
+            1.0,
+        );
         let counts =
             BTreeMap::from([("decisions".to_string(), self.decisions.len() as u64)]);
         AgentContext::telemetry(
@@ -538,7 +789,7 @@ impl DailyStrategy {
     /// `DailyRunOutcome::unopened_entry_orders`, and it is keyed by the client order id
     /// this side does not carry.
     fn discard_stale_pendings(&mut self) {
-        self.pending_leg.clear();
+        self.pending_leg.retain(|_, leg| leg.seeded);
     }
 
     // -- the entry path -----------------------------------------------------
@@ -566,6 +817,10 @@ impl DailyStrategy {
         let ts = bar.ts_event.as_u64();
         let symbol = id.to_string();
         let entry_price = bar.close.as_f64();
+
+        if !self.emission.allowed() {
+            return Ok(None);
+        }
 
         // The concurrency cap is an assertion on this path, not a second selection
         // rule: `target_m × hold` is the throttle, so reaching the cap means the take
@@ -694,8 +949,15 @@ impl DailyStrategy {
             EntryRisk { risk_per_share, qty: qty as f64 },
         );
         self.submit_order(order, None, None, None)?;
-        self.pending_leg
-            .insert(id, PendingLeg { risk_per_share, qty: qty as f64, entry_index: ctx.index });
+        self.pending_leg.insert(
+            id,
+            PendingLeg {
+                risk_per_share,
+                qty: qty as f64,
+                entry_index: ctx.index,
+                seeded: false,
+            },
+        );
 
         self.record_transition(
             id,
@@ -736,7 +998,10 @@ impl DailyStrategy {
         if position.is_closed() {
             return;
         }
-        self.close_position(&position, None, None, Some(TimeInForce::Gtc), None, None)
+        if !self.emission.allowed() {
+            return;
+        }
+        self.close_position(&position, None, None, Some(TimeInForce::Gtc), Some(true), None)
             .expect("close_position must submit with the position id (KTD12)");
         self.record_transition(id, ts, kind, values);
     }
@@ -841,6 +1106,19 @@ impl DataActor for DailyStrategy {
     fn on_bar(&mut self, bar: &Bar) -> anyhow::Result<()> {
         let id = bar.bar_type.instrument_id();
         let ts = bar.ts_event.as_u64();
+        if let Some(heartbeats) = &self.heartbeats {
+            heartbeats.touch_runtime(chrono::Utc::now().timestamp());
+        }
+        if let Some(mark_feed) = &self.mark_feed {
+            mark_feed.observe(
+                id.symbol.as_str(),
+                SymbolMark {
+                    last_close: bar.close.as_f64() as i64,
+                    last_bar_unix: (ts / 1_000_000_000) as i64,
+                    stop_price: self.open.get(&id).map(|leg| leg.stop as i64),
+                },
+            );
+        }
         // Every clock in here is the loop's, not the stream's (R23).
         let Some(ctx) = self.signals.current() else {
             return Ok(());
@@ -940,6 +1218,214 @@ mod tests {
             candidate("000660.XKRX", 10.0),
         ]);
         assert_eq!(ranked, vec!["000660.XKRX", "035720.XKRX"]);
+    }
+
+    #[test]
+    fn governed_signal_variants_rank_differently_and_fail_closed_on_short_history() {
+        let candidates = [
+            candidate("000660.XKRX", 30.0),
+            candidate("005930.XKRX", 20.0),
+            candidate("035720.XKRX", 10.0),
+        ];
+        let histories = BTreeMap::from([
+            (
+                "000660.XKRX".to_string(),
+                vec![100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0, 93.0, 92.0, 91.0, 90.0, 89.0, 88.0],
+            ),
+            (
+                "005930.XKRX".to_string(),
+                vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0, 111.0, 112.0],
+            ),
+            ("035720.XKRX".to_string(), vec![100.0; 12]),
+        ]);
+        let turnover = rank_by_signal(
+            RankingSignalKind::PriorTurnoverDesc,
+            &candidates,
+            &histories,
+        );
+        let momentum = rank_by_signal(
+            RankingSignalKind::Momentum12x1,
+            &candidates,
+            &histories,
+        );
+        assert_eq!(turnover.ranked, vec!["000660.XKRX", "005930.XKRX", "035720.XKRX"]);
+        assert_eq!(momentum.ranked, vec!["005930.XKRX", "000660.XKRX"]);
+        assert_eq!(momentum.unavailable, vec!["035720.XKRX"]);
+        assert_ne!(turnover.ranked, momentum.ranked);
+
+        let sink = DecisionSink::new();
+        let params = DailyParams {
+            ranking_signal: RankingSignalKind::Momentum12x1,
+            ..DailyParams::default()
+        };
+        record_signal_decisions(&sink, &params, 1, &candidates, &histories, &momentum);
+        let records = sink.snapshot();
+        assert_eq!(records.len(), candidates.len());
+        for record in &records {
+            let AgentContext::Telemetry { params_hash_or_summary, .. } = &record.context else {
+                panic!("selection decisions use telemetry context")
+            };
+            assert_eq!(params_hash_or_summary.get("ranking_signal_momentum_12x1"), Some(&1.0));
+        }
+        let unavailable = records
+            .iter()
+            .find(|record| {
+                record
+                    .decision_detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.symbol == "035720.XKRX")
+            })
+            .unwrap()
+            .decision_detail
+            .as_ref()
+            .unwrap();
+        assert_eq!(unavailable.filter.as_deref(), Some("signal_unavailable"));
+    }
+
+    #[test]
+    fn live_claims_are_netting_while_the_backtest_config_is_unchanged() {
+        let claims = vec![InstrumentId::from("005930.XKRX"), InstrumentId::from("000660.XKRX")];
+        let backtest = DailyStrategy::new(
+            Vec::new(),
+            DailyParams::default(),
+            DecisionSink::new(),
+            AdjustmentBasisShifts::none(),
+        );
+        assert_eq!(backtest.config().oms_type, None);
+        assert_eq!(backtest.config().external_order_claims, None);
+
+        let live = backtest.with_external_order_claims(claims.clone());
+        assert_eq!(live.config().oms_type, Some(OmsType::Netting));
+        assert_eq!(live.config().external_order_claims, Some(claims));
+    }
+
+    #[test]
+    fn live_hooks_feed_on_a_bar_and_a_closed_emission_gate_places_nothing() {
+        use nautilus_ls::ingest::BarKind;
+        use nautilus_model::types::Price;
+
+        let id = InstrumentId::from("005930.XKRX");
+        let gate = EmissionGate::open();
+        gate.stop();
+        let heartbeats = Heartbeats::new(1);
+        let marks = MarkFeed::new();
+        let mut strategy = DailyStrategy::new(
+            Vec::new(),
+            DailyParams { target_m: 1, ..DailyParams::default() },
+            DecisionSink::new(),
+            AdjustmentBasisShifts::none(),
+        )
+        .with_emission_gate(gate)
+        .with_heartbeats(heartbeats.clone())
+        .with_mark_feed(marks.clone());
+        let date = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        strategy.signals.publish_sessions(vec![date]);
+        strategy.signals.publish_session(DailySessionContext {
+            index: 0,
+            date,
+            ranked: vec![id],
+            taken: vec![id],
+            held: Vec::new(),
+            prior_atr: HashMap::from([(id, Some(1_000.0))]),
+        });
+        let ts = 1_704_265_200_000_000_000u64;
+        let bar = Bar::new(
+            BarKind::Daily.bar_type(id).unwrap(),
+            Price::new(70_000.0, 0),
+            Price::new(71_000.0, 0),
+            Price::new(69_000.0, 0),
+            Price::new(70_500.0, 0),
+            Quantity::from(1_000),
+            ts.into(),
+            ts.into(),
+        );
+        DataActor::on_bar(&mut strategy, &bar).unwrap();
+
+        assert!(strategy.pending_leg.is_empty(), "closed emission gate submitted no entry");
+        assert!(heartbeats.runtime_unix() > 1, "the runtime heartbeat was fed");
+        let mark = marks.get("005930").expect("the bare-shcode mark was published");
+        assert_eq!(mark.last_close, 70_500);
+        assert_eq!(mark.last_bar_unix, (ts / 1_000_000_000) as i64);
+        assert_eq!(mark.stop_price, None);
+    }
+
+    #[test]
+    fn restored_legs_seed_risk_and_accept_their_open_events() {
+        use nautilus_core::{UnixNanos, UUID4};
+        use nautilus_model::identifiers::{AccountId, TraderId};
+        use nautilus_model::types::{Currency, Price};
+
+        let ids = [InstrumentId::from("005930.XKRX"), InstrumentId::from("000660.XKRX")];
+        let orders = [
+            ClientOrderId::from("O-20240909-000000-001-001-1"),
+            ClientOrderId::from("O-20240909-000000-001-001-2"),
+        ];
+        let legs = [
+            BookLeg {
+                instrument_id: ids[0],
+                opening_order_id: orders[0],
+                entry_price: 70_000.0,
+                stop_price: 68_500.0,
+                quantity: 10.0,
+                entry_session_ordinal: 100,
+            },
+            BookLeg {
+                instrument_id: ids[1],
+                opening_order_id: orders[1],
+                entry_price: 200_000.0,
+                stop_price: 195_000.0,
+                quantity: 3.0,
+                entry_session_ordinal: 101,
+            },
+        ];
+        let params = DailyParams::default();
+        let strategy_id = StrategyId::from(params.strategy_id.as_str());
+        let mut strategy = DailyStrategy::new(
+            Vec::new(),
+            params,
+            DecisionSink::new(),
+            AdjustmentBasisShifts::none(),
+        );
+        strategy.seed_open_legs(&legs).unwrap();
+        assert_eq!(strategy.open.len(), 2);
+        assert_eq!(strategy.pending_leg.len(), 2);
+        strategy.discard_stale_pendings();
+        assert_eq!(
+            strategy.pending_leg.len(),
+            2,
+            "session rollover cannot erase the later reconciliation join"
+        );
+        assert_eq!(strategy.book.held(), ids.into_iter().collect());
+        assert_eq!(strategy.entry_risk.get(&orders[0]).unwrap().risk_per_share, 1_500.0);
+
+        for leg in &legs {
+            let event = PositionOpened {
+                trader_id: TraderId::from("TRADER-001"),
+                strategy_id,
+                instrument_id: leg.instrument_id,
+                position_id: PositionId::from(
+                    format!("{}-daily-ms", leg.instrument_id).as_str(),
+                ),
+                account_id: AccountId::from("XKRX-001"),
+                opening_order_id: leg.opening_order_id,
+                entry: OrderSide::Buy,
+                side: PositionSide::Long,
+                signed_qty: leg.quantity,
+                quantity: Quantity::from(leg.quantity as i64),
+                last_qty: Quantity::from(leg.quantity as i64),
+                last_px: Price::new(leg.entry_price, 0),
+                currency: Currency::KRW(),
+                avg_px_open: leg.entry_price,
+                event_id: UUID4::default(),
+                ts_event: UnixNanos::from(1_000_000_000),
+                ts_init: UnixNanos::from(1_000_000_000),
+            };
+            Strategy::on_position_opened(&mut strategy, event);
+        }
+        assert!(strategy.pending_leg.is_empty());
+        assert_eq!(strategy.open.len(), 2);
+        assert_eq!(strategy.book.opened_position_ids().len(), 2);
+        assert_eq!(strategy.entry_risk.opened_entries(), orders);
     }
 
     #[test]

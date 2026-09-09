@@ -350,6 +350,45 @@ async fn no_short_is_ever_opened_and_an_exit_closes_its_own_position() {
     }
 }
 
+/// R29: the live-only Netting strategy configuration makes a stop exit reduce the
+/// long to zero; it cannot cross the book through zero and create a short.
+#[tokio::test]
+async fn netting_stop_exit_reduces_to_zero_and_never_flips_short() {
+    let dir = tempdir().unwrap();
+    let mut spec = SymbolSpec::new(CODES[0], 50_000, 1_000_000);
+    spec.lows.insert(FIRST_IN_RANGE + 2, 47_800);
+    build_fixture(dir.path(), std::slice::from_ref(&spec)).await;
+
+    let sink = DecisionSink::new();
+    let params = DailyParams { target_m: 1, ..DailyParams::default() };
+    let strategy_params = params.clone();
+    let strategy_sink = sink.clone();
+    let outcome = run_daily(
+        cfg_range(dir.path(), FIRST_IN_RANGE, FIRST_IN_RANGE + 2, 1),
+        sink,
+        rank_by_placeholder_signal,
+        move |mounted| {
+            let claims = mounted.iter().map(|symbol| symbol.instrument_id).collect();
+            DailyStrategy::new(
+                mounted.to_vec(),
+                strategy_params,
+                strategy_sink,
+                AdjustmentBasisShifts::none(),
+            )
+            .with_external_order_claims(claims)
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.positions.len(), 1);
+    let position = &outcome.positions[0];
+    assert!(position.is_closed(), "the stop flattened the live-configured leg");
+    assert_eq!(position.signed_qty, 0.0);
+    assert_eq!(position.side, PositionSide::Flat);
+    assert_ne!(position.side, PositionSide::Short);
+}
+
 /// **Scenario 9.** A symbol carrying a recorded adjustment-basis shift inside its
 /// prospective hold window is refused **with the reason recorded**, while an
 /// unaffected name on the same session trades normally. Asserted by the PRESENCE of

@@ -24,6 +24,59 @@ use serde::{Deserialize, Serialize};
 
 use crate::params::STRATEGY_ID;
 
+/// The freezable cross-sectional ranking signal used by the daily lineage.
+///
+/// `Placeholder` remains a real serialized variant: runs made before the attended
+/// freeze must remain identifiable and must continue to be refused by the holdout
+/// judgment rather than being silently reinterpreted as the selected signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RankingSignalKind {
+    /// The pre-freeze total ordering, prior-session turnover descending.
+    Placeholder,
+    /// The same liquidity ordering as the placeholder, but eligible to be frozen.
+    PriorTurnoverDesc,
+    /// Twelve-session momentum excluding the immediately prior session.
+    Momentum12x1,
+}
+
+impl RankingSignalKind {
+    /// Stable artifact/decision name for this signal.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Placeholder => "prior_turnover_desc",
+            Self::PriorTurnoverDesc => "prior_turnover_desc",
+            Self::Momentum12x1 => "momentum_12x1",
+        }
+    }
+
+    /// Whether a run made with this signal is barred from holdout judgment.
+    #[must_use]
+    pub const fn is_placeholder(self) -> bool {
+        matches!(self, Self::Placeholder)
+    }
+
+    /// Prior daily bars required before the signal can score a symbol.
+    #[must_use]
+    pub const fn warmup_bars(self) -> usize {
+        match self {
+            Self::Placeholder | Self::PriorTurnoverDesc => 1,
+            Self::Momentum12x1 => 13,
+        }
+    }
+}
+
+impl Default for RankingSignalKind {
+    fn default() -> Self {
+        Self::Placeholder
+    }
+}
+
+/// The attended ranking-signal freeze. U4 changes this constant only after the
+/// candidate comparison; `None` keeps the pre-freeze placeholder admissible.
+pub const FROZEN_RANKING_SIGNAL: Option<RankingSignalKind> = None;
+
 /// The strategy identifier every daily run records in its manifest and run id — the
 /// registry discriminator (KTD14).
 ///
@@ -106,6 +159,10 @@ pub struct DailyParams {
     /// Strategy version — bumped when the daily strategy changes.
     #[serde(default)]
     pub strategy_version: u32,
+    /// The cross-sectional ranking signal. The serde default deliberately remains
+    /// [`RankingSignalKind::Placeholder`] so older manifests stay marked unjudgeable.
+    #[serde(default)]
+    pub ranking_signal: RankingSignalKind,
     /// The multi-session hold in sessions. Frozen at
     /// [`FROZEN_HOLDING_PERIOD_SESSIONS`]; `validate()` rejects any other value in
     /// **both** directions (a shorter hold under-accrues the registered effect; a
@@ -198,6 +255,7 @@ impl Default for DailyParams {
         DailyParams {
             strategy_id: default_strategy_id(),
             strategy_version: 0,
+            ranking_signal: RankingSignalKind::Placeholder,
             holding_period_sessions: default_holding_period_sessions(),
             target_m: default_target_m(),
             max_concurrent: default_max_concurrent(),
@@ -243,6 +301,7 @@ impl DailyParams {
                 self.strategy_id
             ));
         }
+        self.validate_ranking_signal(FROZEN_RANKING_SIGNAL)?;
         // --- the frozen terms ------------------------------------------------------
         if self.holding_period_sessions < FROZEN_HOLDING_PERIOD_SESSIONS {
             return Err(format!(
@@ -362,6 +421,30 @@ impl DailyParams {
         Ok(())
     }
 
+    /// Validate signal selection against a supplied freeze.
+    ///
+    /// Kept as a narrow seam so the `Some(X)` posture is testable while the shipped
+    /// governance constant is still `None`; once U4 pins it, [`Self::validate`]
+    /// exercises the same branch directly.
+    pub fn validate_ranking_signal(
+        &self,
+        frozen: Option<RankingSignalKind>,
+    ) -> Result<(), String> {
+        if let Some(frozen) = frozen {
+            if self.ranking_signal != frozen {
+                return Err(format!(
+                    "ranking_signal {:?} is not the frozen {:?} ({}) — selecting another \
+                     signal changes the registered lineage; re-freeze it rather than \
+                     overriding a run",
+                    self.ranking_signal,
+                    frozen,
+                    frozen.name(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The steady-state open-position count this parameter set implies:
     /// `target_m × holding_period_sessions`. At the frozen terms this is
     /// [`FROZEN_STEADY_STATE_CONCURRENCY`] (128).
@@ -400,6 +483,41 @@ impl DailyParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranking_signal_defaults_to_the_real_placeholder_variant() {
+        let p = DailyParams::default();
+        assert_eq!(p.ranking_signal, RankingSignalKind::Placeholder);
+        assert!(p.ranking_signal.is_placeholder());
+        assert_eq!(p.ranking_signal.name(), "prior_turnover_desc");
+        assert_eq!(FROZEN_RANKING_SIGNAL, None);
+    }
+
+    #[test]
+    fn every_ranking_signal_declares_its_warmup() {
+        assert_eq!(RankingSignalKind::Placeholder.warmup_bars(), 1);
+        assert_eq!(RankingSignalKind::PriorTurnoverDesc.warmup_bars(), 1);
+        assert_eq!(RankingSignalKind::Momentum12x1.warmup_bars(), 13);
+    }
+
+    #[test]
+    fn a_frozen_signal_rejects_a_different_variant() {
+        let p = DailyParams {
+            ranking_signal: RankingSignalKind::PriorTurnoverDesc,
+            ..DailyParams::default()
+        };
+        let err = p
+            .validate_ranking_signal(Some(RankingSignalKind::Momentum12x1))
+            .expect_err("a frozen signal is the only admissible signal");
+        assert!(err.contains("ranking_signal"), "{err}");
+        assert!(err.contains("momentum_12x1"), "{err}");
+        assert!(DailyParams {
+            ranking_signal: RankingSignalKind::Momentum12x1,
+            ..DailyParams::default()
+        }
+        .validate_ranking_signal(Some(RankingSignalKind::Momentum12x1))
+        .is_ok());
+    }
 
     #[test]
     fn the_default_set_validates_and_carries_the_frozen_steady_state() {

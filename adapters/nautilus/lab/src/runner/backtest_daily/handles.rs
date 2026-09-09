@@ -7,6 +7,17 @@
 //! beside each other so the direction of travel is legible: the strategy writes
 //! [`OpenPositionBook`], the runner writes [`DailySessionSignals`], and the runner
 //! reads both between batches without the per-session position report R4 forbids.
+//!
+//! KTD12 keeps the execution identities separate. Live calls
+//! `with_external_order_claims` and therefore registers Netting: a stop sell
+//! reduces `+q` by exactly `q` (`+q - q = 0`, never `< 0`), while a later buy
+//! increases/reopens that one instrument position. Backtest never calls that
+//! builder: its `StrategyConfig` remains `(oms_type=None,
+//! external_order_claims=None)` and its venue remains Hedging. Thus with all live
+//! hooks absent, `B_after = B_before`, so
+//! `trades_after(B) = trades_before(B)` and
+//! `performance_after(B) = performance_before(B)` byte-for-byte; the 21-session
+//! fixture regression in `tests/backtest_daily_run.rs` executes that equation.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -36,10 +47,10 @@ pub struct OpenPositionBook {
 struct BookState {
     /// The instruments currently holding an open position.
     open: BTreeSet<InstrumentId>,
-    /// Every position id observed opening across the stream, in observation order.
-    /// The runner compares this against the single post-`end()` cache read, which is
-    /// the check that catches a Netting venue silently snapshotting earlier round
-    /// trips out of the live index (KTD12).
+    /// Every position id observed opening across the backtest stream, in observation
+    /// order. The backtest's separately configured Hedging venue preserves one id per
+    /// round trip; live explicitly uses Netting, where an exit reduces the restored
+    /// leg and a re-entry increases/reopens that instrument (KTD12).
     opened: Vec<PositionId>,
 }
 
@@ -55,6 +66,13 @@ impl OpenPositionBook {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         st.open.insert(instrument_id);
         st.opened.push(position_id);
+    }
+
+    /// Mark a broker-confirmed restored leg held before reconciliation emits its
+    /// opening event. This deliberately does not append to `opened`: the event stream
+    /// remains the independent witness for the later cache reconciliation.
+    pub fn seed_held(&self, instrument_id: InstrumentId) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).open.insert(instrument_id);
     }
 
     /// Record the position on `instrument_id` closing.

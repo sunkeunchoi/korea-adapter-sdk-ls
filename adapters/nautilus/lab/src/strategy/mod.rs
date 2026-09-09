@@ -1,6 +1,8 @@
 //! Strategy payloads for the lab. ORB v0 is the first (KTD6).
 
 pub mod daily;
+pub mod daily_signal;
+pub mod hooks;
 pub mod orb;
 
 /// The ORB strategy source, embedded at compile time. Its hash rides in the run
@@ -18,4 +20,4 @@ pub const ORB_SOURCE: &str = include_str!("orb.rs");
 /// dispatch inside `strategy_code_hash()` (KTD5): that function's eight production
 /// call sites are all ORB-domain, so parameterising it would buy eight edits that all
 /// pass the literal `"orb"` on the most identity-critical function in the crate.
-pub const DAILY_SOURCE: &str = include_str!("daily.rs");
+pub const DAILY_SOURCE: &str = concat!(include_str!("daily.rs"), include_str!("daily_signal.rs"));

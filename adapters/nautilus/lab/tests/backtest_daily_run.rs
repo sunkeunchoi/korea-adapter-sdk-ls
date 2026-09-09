@@ -30,11 +30,14 @@ mod tick_grid;
 
 use std::collections::{BTreeSet, HashMap};
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, TimeZone};
 use nautilus_ls::ingest::{build_daily_bar, write_bars, BarKind};
 use nautilus_ls_lab::agent::envelope::{Decision, DecisionEnvelope};
 use nautilus_ls_lab::agent::sink::DecisionSink;
-use nautilus_ls_lab::runner::backtest_daily::{run_daily, select_daily_sessions};
+use nautilus_ls_lab::artifacts::performance::PerformanceReport;
+use nautilus_ls_lab::params_daily::DailyParams;
+use nautilus_ls_lab::runner::backtest_daily::{run, run_daily, select_daily_sessions};
+use nautilus_ls_lab::strategy::daily::{rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy};
 use nautilus_ls_lab::strategy::orb::UniverseCandidate;
 use nautilus_model::identifiers::{InstrumentId, PositionId};
 use tempfile::tempdir;
@@ -48,6 +51,54 @@ use fixture::{
 // ---------------------------------------------------------------------------
 // E. Engine-phase scenarios
 // ---------------------------------------------------------------------------
+
+/// The one-identity-move regression equation: with every live hook absent, the
+/// governed default (`Placeholder`) produces the same trade ledger and full
+/// performance artifact bytes as the pre-existing generic placeholder route.
+///
+/// The live-only `StrategyConfig` move cannot enter either operand: both strategies
+/// are built by `DailyStrategy::factory`, which leaves `oms_type` and
+/// `external_order_claims` as `None`; only `with_external_order_claims` sets them.
+#[tokio::test]
+async fn default_signal_and_unset_hooks_leave_fixture_trades_and_performance_byte_identical() {
+    let generic_home = tempdir().unwrap();
+    let governed_home = tempdir().unwrap();
+    build_daily_fixture(generic_home.path(), &HashMap::new()).await;
+    build_daily_fixture(governed_home.path(), &HashMap::new()).await;
+
+    let params = DailyParams { target_m: 2, ..DailyParams::default() };
+    let generic = run_daily(
+        cfg(generic_home.path(), 2),
+        DecisionSink::new(),
+        rank_by_placeholder_signal,
+        DailyStrategy::factory(
+            params,
+            DecisionSink::new(),
+            AdjustmentBasisShifts::none(),
+        ),
+    )
+    .await
+    .unwrap();
+    let generic_performance = PerformanceReport::from_positions_with_risk(
+        &generic.positions,
+        &generic.entry_risks,
+        100_000_000.0,
+        None,
+    );
+
+    let started = chrono::Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
+    let governed = run(cfg(governed_home.path(), 2), started).await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(&generic_performance.trades).unwrap(),
+        serde_json::to_vec(&governed.performance.trades).unwrap(),
+        "trade ledger bytes changed across the identity-only route"
+    );
+    assert_eq!(
+        serde_json::to_vec(&generic_performance).unwrap(),
+        serde_json::to_vec(&governed.performance).unwrap(),
+        "performance artifact bytes changed across the identity-only route"
+    );
+}
 
 /// **The carry-over test.** A position entered on the first session of a
 /// 21-session fixture is still open at session 5 and closes at hold expiry,

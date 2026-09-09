@@ -85,9 +85,10 @@ use crate::artifacts::observation::{ObservationParts, RunObservation};
 use crate::artifacts::performance::{EntryRisk, PerformanceReport};
 use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::params::OrbParams;
-use crate::params_daily::DailyParams;
+use crate::params_daily::{DailyParams, RankingSignalKind};
 use crate::strategy::daily::{
-    rank_by_placeholder_signal, AdjustmentBasisShifts, DailyStrategy, PLACEHOLDER_RANKING_SIGNAL,
+    rank_by_placeholder_signal, rank_by_signal, record_signal_decisions, AdjustmentBasisShifts,
+    DailyStrategy,
 };
 use crate::strategy::orb::UniverseCandidate;
 
@@ -316,7 +317,7 @@ where
     F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
 {
     let (_catalog_path, _guard) = acquire_catalog_guard(&cfg.data_home)?;
-    run_daily_locked(cfg, sink, rank, make_strategy)
+    run_daily_locked(cfg, sink, rank, make_strategy, None)
         .await
         .map(|locked| locked.outcome)
         .map_err(DailyRunFailure::into_error)
@@ -354,6 +355,7 @@ async fn run_daily_locked<S, R, F>(
     sink: DecisionSink,
     rank: R,
     make_strategy: F,
+    ranking_signal: Option<RankingSignalKind>,
 ) -> Result<LockedDailyRun, DailyRunFailure>
 where
     S: DailyPathStrategy
@@ -414,6 +416,7 @@ where
     let params = cfg.assembly_params();
     let starting_balance = cfg.starting_balance;
     let target_m = cfg.daily.target_m;
+    let daily_params = cfg.daily.clone();
     let blocking = tokio::task::spawn_blocking(move || {
         run_daily_blocking(
             DailyBlockingRun {
@@ -426,6 +429,8 @@ where
                 start_ns,
                 end_ns,
                 rank: &rank,
+                ranking_signal,
+                daily_params: &daily_params,
             },
             make_strategy,
         )
@@ -535,6 +540,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     let data_home = cfg.data_home.clone();
     let data_range = cfg.range.clone();
     let daily_params = cfg.daily.clone();
+    let ranking_signal = daily_params.ranking_signal;
     let starting_balance = cfg.starting_balance;
     let expected_run_id = run_id(
         start,
@@ -565,6 +571,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         sink.clone(),
         rank_by_placeholder_signal,
         make_strategy,
+        Some(ranking_signal),
     )
     .await;
     let (writer, locked) = resolve_locked_run(writer, locked)?;
@@ -715,6 +722,7 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
     // Its `strategy_id` still reads "orb" and is deliberately ignored here; U8's filters key
     // on `Manifest.strategy_id`, which `new_daily` takes from the daily discriminator, so
     // this recorded set can never be selected as an ORB baseline.
+    let ranking_signal = p.daily_params.ranking_signal;
     let manifest = match Manifest::new_daily(DailyManifestParts {
         daily: p.daily_params,
         assembly_params: p.assembly_params,
@@ -744,8 +752,8 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         catalog_fingerprint: &manifest.catalog_fingerprint,
         performance: &performance,
         session_dates: &session_dates,
-        ranking_signal: PLACEHOLDER_RANKING_SIGNAL.name,
-        ranking_signal_is_placeholder: PLACEHOLDER_RANKING_SIGNAL.placeholder,
+        ranking_signal: ranking_signal.name(),
+        ranking_signal_is_placeholder: ranking_signal.is_placeholder(),
     }) {
         Ok(observation) => observation,
         Err(error) => {
@@ -861,6 +869,8 @@ struct DailyBlockingRun<'a, R: ?Sized> {
     start_ns: u64,
     end_ns: u64,
     rank: &'a R,
+    ranking_signal: Option<RankingSignalKind>,
+    daily_params: &'a DailyParams,
 }
 
 /// The whole daily lifecycle on one blocking thread: index once, run the pure
@@ -890,11 +900,60 @@ where
         start_ns,
         end_ns,
         rank,
+        ranking_signal,
+        daily_params,
     } = run;
     let (daily_by_inst, daily_by_date) = index_daily(all_bars, start_ns, end_ns);
     let session_dates = session_dates_of(&daily_by_date);
-    let selection =
-        select_from_index(instruments, &daily_by_inst, &session_dates, params, sink, rank)?;
+    let selection = if let Some(kind) = ranking_signal {
+        let next_session = std::cell::Cell::new(0usize);
+        let governed_rank = |candidates: &[UniverseCandidate]| {
+            let index = next_session.get();
+            next_session.set(index + 1);
+            let date = session_dates[index];
+            let prior_closes: BTreeMap<String, Vec<f64>> = candidates
+                .iter()
+                .map(|candidate| {
+                    let instrument_id = InstrumentId::from(candidate.symbol.as_str());
+                    let closes = daily_by_inst
+                        .get(&instrument_id)
+                        .into_iter()
+                        .flatten()
+                        .filter(|bar| crate::runner::backtest::kst_date_of(bar) < date)
+                        .map(|bar| bar.close.as_f64())
+                        .collect::<Vec<_>>();
+                    (candidate.symbol.clone(), closes)
+                })
+                .collect();
+            let ranking = rank_by_signal(kind, candidates, &prior_closes);
+            let session_ts = kst_to_unix_nanos(date, nautilus_ls::rules::KRX_REGULAR_OPEN)
+                .expect("a selected session date converts to its KRX open")
+                .as_u64();
+            record_signal_decisions(
+                sink,
+                daily_params,
+                session_ts,
+                candidates,
+                &prior_closes,
+                &ranking,
+            );
+            ranking.ranked
+        };
+        // The governed ranker emitted the signal-aware records above. The generic
+        // selection module receives a detached sink so it can remain byte-identical
+        // for existing custom-ranker callers without duplicating those records.
+        let detached_selection_sink = DecisionSink::new();
+        select_from_index(
+            instruments,
+            &daily_by_inst,
+            &session_dates,
+            params,
+            &detached_selection_sink,
+            &governed_rank,
+        )?
+    } else {
+        select_from_index(instruments, &daily_by_inst, &session_dates, params, sink, rank)?
+    };
 
     let engine_out = engine_phase(
         instruments,
