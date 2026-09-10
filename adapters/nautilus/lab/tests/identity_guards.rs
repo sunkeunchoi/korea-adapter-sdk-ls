@@ -153,6 +153,23 @@ fn the_daily_code_and_governed_parameter_hashes_are_pinned() {
     );
 }
 
+/// The judging path refuses a run whose hashes differ from these same pins, but it carries
+/// its own literal copies. Nothing else ties the two sets together, so a re-baseline that
+/// updated one file and not the other would leave this guard green while `lineage judge`
+/// refused every legitimate run (or, worse, admitted one built from the old source).
+#[test]
+fn the_lineage_judging_pins_match_the_guarded_digests() {
+    assert_eq!(
+        nautilus_ls_lab::runner::lineage::PINNED_DAILY_CODE_HASH, PINNED_DAILY_CODE_HASH,
+        "runner::lineage's code pin drifted from the identity_guards pin"
+    );
+    assert_eq!(
+        nautilus_ls_lab::runner::lineage::PINNED_DAILY_PARAMS_HASH,
+        PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH,
+        "runner::lineage's params pin drifted from the identity_guards pin"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Scenario 4-6: the surfaces outside every pinned hash
 // ---------------------------------------------------------------------------

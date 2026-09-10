@@ -62,7 +62,7 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::artifacts::manifest::DataRange;
+use crate::artifacts::manifest::{DataRange, Manifest};
 use crate::artifacts::performance::PerformanceReport;
 
 /// The observation schema version. Bumped when a field's meaning changes; a new field is
@@ -107,6 +107,12 @@ pub struct JudgmentArguments {
 /// Why an observation could not be built, or could not yield judgment arguments.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ObservationError {
+    /// An observation consumer was pointed at another strategy's run.
+    #[error("run {run_id}: strategy-id mismatch: expected daily-ms, got {strategy_id}")]
+    StrategyMismatch { run_id: String, strategy_id: String },
+    /// An unreadable artifact or inconsistent observation/manifest pair.
+    #[error("reading run observation: {detail}")]
+    Read { detail: String },
     /// R25. The run's `return_on_risk` is `None`.
     #[error(
         "run {run_id} has no return_on_risk, so no observation is written: the frozen verdict \
@@ -164,6 +170,10 @@ pub struct RunObservation {
     pub closed_positions: u32,
     /// Every in-range session, in date order (R14).
     pub sessions: Vec<SessionRow>,
+    /// Explicitly recorded warmup dates. Legacy observations mark none; inactivity
+    /// alone is never evidence of warmup. Recheck validates these against the calendar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warmup_sessions: Vec<NaiveDate>,
 }
 
 /// The inputs [`RunObservation::build`] cannot derive for itself.
@@ -188,6 +198,11 @@ pub(crate) struct ObservationParts<'a> {
     /// Every in-range session date, in order. Supplied by the runner's selection phase
     /// rather than derived from the trades, so a session with no activity still gets a row.
     pub session_dates: &'a [NaiveDate],
+    /// The leading in-range sessions the ranking signal could not yet score, from the same
+    /// selection phase as `session_dates`. Empty when the runner loaded its warmup from
+    /// before the window, which is the intended shape — inactivity alone is never evidence
+    /// of warmup, so this is recorded rather than inferred.
+    pub warmup_session_dates: &'a [NaiveDate],
     /// The ranking signal's name.
     pub ranking_signal: &'a str,
     /// Whether that signal is the placeholder.
@@ -195,6 +210,37 @@ pub(crate) struct ObservationParts<'a> {
 }
 
 impl RunObservation {
+    /// Read the observation with its manifest, checking strategy and shared provenance.
+    /// The manifest is checked first: even an ORB run with no observation gets the
+    /// strategy mismatch refusal, rather than an incidental missing-file error.
+    pub fn read(run_dir: &std::path::Path) -> Result<(Self, Manifest), ObservationError> {
+        fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, ObservationError> {
+            let bytes = std::fs::read(path).map_err(|e| ObservationError::Read {
+                detail: format!("{}: {e}", path.display()),
+            })?;
+            serde_json::from_slice(&bytes).map_err(|e| ObservationError::Read {
+                detail: format!("{}: {e}", path.display()),
+            })
+        }
+        let manifest: Manifest = read(&run_dir.join(crate::artifacts::MANIFEST_FILE))?;
+        if manifest.strategy_id != crate::params_daily::DAILY_STRATEGY_ID {
+            return Err(ObservationError::StrategyMismatch {
+                run_id: manifest.run_id, strategy_id: manifest.strategy_id,
+            });
+        }
+        manifest.validate_strategy_identity().map_err(|detail| ObservationError::Read { detail })?;
+        let observation: Self = read(&run_dir.join(crate::artifacts::OBSERVATION_FILE))?;
+        if observation.schema_version != OBSERVATION_SCHEMA_VERSION
+            || observation.run_id != manifest.run_id
+            || observation.data_range != manifest.data_range
+            || observation.catalog_fingerprint != manifest.catalog_fingerprint
+            || !observation.observed_net_ror.is_finite()
+        {
+            return Err(ObservationError::Read { detail: "observation/manifest provenance or schema mismatch".into() });
+        }
+        Ok((observation, manifest))
+    }
+
     /// Build the observation, or refuse.
     ///
     /// # Errors
@@ -258,6 +304,7 @@ impl RunObservation {
             censored_positions: censored,
             closed_positions: closed,
             sessions: rows,
+            warmup_sessions: parts.warmup_session_dates.to_vec(),
         })
     }
 
@@ -380,6 +427,7 @@ mod tests {
             catalog_fingerprint: "cafe1234",
             performance: perf,
             session_dates: dates,
+            warmup_session_dates: &[],
             ranking_signal: "prior_turnover_desc",
             ranking_signal_is_placeholder: placeholder,
         }

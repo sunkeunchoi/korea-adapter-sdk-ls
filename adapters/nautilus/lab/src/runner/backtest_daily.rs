@@ -752,6 +752,12 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         catalog_fingerprint: &manifest.catalog_fingerprint,
         performance: &performance,
         session_dates: &session_dates,
+        // No warmup is loaded yet, so none is marked. The warmup loader is U4's unit
+        // (it reads the lookback from before `LS_BTD_SDATE`, leaving every in-window
+        // session scoreable and this slice correctly empty). Until it lands, a signal
+        // that needs prior bars warms up *inside* the window instead, and the re-check
+        // refuses such a run rather than scoring participation it cannot trust.
+        warmup_session_dates: &[],
         ranking_signal: ranking_signal.name(),
         ranking_signal_is_placeholder: ranking_signal.is_placeholder(),
     }) {

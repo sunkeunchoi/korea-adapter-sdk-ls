@@ -1791,7 +1791,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | lineage recheck --run <spec-run> | lineage judge --run <holdout-run> --recheck <recheck-run> | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1875,6 +1875,19 @@ fn print_lines(lines: &[String]) {
 fn dispatch() -> anyhow::Result<ExitCode> {
     let sub = std::env::args().nth(1);
     match sub.as_deref() {
+        Some("lineage") => match std::env::args().nth(2).as_deref() {
+            Some("recheck") => {
+                let out = crate::runner::lineage::run_recheck_cli()?;
+                print_lines(&out.lines);
+                Ok(out.exit.exit_code())
+            }
+            Some("judge") => {
+                let out = crate::runner::lineage::run_judge_cli()?;
+                print_lines(&out.lines);
+                Ok(out.exit.exit_code())
+            }
+            other => anyhow::bail!("unknown `lineage` subcommand {other:?} — want `recheck` | `judge`\n{USAGE}"),
+        },
         Some("turn") => match std::env::args().nth(2).as_deref() {
             // U5: the Phase-A diagnose stage as a standalone subcommand.
             Some("diagnose") => {

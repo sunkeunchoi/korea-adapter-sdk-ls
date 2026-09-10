@@ -642,6 +642,42 @@ impl SplitMix64 {
 /// The choice is recorded with the verdict rather than left implicit.
 pub type Block = Vec<(f64, f64)>;
 
+/// Group closed trades by consecutive calendar exit sessions, including empty
+/// sessions and the final short block. Open positions contribute neither sum.
+/// `block_length_sessions` comes from the lineage freeze (currently 16).
+/// Refuses unordered sessions, exits outside the calendar, and missing/invalid risk.
+pub fn exit_session_blocks(
+    trades: &[crate::artifacts::performance::TradeRecord],
+    sessions: &[chrono::NaiveDate],
+    block_length_sessions: usize,
+) -> Result<Vec<Block>, StatsError> {
+    if block_length_sessions == 0 || sessions.is_empty()
+        || sessions.windows(2).any(|w| w[0] >= w[1])
+    {
+        return Err(StatsError::Domain {
+            what: "exit-session blocks", expected: "positive length and strictly ordered sessions",
+            got: format!("length {block_length_sessions}, {} sessions", sessions.len()),
+        });
+    }
+    let mut blocks = vec![Vec::new(); sessions.len().div_ceil(block_length_sessions)];
+    for trade in trades {
+        let Some(ts) = trade.ts_closed else { continue; };
+        let date = nautilus_ls::ingest::kst_date_of(nautilus_core::UnixNanos::from(ts));
+        let index = sessions.binary_search(&date).map_err(|_| StatsError::Domain {
+            what: "exit session", expected: "a supplied calendar session", got: date.to_string(),
+        })?;
+        let risk = trade.risk_capital.ok_or_else(|| StatsError::Domain {
+            what: "risk_capital", expected: "present on every closed trade", got: "None".into(),
+        })?;
+        require_finite_positive("risk_capital", risk)?;
+        if !trade.realized_pnl.is_finite() {
+            return Err(domain("realized_pnl", "finite", trade.realized_pnl));
+        }
+        blocks[index / block_length_sessions].push((trade.realized_pnl, risk));
+    }
+    Ok(blocks)
+}
+
 /// A block-bootstrap outcome for a ratio statistic `Σnum / Σden`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootstrapOutcome {

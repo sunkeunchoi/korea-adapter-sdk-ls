@@ -5,6 +5,7 @@ pub mod backtest_daily;
 pub mod diagnose;
 pub mod governed;
 pub mod live;
+pub mod lineage;
 pub mod mount_universe;
 pub mod next;
 pub mod pnl;
