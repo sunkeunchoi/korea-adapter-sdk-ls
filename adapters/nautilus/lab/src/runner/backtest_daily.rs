@@ -723,6 +723,28 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
     // on `Manifest.strategy_id`, which `new_daily` takes from the daily discriminator, so
     // this recorded set can never be selected as an ORB baseline.
     let ranking_signal = p.daily_params.ranking_signal;
+
+    // Warmup (U4). Every catalog daily bar feeds the signal — `index_daily` buckets ALL
+    // daily bars per instrument, in-range or not — so a signal's lookback is loaded from
+    // before `LS_BTD_SDATE` whenever the catalog holds it, and nothing is marked. When the
+    // catalog does NOT (the judgment home's floor IS the specification window's first
+    // session, KTD10), the signal cannot score the window's opening sessions and warms up
+    // inside it. Those are the leading in-range sessions whose ranked list came back
+    // EMPTY — recorded here from the selection phase, never inferred from inactivity —
+    // so the re-check measures participation over the sessions the signal could score and
+    // refuses an entry inside the marked prefix. Only a signal that needs prior bars has a
+    // warmup; the one-bar signals are scoreable from the first session that has a prior.
+    let warmup_session_dates: Vec<NaiveDate> = if ranking_signal.warmup_bars() > 1 {
+        p.outcome
+            .selection
+            .sessions
+            .iter()
+            .take_while(|s| s.ranked.is_empty())
+            .map(|s| s.date)
+            .collect()
+    } else {
+        Vec::new()
+    };
     let manifest = match Manifest::new_daily(DailyManifestParts {
         daily: p.daily_params,
         assembly_params: p.assembly_params,
@@ -752,12 +774,7 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         catalog_fingerprint: &manifest.catalog_fingerprint,
         performance: &performance,
         session_dates: &session_dates,
-        // No warmup is loaded yet, so none is marked. The warmup loader is U4's unit
-        // (it reads the lookback from before `LS_BTD_SDATE`, leaving every in-window
-        // session scoreable and this slice correctly empty). Until it lands, a signal
-        // that needs prior bars warms up *inside* the window instead, and the re-check
-        // refuses such a run rather than scoring participation it cannot trust.
-        warmup_session_dates: &[],
+        warmup_session_dates: &warmup_session_dates,
         ranking_signal: ranking_signal.name(),
         ranking_signal_is_placeholder: ranking_signal.is_placeholder(),
     }) {
@@ -805,7 +822,9 @@ fn env_parsed<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T> 
 
 /// CLI entry point for the `lab-backtest-daily` bin (R18). Reads config from env:
 /// `LS_DATA_HOME`, `LS_BTD_SDATE`, `LS_BTD_EDATE` (required); `LS_BTD_TARGET_M`,
-/// `LS_BTD_BALANCE`, `LS_BTD_NOTIONAL`, `LS_BTD_VERSION` (optional).
+/// `LS_BTD_BALANCE`, `LS_BTD_NOTIONAL`, `LS_BTD_VERSION` (optional); `LS_BTD_SIGNAL` (the
+/// candidate under test, manifest spelling; unset = placeholder) and `LS_BT_COST_CONFIG`
+/// (the committed rate artifact; unset = zero-cost) — see [`apply_signal_and_cost_env`].
 ///
 /// Every optional numeric variable hard-errors on a malformed value rather than
 /// defaulting. The frozen terms — hold, directionality, stop multiple, ATR window — take
@@ -828,6 +847,9 @@ pub fn main_cli() -> anyhow::Result<()> {
     cfg.daily.notional_per_position =
         env_parsed("LS_BTD_NOTIONAL", cfg.daily.notional_per_position)?;
     cfg.daily.strategy_version = env_parsed("LS_BTD_VERSION", cfg.daily.strategy_version)?;
+    for line in apply_signal_and_cost_env(&mut cfg, |key| std::env::var(key).ok())? {
+        println!("{line}");
+    }
 
     let rt = tokio::runtime::Runtime::new()?;
     let result = rt.block_on(run(cfg, Utc::now()))?;
@@ -835,6 +857,66 @@ pub fn main_cli() -> anyhow::Result<()> {
     // output never scrolls away under nautilus's ~8,900 INFO lines per session.
     print!("{}", daily_summary_block(&result));
     Ok(())
+}
+
+/// The candidate-selection knob: which ranking signal the run ranks under
+/// (`RankingSignalKind`'s serde spelling — `placeholder`, `prior_turnover_desc`,
+/// `momentum12x1`). Unset keeps [`DailyParams::default`]'s placeholder.
+pub const SIGNAL_ENV: &str = "LS_BTD_SIGNAL";
+
+/// The transaction-cost knob, shared with the ORB path by name and by loader: the
+/// committed rate artifact (`lab/config/transaction-costs.json`) whose rates land in the
+/// assembly params, which is where `finalize_daily_run` builds the cost model from and
+/// what the manifest records as provenance. Unset keeps the zero-cost reproduction path.
+pub const COST_CONFIG_ENV: &str = "LS_BT_COST_CONFIG";
+
+/// Apply the two U4 knobs from an environment lookup (plan 2026-09-08-1215 U4): the
+/// ranking signal and the transaction-cost artifact. Returns the operator lines to print.
+///
+/// Takes the lookup rather than reading the process environment so the wiring is testable
+/// without mutating global state across a parallel test binary. A signal other than
+/// [`FROZEN_RANKING_SIGNAL`] is not refused HERE — `DailyParams::validate` refuses it at
+/// the same fail-fast point every other frozen term is checked, and a second copy of that
+/// rule would be a second place to get it wrong.
+///
+/// # Errors
+///
+/// If the signal name is not one of the serde spellings, or the cost artifact fails to load.
+pub fn apply_signal_and_cost_env(
+    cfg: &mut DailyBacktestConfig,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<Vec<String>> {
+    let mut notes = Vec::new();
+    if let Some(raw) = lookup(SIGNAL_ENV).filter(|s| !s.trim().is_empty()) {
+        let kind = crate::runner::mount_universe::ranking_signal_from_name(&raw).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{SIGNAL_ENV}={raw:?} is not a ranking signal; expected one of placeholder, \
+                 prior_turnover_desc, momentum12x1 (the manifest spelling) — refusing rather \
+                 than defaulting to the placeholder"
+            )
+        })?;
+        cfg.daily.ranking_signal = kind;
+        notes.push(format!(
+            "ranking signal: {} (warmup {} prior bar(s); placeholder={})",
+            kind.name(),
+            kind.warmup_bars(),
+            kind.is_placeholder()
+        ));
+    }
+    if let Some(path) = lookup(COST_CONFIG_ENV).filter(|s| !s.trim().is_empty()) {
+        let cost_cfg =
+            crate::strategy::orb::TransactionCostConfig::load(Path::new(path.trim()))
+                .map_err(|e| anyhow::anyhow!(e))?;
+        cfg.params.cost_commission_rate_per_side = cost_cfg.commission_rate_per_side;
+        cfg.params.cost_sell_tax_rate = cost_cfg.sell_tax_rate;
+        notes.push(format!(
+            "transaction costs armed: commission {}/side, sell tax {} (from {})",
+            cost_cfg.commission_rate_per_side,
+            cost_cfg.sell_tax_rate,
+            path.trim()
+        ));
+    }
+    Ok(notes)
 }
 
 /// The `lab-backtest-daily` trailing summary block.

@@ -27,6 +27,8 @@ mod fixture;
 mod observation;
 #[path = "backtest_daily_run/tick_grid.rs"]
 mod tick_grid;
+#[path = "backtest_daily_run/warmup_and_cost.rs"]
+mod warmup_and_cost;
 
 use std::collections::{BTreeSet, HashMap};
 
