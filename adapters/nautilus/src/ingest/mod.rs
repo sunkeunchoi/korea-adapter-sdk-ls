@@ -3348,6 +3348,57 @@ fn last_gap(cp: &Checkpoint) -> checkpoint::CoverageGap {
     cp.gaps().last().cloned().expect("a gap was just recorded")
 }
 
+/// The marker filename that declares a data home's catalog **frozen** (KTD10 of plan
+/// 2026-09-08-1215): the judgment home is the 2026-08-12 catalog and must stay that catalog,
+/// because the lineage's single holdout judgment compares a run against a fingerprint pinned
+/// from exactly those bars (`lab/config/daily-catalog-20160801-20260812.json`).
+///
+/// Accumulating that home forward changes in-range bars, which silently invalidates the pin —
+/// and nothing would say so until the one judgment is attempted and refuses. So the refusal is
+/// moved to the write, where it is loud and early.
+///
+/// The date is part of the name on purpose: it names WHICH freeze this is. A different freeze
+/// is a new governed act (a new pin and a new marker), not a silent reuse of this one.
+pub const FROZEN_CATALOG_MARKER: &str = "FROZEN-20260812";
+
+/// Refuse a catalog mutation when the home is marked frozen.
+///
+/// Called by every entry point that changes catalog CONTENT — [`write_bars`],
+/// [`write_instruments`], [`delete_bar_series`], [`compact_catalog`] — so no accumulate,
+/// backfill, rebase, heal or compaction can reach a frozen home through any caller. Reads are
+/// deliberately untouched: the frozen home exists precisely to be read (the candidate and
+/// holdout backtests run against it), and refusing reads would make the freeze useless.
+///
+/// The marker's canonical home is the DATA HOME (`<data_home>/FROZEN-20260812`, beside
+/// `catalog/`), which is what the plan specifies. The catalog directory itself is also checked,
+/// so a marker dropped one level in still protects rather than silently doing nothing — a guard
+/// that fails to fire because the file sits one directory over is the failure mode this whole
+/// mechanism exists to avoid.
+///
+/// # Errors
+///
+/// [`AdapterError::Ingest`] naming the marker found and what it protects.
+pub fn ensure_catalog_writable(catalog_path: &Path) -> AdapterResult<()> {
+    let candidates = [
+        catalog_path.parent().map(|home| home.join(FROZEN_CATALOG_MARKER)),
+        Some(catalog_path.join(FROZEN_CATALOG_MARKER)),
+    ];
+    for marker in candidates.into_iter().flatten() {
+        if marker.exists() {
+            return Err(AdapterError::Ingest(format!(
+                "refusing to write to a FROZEN catalog: {} exists. This data home is pinned as \
+                 the lineage judgment catalog — its bars back the committed catalog_fingerprint, \
+                 so advancing it would silently invalidate the pin and the single holdout \
+                 judgment would refuse with no way to tell why. Point LS_DATA_HOME at the \
+                 advancing rehearsal home instead, or remove the marker as a governed act \
+                 (re-derivation) and re-pin the fingerprint.",
+                marker.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Write bars to the catalog on a blocking thread — a **fixture-only primitive**
 /// (KTD-2). No production caller may use it directly: it skips the interval-overlap
 /// guard, so a re-ingest that overlaps stored coverage writes a second overlapping
@@ -3367,6 +3418,7 @@ fn last_gap(cp: &Checkpoint) -> checkpoint::CoverageGap {
 /// must go through [`Ingestor`] (which owns the checkpoint), never this. Reserve
 /// direct use for test fixtures / one-off staging.
 pub async fn write_bars(catalog_path: &Path, bars: Vec<Bar>) -> AdapterResult<()> {
+    ensure_catalog_writable(catalog_path)?;
     let path = catalog_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&path)
@@ -3502,6 +3554,7 @@ pub async fn write_instruments(
     catalog_path: &Path,
     instruments: Vec<nautilus_model::instruments::InstrumentAny>,
 ) -> AdapterResult<()> {
+    ensure_catalog_writable(catalog_path)?;
     let path = catalog_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&path)
@@ -3608,6 +3661,7 @@ fn dedup_bars(bars: &mut Vec<Bar>) {
 /// wipe must remove the files. Deleting a series with no stored bars is a no-op
 /// `Ok`. Scoped to ONE bar type: a daily wipe never touches minute bars (KTD-8).
 pub async fn delete_bar_series(catalog_path: &Path, bar_type: BarType) -> AdapterResult<()> {
+    ensure_catalog_writable(catalog_path)?;
     let path = catalog_path.to_path_buf();
     let identifier = bar_type.to_string();
     tokio::task::spawn_blocking(move || {
@@ -3873,6 +3927,7 @@ async fn compact_one_series(
 ///
 /// [`AdapterError::Ingest`] if the lock is held or a catalog/sidecar I/O fails.
 pub async fn compact_catalog(catalog_path: &Path) -> AdapterResult<CompactReport> {
+    ensure_catalog_writable(catalog_path)?;
     let _lock = AdvisoryLock::acquire(catalog_path, LockKind::Ingest)?;
 
     // Crash recovery first: fold any leftover sidecar back before enumerating, so
