@@ -696,7 +696,7 @@ pub(crate) fn build_candidates_with_today_open(
 /// Convert a KRX price to its canonical integer KRW/tick representation without
 /// routing through `f64`. Cataloged domestic-equity prices are precision-zero;
 /// fail loudly if that invariant changes instead of silently rounding a new shape.
-fn canonical_krw_ticks(price: &Price) -> i64 {
+pub(crate) fn canonical_krw_ticks(price: &Price) -> i64 {
     assert_eq!(price.precision, 0, "KRX catalog price must use integer-KRW precision");
     i64::try_from(price.as_decimal().mantissa()).expect("KRX price fits i64 ticks")
 }

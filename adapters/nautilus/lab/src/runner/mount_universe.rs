@@ -52,11 +52,14 @@ use serde::Serialize;
 use crate::agent::envelope::Decision;
 use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
+use crate::params_daily::{DailyParams, RankingSignalKind, FROZEN_RANKING_SIGNAL};
 use crate::runner::backtest::{
-    build_candidates_with_today_open, is_daily, is_minute, kst_date_of, select_prior, shcode_of,
+    build_candidates_with_today_open, canonical_krw_ticks, is_daily, is_minute, kst_date_of,
+    select_prior, shcode_of,
 };
 use crate::runner::live::resolve_mount_head_params;
-use crate::strategy::orb::{kst_time_from_nanos, select_universe};
+use crate::strategy::daily::rank_by_signal;
+use crate::strategy::orb::{kst_time_from_nanos, select_universe, CandidateMeta};
 
 /// One emitted row — the exact shape `--mount` parses (`MountUniverseSymbol`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -756,9 +759,479 @@ pub fn emit(rows: &[MountUniverseRow], path: Option<&Path>) -> anyhow::Result<()
     Ok(())
 }
 
+
+// ===========================================================================
+// Daily rehearsal universe — `lab-mount-universe --daily` (plan 2026-09-08-1215 U10,
+// R24, KTD10; queue `rehearsal-daily-mount-universe`)
+// ===========================================================================
+//
+// The daily-resolution rehearsal (U9) consumes a RANKED list plus each symbol's ATR(1),
+// both derived OFFLINE from the rehearsal home's catalog — the prior sessions' daily bars
+// only. Nothing here reads the gateway: the daily strategy decides at the 15:20 close-
+// auction bar, not the open, so there is no `today_open` to fetch and no pre-09:00 rule.
+//
+// Fidelity rules carried over from the ORB producer above, because the same silent-
+// divergence argument applies:
+//
+// - Candidate ASSEMBLY is the backtest's own `build_candidates_with_today_open` at
+//   `atr_window = DailyParams.atr_window_sessions` (frozen at 1). ATR(1), prior close,
+//   prior turnover and the metadata join are therefore identical to what the daily backtest
+//   derives; this file re-implements none of them.
+// - The RANKING is the strategy's own `rank_by_signal` under `DailyParams.ranking_signal`,
+//   validated against `FROZEN_RANKING_SIGNAL` exactly as a run would be. No top-N cut: the
+//   take (`target_m` minus held) is engine state and belongs to the runner (KTD16).
+// - ORB's `select_universe` (gap floor, `universe_top_n`) and the ORB head resolver are
+//   NOT consulted — they are ORB's hypothesis (KTD15), and a rehearsal home has no ORB head.
+// - A symbol whose ATR(1) cannot be derived is DROPPED, not emitted ATR-less. The entry stop
+//   is `1.5 × ATR(1)` and fail-closed on a missing ATR (KTD9), so an ATR-less row could
+//   never be entered — and the prior-ATR trap (docs/solutions/logic-errors/
+//   prior-atr-absent-silently-disables-the-armed-or-width-gate.md) is exactly an optional
+//   input silently disarming a gate. Likewise a symbol with fewer prior bars than the
+//   signal's warmup is dropped: `rank_by_signal` reports it `unavailable` and it is not
+//   in the ranked list at all.
+// - The designation gate is APPLIED, not enforced: `is_tradable(designation)` marks the row
+//   `tradable: false` rather than dropping it, because the runner must still be able to
+//   EXIT a held symbol that acquired a designation overnight while never entering it (R24).
+//   A symbol the artifact carries no record for has no eligibility evidence and is
+//   `tradable: false` too (fail closed, never defaulted — R4).
+//
+// `signal_value` is `Some` only for the turnover-family signals, whose score IS the
+// candidate's `prior_turnover`. The momentum score lives inside `daily_signal.rs`, which is
+// part of the daily strategy's identity hash and is CLOSED after the U2 move; exposing the
+// score would move the hash and cost a same-version re-baseline, and re-deriving it here
+// would be the parallel implementation this module forbids. `rank` is the strategy's own
+// ordering under every signal and is the value the runner consumes.
+
+/// One emitted rehearsal-universe row. Deliberately NOT [`MountUniverseRow`]: that row is
+/// the ORB mount's contract (`today_open`, RVOL baseline, illiquidity), none of which the
+/// daily strategy reads, and sharing the type would let an ORB file be mounted as a daily
+/// one by accident.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct DailyUniverseRow {
+    /// The 6-digit KRX short code.
+    pub shcode: String,
+    /// Canonical integer prior-session close (KRW).
+    pub prior_close: i64,
+    /// ATR over the single prior session (`FROZEN_ATR_WINDOW_SESSIONS` = 1) — the stop's
+    /// only input (KTD9). Always present in an emitted row; a symbol without it is dropped.
+    pub prior_atr1: f64,
+    /// The ranking signal's score, when the strategy exposes it (see the module note).
+    pub signal_value: Option<f64>,
+    /// The strategy's rank under `ranking_signal`, best first, **0-based**, over EVERY scored
+    /// candidate — not renumbered after ATR drops, so a gap in the emitted sequence is a
+    /// scored symbol that could not be stopped (its identity is on stderr).
+    pub rank: usize,
+    /// `is_tradable(designation)` from the bound artifact: `false` excludes the symbol from
+    /// ENTRY only — the runner may still exit a held position in it (R24).
+    pub tradable: bool,
+}
+
+/// The whole emitted file: the rows plus the binding they were produced under, so the
+/// runner can refuse a file resolved for another session, another signal, or another
+/// designation artifact — a bare row array cannot say which of those it came from.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct DailyUniverseFile {
+    /// The KST session date the rows were resolved FOR (`YYYY-MM-DD`).
+    pub session_date: String,
+    /// The signal that produced `rank` (`RankingSignalKind::name`).
+    pub ranking_signal: String,
+    /// Whether that signal is the pre-freeze placeholder — a rehearsal under it is driver
+    /// falsification only, never evidence about the lineage (KTD9).
+    pub ranking_signal_is_placeholder: bool,
+    /// Prior daily bars the signal required per symbol (`RankingSignalKind::warmup_bars`).
+    pub warmup_bars: usize,
+    /// The content hash of the universe-metadata artifact whose designations gated `tradable`.
+    pub universe_metadata_hash: String,
+    /// The rows, in rank order.
+    pub rows: Vec<DailyUniverseRow>,
+}
+
+/// What to produce, and from where — the daily counterpart of [`MountUniverseConfig`].
+#[derive(Debug, Clone)]
+pub struct DailyUniverseConfig {
+    /// The rehearsal data home whose `catalog/` is read (KTD10: the ADVANCING copy, never
+    /// the frozen judgment home — this producer does not check the marker; the home is the
+    /// operator's choice and the session script's job to point at).
+    pub data_home: PathBuf,
+    /// The KST session date the universe is resolved for.
+    pub session_date: NaiveDate,
+    /// The universe-metadata artifact — the designation source. REQUIRED: without it every
+    /// candidate has no eligibility evidence and the gate has nothing to read.
+    pub metadata_path: PathBuf,
+    /// The daily parameters the rows are derived under — `ranking_signal` and
+    /// `atr_window_sessions` are the two this producer reads.
+    pub daily_params: DailyParams,
+}
+
+/// The environment variable naming the pre-freeze ranking signal.
+pub const DAILY_SIGNAL_ENV: &str = "LS_MOUNT_UNIVERSE_SIGNAL";
+
+/// Parse a ranking-signal name the way a manifest would (`RankingSignalKind`'s serde
+/// form: `placeholder`, `prior_turnover_desc`, `momentum12x1`) — ONE source of truth for
+/// the spelling, so a name this accepts is a name a manifest round-trips.
+///
+/// # Errors
+///
+/// If `raw` is not one of the serde variant names.
+pub fn parse_ranking_signal(raw: &str) -> anyhow::Result<RankingSignalKind> {
+    serde_json::from_value(serde_json::Value::String(raw.trim().to_string())).map_err(|_| {
+        anyhow::anyhow!(
+            "{DAILY_SIGNAL_ENV}={raw:?} is not a ranking signal; expected one of \
+             placeholder, prior_turnover_desc, momentum12x1 (the manifest spelling)"
+        )
+    })
+}
+
+/// Resolve the ranking signal the rows are ranked under.
+///
+/// Once U4 pins [`FROZEN_RANKING_SIGNAL`], the frozen signal is the only admissible one and
+/// an override naming another is REFUSED — exactly `DailyParams::validate_ranking_signal`,
+/// so the rehearsal cannot rank under a signal a run could not. Before the freeze the
+/// override selects the candidate to rehearse under and the placeholder is the default.
+///
+/// # Errors
+///
+/// If the override does not parse, or names a signal other than the frozen one.
+pub fn resolve_ranking_signal(override_name: Option<&str>) -> anyhow::Result<RankingSignalKind> {
+    let chosen = match override_name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => parse_ranking_signal(raw)?,
+        None => FROZEN_RANKING_SIGNAL.unwrap_or_default(),
+    };
+    let params = DailyParams { ranking_signal: chosen, ..DailyParams::default() };
+    params
+        .validate_ranking_signal(FROZEN_RANKING_SIGNAL)
+        .map_err(|e| anyhow::anyhow!("mount-universe --daily refused: {e}"))?;
+    Ok(chosen)
+}
+
+/// Gather the daily producer config from the process environment.
+///
+/// # Errors
+///
+/// If `LS_DATA_HOME`, `LS_MOUNT_UNIVERSE_DATE` or `LS_MOUNT_UNIVERSE_METADATA` is absent or
+/// unusable, or the signal override is refused.
+pub fn daily_config_from_env() -> anyhow::Result<DailyUniverseConfig> {
+    let data_home: PathBuf = std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?
+        .into();
+    let raw = std::env::var("LS_MOUNT_UNIVERSE_DATE").map_err(|_| {
+        anyhow::anyhow!("LS_MOUNT_UNIVERSE_DATE is required (the KST session date, YYYY-MM-DD)")
+    })?;
+    let session_date = NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+        .map_err(|e| anyhow::anyhow!("LS_MOUNT_UNIVERSE_DATE {raw:?} is not a YYYY-MM-DD date: {e}"))?;
+    let metadata_path: PathBuf = std::env::var("LS_MOUNT_UNIVERSE_METADATA")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "LS_MOUNT_UNIVERSE_METADATA is required for --daily: the artifact's designations \
+                 are the ONLY tradability evidence the rehearsal has (R24); without it every row \
+                 would be un-gated"
+            )
+        })?;
+    let signal_override = std::env::var(DAILY_SIGNAL_ENV).ok();
+    let ranking_signal = resolve_ranking_signal(signal_override.as_deref())?;
+    let daily_params = DailyParams { ranking_signal, ..DailyParams::default() };
+    Ok(DailyUniverseConfig { data_home, session_date, metadata_path, daily_params })
+}
+
+/// Index the catalog's DAILY bars per instrument, ts-sorted — the daily path mounts no
+/// minute bars (R2), so the ORB producer's opening-window volume index is not built.
+fn index_daily_by_inst(all_bars: &[Bar]) -> HashMap<InstrumentId, Vec<&Bar>> {
+    let mut daily_by_inst: HashMap<InstrumentId, Vec<&Bar>> = HashMap::new();
+    for b in all_bars {
+        if is_daily(b) {
+            daily_by_inst.entry(b.bar_type.instrument_id()).or_default().push(b);
+        }
+    }
+    for bars in daily_by_inst.values_mut() {
+        bars.sort_by_key(|b| b.ts_event.as_u64());
+    }
+    daily_by_inst
+}
+
+/// Resolve the rehearsal universe for `cfg.session_date` from the catalog, offline.
+///
+/// # Errors
+///
+/// If the catalog is absent, holds no daily bar at all (an ORB / minute-only home), the
+/// artifact fails to load or validate, or no symbol survives (each cause named).
+pub async fn resolve_daily(cfg: &DailyUniverseConfig) -> anyhow::Result<DailyUniverseFile> {
+    let catalog = cfg.data_home.join("catalog");
+    if !catalog.exists() {
+        anyhow::bail!("no catalog at {} — ingest before resolving a universe", catalog.display());
+    }
+    cfg.daily_params
+        .validate_ranking_signal(FROZEN_RANKING_SIGNAL)
+        .map_err(|e| anyhow::anyhow!("mount-universe --daily refused: {e}"))?;
+    let kind = cfg.daily_params.ranking_signal;
+
+    // The designation source, validated and hash-recorded. There is no head run to bind the
+    // hash AGAINST on a rehearsal home; the hash travels in the file instead so the runner's
+    // manifest can record which artifact gated this session (and refuse a file whose hash
+    // is not the one it was told to mount).
+    let artifact = UniverseMetadata::load(&cfg.metadata_path).map_err(|e| anyhow::anyhow!(e))?;
+    artifact.validate().map_err(|errs| {
+        anyhow::anyhow!("metadata artifact failed validation:\n  - {}", errs.join("\n  - "))
+    })?;
+    let universe_metadata_hash = artifact.content_hash();
+    let records: HashMap<String, InstrumentMetadata> =
+        artifact.records.into_iter().map(|r| (r.shcode.clone(), r)).collect();
+
+    let all_bars = read_all_bars(&catalog).await.map_err(|e| anyhow::anyhow!(e))?;
+    let instruments = read_all_instruments(&catalog).await.map_err(|e| anyhow::anyhow!(e))?;
+    let daily_by_inst = index_daily_by_inst(&all_bars);
+    if daily_by_inst.is_empty() {
+        let minute = all_bars.iter().filter(|b| is_minute(b)).count();
+        anyhow::bail!(
+            "mount-universe --daily refused: the catalog at {} holds NO daily (1-DAY) bar — \
+             {minute} minute bar(s), {} instrument(s). A daily rehearsal needs the daily-\
+             resolution home (the advancing copy of the 2016-floor catalog, KTD10), not an ORB \
+             minute home; point LS_DATA_HOME at it.",
+            catalog.display(),
+            instruments.len()
+        );
+    }
+
+    // Assembly through the backtest's own builder. The session date's own bar is never in
+    // the catalog on a rehearsal morning (ingest refuses an in-session write) and the daily
+    // strategy never reads an open, so the override map — which the builder treats as the
+    // session-date bar's ONE contribution — carries each symbol's prior close as a stand-in.
+    // `gap_prices` is thereby a zero gap for every candidate; it is read by nothing on this
+    // path and emitted nowhere. Every other derived value (prior close, turnover, ATR(1),
+    // metadata join) comes from bars strictly BEFORE the session date, untouched.
+    let prior_close_as_open: HashMap<InstrumentId, i64> = instruments
+        .iter()
+        .map(|i| i.id())
+        .filter_map(|id| {
+            let prior = select_prior(daily_by_inst.get(&id)?, cfg.session_date)?;
+            Some((id, canonical_krw_ticks(&prior.close)))
+        })
+        .collect();
+    let assembly = OrbParams {
+        atr_window: cfg.daily_params.atr_window_sessions,
+        ..OrbParams::default()
+    };
+    let open_vol_by_inst: HashMap<InstrumentId, BTreeMap<NaiveDate, f64>> = HashMap::new();
+    let candidates = build_candidates_with_today_open(
+        &instruments,
+        &daily_by_inst,
+        &open_vol_by_inst,
+        &assembly,
+        cfg.session_date,
+        Some(&records),
+        Some(&prior_close_as_open),
+    );
+
+    // Each symbol's closes strictly before the session, oldest-to-newest — the same series
+    // the governed backtest ranker hands the signal (backtest_daily.rs), built the same way.
+    let prior_closes: BTreeMap<String, Vec<f64>> = candidates
+        .iter()
+        .map(|c| {
+            let id = InstrumentId::from(c.symbol.as_str());
+            let closes = daily_by_inst
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter(|b| kst_date_of(b) < cfg.session_date)
+                .map(|b| b.close.as_f64())
+                .collect::<Vec<_>>();
+            (c.symbol.clone(), closes)
+        })
+        .collect();
+    let ranking = rank_by_signal(kind, &candidates, &prior_closes);
+    if !ranking.unavailable.is_empty() {
+        eprintln!(
+            "mount-universe --daily: {} candidate(s) could not be scored by {} (fewer than its \
+             {} prior bar(s), or a non-finite input) and are NOT in the file: {}",
+            ranking.unavailable.len(),
+            kind.name(),
+            kind.warmup_bars(),
+            ranking.unavailable.iter().map(|s| shcode_of(s)).collect::<Vec<_>>().join(",")
+        );
+    }
+
+    let by_symbol: HashMap<&str, &_> =
+        candidates.iter().map(|c| (c.symbol.as_str(), c)).collect();
+    let mut rows = Vec::with_capacity(ranking.ranked.len());
+    let mut dropped_no_atr = Vec::new();
+    let mut no_record = Vec::new();
+    for (rank, symbol) in ranking.ranked.iter().enumerate() {
+        let Some(c) = by_symbol.get(symbol.as_str()) else { continue };
+        // Fail closed on the stop's only input (KTD9) — see the section note.
+        let Some(prior_atr1) = c.prior_atr.filter(|a| *a > 0.0 && a.is_finite()) else {
+            dropped_no_atr.push(shcode_of(symbol).to_string());
+            continue;
+        };
+        let tradable = match &c.meta {
+            CandidateMeta::Tagged { tradable, .. } => *tradable,
+            // No record = no eligibility evidence. Kept (an exit must stay possible), but
+            // never an entry candidate.
+            CandidateMeta::Missing => {
+                no_record.push(shcode_of(symbol).to_string());
+                false
+            }
+            // Unreachable: the artifact is required, so the builder is never handed `None`.
+            CandidateMeta::Untagged => false,
+        };
+        let signal_value = match kind {
+            RankingSignalKind::Placeholder | RankingSignalKind::PriorTurnoverDesc => {
+                Some(c.prior_turnover)
+            }
+            RankingSignalKind::Momentum12x1 => None,
+        };
+        rows.push(DailyUniverseRow {
+            shcode: shcode_of(symbol).to_string(),
+            prior_close: c.gap_prices.prior_close,
+            prior_atr1,
+            signal_value,
+            rank,
+            tradable,
+        });
+    }
+    if !dropped_no_atr.is_empty() {
+        eprintln!(
+            "mount-universe --daily: dropped {} scored symbol(s) with no computable ATR(1) \
+             (fewer than 2 prior daily sessions): {}",
+            dropped_no_atr.len(),
+            dropped_no_atr.join(",")
+        );
+    }
+    if !no_record.is_empty() {
+        eprintln!(
+            "mount-universe --daily: {} symbol(s) have no record in the metadata artifact and \
+             are emitted tradable=false (no eligibility evidence): {}",
+            no_record.len(),
+            no_record.join(",")
+        );
+    }
+    if rows.is_empty() {
+        anyhow::bail!(
+            "mount-universe --daily: no symbol resolved for {}: {} instrument(s) had a prior \
+             daily bar, {} were scored by {}, {} of those had no computable ATR(1).{}",
+            cfg.session_date,
+            candidates.len(),
+            ranking.ranked.len(),
+            kind.name(),
+            dropped_no_atr.len(),
+            if candidates.is_empty() {
+                " No instrument has a daily bar dated before the session date — is the \
+                 rehearsal home ingested through the previous session?"
+            } else {
+                ""
+            }
+        );
+    }
+
+    Ok(DailyUniverseFile {
+        session_date: cfg.session_date.to_string(),
+        ranking_signal: kind.name().to_string(),
+        ranking_signal_is_placeholder: kind.is_placeholder(),
+        warmup_bars: kind.warmup_bars(),
+        universe_metadata_hash,
+        rows,
+    })
+}
+
+/// Serialize the daily file. Pretty-printed and field-ordered by the struct, so the same
+/// inputs give byte-identical output (the U10 verification contract).
+///
+/// # Errors
+///
+/// If serialization fails.
+pub fn daily_to_json(file: &DailyUniverseFile) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(file)?)
+}
+
+/// Write the daily file to `path`, or to stdout when `path` is `None`.
+///
+/// # Errors
+///
+/// If serialization or the write fails.
+pub fn emit_daily(file: &DailyUniverseFile, path: Option<&Path>) -> anyhow::Result<()> {
+    let json = daily_to_json(file)?;
+    match path {
+        Some(p) => {
+            std::fs::write(p, json.as_bytes())
+                .map_err(|e| anyhow::anyhow!("writing {}: {e}", p.display()))?;
+            eprintln!(
+                "mount-universe --daily: wrote {} row(s) for {} under {} → {}",
+                file.rows.len(),
+                file.session_date,
+                file.ranking_signal,
+                p.display()
+            );
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The signal spelling is the manifest's (serde) spelling — one source of truth, so a
+    /// name the producer accepts is a name a manifest round-trips, and vice versa.
+    #[test]
+    fn daily_signal_names_are_the_manifest_spelling_with_no_default_on_garbage() {
+        assert_eq!(parse_ranking_signal("placeholder").unwrap(), RankingSignalKind::Placeholder);
+        assert_eq!(
+            parse_ranking_signal(" prior_turnover_desc ").unwrap(),
+            RankingSignalKind::PriorTurnoverDesc
+        );
+        assert_eq!(parse_ranking_signal("momentum12x1").unwrap(), RankingSignalKind::Momentum12x1);
+        let err = parse_ranking_signal("Momentum12x1").unwrap_err().to_string();
+        assert!(err.contains(DAILY_SIGNAL_ENV), "names the knob: {err}");
+        assert!(err.contains("momentum12x1"), "and the accepted spellings: {err}");
+    }
+
+    /// Pre-freeze (`FROZEN_RANKING_SIGNAL == None`): no override is the placeholder, an
+    /// override selects the candidate. The post-freeze refusal is `validate_ranking_signal`'s
+    /// branch, already covered in params_daily; this pins the pre-freeze posture the
+    /// rehearsal ships under.
+    #[test]
+    fn daily_signal_resolution_defaults_to_the_placeholder_before_the_freeze() {
+        assert!(FROZEN_RANKING_SIGNAL.is_none(), "this test pins the PRE-freeze posture");
+        assert_eq!(resolve_ranking_signal(None).unwrap(), RankingSignalKind::Placeholder);
+        assert_eq!(resolve_ranking_signal(Some("  ")).unwrap(), RankingSignalKind::Placeholder);
+        assert_eq!(
+            resolve_ranking_signal(Some("momentum12x1")).unwrap(),
+            RankingSignalKind::Momentum12x1
+        );
+        assert!(resolve_ranking_signal(Some("turnover")).is_err());
+    }
+
+    /// The emitted daily file round-trips through its own type with every field intact —
+    /// the runner (U9) parses exactly this — and its rows are NOT the ORB mount's shape.
+    #[test]
+    fn daily_file_round_trips_and_is_not_the_orb_mount_shape() {
+        let file = DailyUniverseFile {
+            session_date: "2026-09-11".into(),
+            ranking_signal: "prior_turnover_desc".into(),
+            ranking_signal_is_placeholder: true,
+            warmup_bars: 1,
+            universe_metadata_hash: "abc".into(),
+            rows: vec![DailyUniverseRow {
+                shcode: "005930".into(),
+                prior_close: 265_500,
+                prior_atr1: 3_000.0,
+                signal_value: Some(1.0e12),
+                rank: 0,
+                tradable: false,
+            }],
+        };
+        let json = daily_to_json(&file).unwrap();
+        let back: DailyUniverseFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, file);
+        assert!(json.contains("\"tradable\": false"), "the gate verdict is emitted, not dropped");
+        assert!(!json.contains("today_open"), "no ORB field leaks into the daily file");
+        assert!(
+            crate::runner::live::parse_mount_universe(json.as_bytes()).is_err(),
+            "an ORB mount must not accept a daily file"
+        );
+    }
 
     #[test]
     fn shcode_is_taken_from_the_instrument_symbol() {
