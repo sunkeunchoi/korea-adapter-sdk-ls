@@ -4256,3 +4256,149 @@ mod windowed_heal {
         assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "the mark survives so the next run re-heals");
     }
 }
+
+// ---------------------------------------------------------------------------
+// The FROZEN-catalog marker (KTD10 of plan 2026-09-08-1215). The lineage's single
+// holdout judgment compares a run against a fingerprint pinned from the judgment
+// home's bars, so advancing that home invalidates the pin — silently, until the one
+// judgment is attempted. The refusal is therefore moved to the write.
+// ---------------------------------------------------------------------------
+
+mod frozen_catalog_marker {
+    use super::*;
+    use nautilus_core::UnixNanos;
+    use nautilus_ls::ingest::{
+        append_bars_checked, compact_catalog, delete_bar_series, ensure_catalog_writable,
+        read_all_bars, write_bars, write_instruments, FROZEN_CATALOG_MARKER,
+    };
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    fn daily_bar(bar_type: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = nautilus_ls::ingest::kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bar_type,
+            Price::new(close as f64, 0),
+            Price::new(close as f64, 0),
+            Price::new(close as f64, 0),
+            Price::new(close as f64, 0),
+            Quantity::new(1000.0, 0),
+            ts,
+            UnixNanos::from(ts.as_u64()),
+        )
+    }
+
+    fn samsung_daily() -> BarType {
+        BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap()
+    }
+
+    /// Seed a home with one real bar, then freeze it.
+    async fn frozen_home(marker_at_home: bool) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        write_bars(&catalog, vec![daily_bar(samsung_daily(), ymd(2024, 1, 3), 60_000)])
+            .await
+            .unwrap();
+        let marker = if marker_at_home {
+            dir.path().join(FROZEN_CATALOG_MARKER)
+        } else {
+            catalog.join(FROZEN_CATALOG_MARKER)
+        };
+        std::fs::write(&marker, "frozen for the lineage judgment\n").unwrap();
+        (dir, catalog)
+    }
+
+    /// Every content-changing entry point refuses, so no accumulate, backfill, rebase,
+    /// heal or compaction can reach a frozen home through any caller.
+    #[tokio::test]
+    async fn every_mutating_entry_point_refuses_on_a_frozen_home() {
+        let (_dir, catalog) = frozen_home(true).await;
+        let bar_type = samsung_daily();
+
+        let refusals = [
+            write_bars(&catalog, vec![daily_bar(bar_type, ymd(2024, 1, 4), 60_500)])
+                .await
+                .unwrap_err()
+                .to_string(),
+            append_bars_checked(
+                &catalog,
+                bar_type,
+                vec![daily_bar(bar_type, ymd(2024, 1, 5), 61_000)],
+            )
+            .await
+            .unwrap_err()
+            .to_string(),
+            write_instruments(&catalog, Vec::new()).await.unwrap_err().to_string(),
+            delete_bar_series(&catalog, bar_type).await.unwrap_err().to_string(),
+            compact_catalog(&catalog).await.unwrap_err().to_string(),
+        ];
+        for r in &refusals {
+            assert!(r.contains("FROZEN"), "the refusal names the freeze: {r}");
+            assert!(
+                r.contains(FROZEN_CATALOG_MARKER),
+                "and the marker file the operator must act on: {r}"
+            );
+            assert!(
+                r.contains("catalog_fingerprint"),
+                "and WHY, so a caller is not left guessing: {r}"
+            );
+        }
+
+        // The seeded bar is untouched — a refusal writes nothing.
+        let bars = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(bars.len(), 1, "the frozen catalog is unchanged");
+    }
+
+    /// Reads stay open. The frozen home exists precisely to be read — the candidate and
+    /// holdout backtests run against it — so refusing reads would make the freeze useless.
+    #[tokio::test]
+    async fn reads_are_untouched_by_the_freeze() {
+        let (_dir, catalog) = frozen_home(true).await;
+        let bars = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(bars.len(), 1, "a frozen catalog still reads");
+    }
+
+    /// A marker dropped inside `catalog/` instead of beside it still protects: a guard
+    /// that silently fails to fire because the file sits one directory over is the exact
+    /// failure mode this mechanism exists to prevent.
+    #[tokio::test]
+    async fn a_marker_inside_the_catalog_dir_also_refuses() {
+        let (_dir, catalog) = frozen_home(false).await;
+        let err = write_bars(&catalog, vec![daily_bar(samsung_daily(), ymd(2024, 1, 4), 60_500)])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(FROZEN_CATALOG_MARKER), "{err}");
+    }
+
+    /// The guard is not vacuous: an unmarked home writes normally, and the predicate
+    /// keys on the marker's presence rather than on anything ambient.
+    #[tokio::test]
+    async fn an_unmarked_home_writes_normally() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        ensure_catalog_writable(&catalog).expect("an unmarked home is writable");
+        write_bars(&catalog, vec![daily_bar(samsung_daily(), ymd(2024, 1, 3), 60_000)])
+            .await
+            .unwrap();
+        assert_eq!(read_all_bars(&catalog).await.unwrap().len(), 1);
+
+        // ...and becomes unwritable the moment the marker appears, with no other change.
+        std::fs::write(dir.path().join(FROZEN_CATALOG_MARKER), "x").unwrap();
+        assert!(ensure_catalog_writable(&catalog).is_err(), "the marker alone decides");
+    }
+
+    /// A same-name marker somewhere unrelated must NOT freeze this home — the guard
+    /// looks at this home, not at an ancestor.
+    #[tokio::test]
+    async fn a_marker_two_levels_up_does_not_freeze_the_home() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(FROZEN_CATALOG_MARKER), "x").unwrap();
+        let home = dir.path().join("some-other-home");
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        ensure_catalog_writable(&catalog)
+            .expect("a marker outside this home does not freeze it");
+    }
+}
