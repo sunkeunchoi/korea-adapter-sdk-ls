@@ -874,12 +874,20 @@ pub const DAILY_SIGNAL_ENV: &str = "LS_MOUNT_UNIVERSE_SIGNAL";
 ///
 /// If `raw` is not one of the serde variant names.
 pub fn parse_ranking_signal(raw: &str) -> anyhow::Result<RankingSignalKind> {
-    serde_json::from_value(serde_json::Value::String(raw.trim().to_string())).map_err(|_| {
+    ranking_signal_from_name(raw).ok_or_else(|| {
         anyhow::anyhow!(
             "{DAILY_SIGNAL_ENV}={raw:?} is not a ranking signal; expected one of \
              placeholder, prior_turnover_desc, momentum12x1 (the manifest spelling)"
         )
     })
+}
+
+/// The bare name → variant step of [`parse_ranking_signal`]: `RankingSignalKind`'s serde
+/// spelling, trimmed, or `None`. Shared with the daily backtest CLI (`LS_BTD_SIGNAL`) so
+/// the two entry points cannot drift on the accepted spellings.
+#[must_use]
+pub fn ranking_signal_from_name(raw: &str) -> Option<RankingSignalKind> {
+    serde_json::from_value(serde_json::Value::String(raw.trim().to_string())).ok()
 }
 
 /// Resolve the ranking signal the rows are ranked under.
