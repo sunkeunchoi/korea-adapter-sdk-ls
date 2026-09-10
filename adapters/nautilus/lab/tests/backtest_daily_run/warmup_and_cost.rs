@@ -142,3 +142,47 @@ async fn a_lookback_signal_marks_its_unscoreable_leading_sessions_as_warmup() {
         "and it enters before the lookback signal could"
     );
 }
+
+/// Gate 2's instrument: `lab-research catalog fingerprint` reproduces a run's
+/// `manifest.catalog_fingerprint` from the bars alone — same bars, same bounds, same hash,
+/// no strategy — so the holdout pin can be authored without a holdout run on disk. A
+/// different range is a different value, because the fingerprint is range-scoped.
+#[tokio::test]
+async fn the_fingerprint_verb_reproduces_a_runs_catalog_fingerprint_without_running_it() {
+    use nautilus_ls_lab::artifacts::manifest::DataRange;
+    use nautilus_ls_lab::runner::research::{catalog_fingerprint, FingerprintConfig};
+    use super::fixture::RANGE_END;
+
+    let home = tempdir().unwrap();
+    build_daily_fixture(home.path(), &HashMap::new()).await;
+    let ran = run(cfg(home.path(), 2), started(0)).await.unwrap();
+
+    let same = catalog_fingerprint(&FingerprintConfig {
+        data_home: home.path().to_path_buf(),
+        range: DataRange { start: RANGE_START.into(), end: RANGE_END.into() },
+    })
+    .await
+    .unwrap();
+    assert_eq!(same.fingerprint, ran.manifest.catalog_fingerprint, "same bars, same bounds, same hash");
+    assert_eq!(same.series_in_range, 2, "two symbols' daily series");
+    assert_eq!(same.bars_in_range, 42, "21 in-range sessions x 2 symbols");
+    assert!(same.lines[0].contains(&format!("fingerprint={}", ran.manifest.catalog_fingerprint)));
+
+    let narrower = catalog_fingerprint(&FingerprintConfig {
+        data_home: home.path().to_path_buf(),
+        range: DataRange { start: RANGE_START.into(), end: SESSION_DAYS[10].into() },
+    })
+    .await
+    .unwrap();
+    assert_ne!(narrower.fingerprint, same.fingerprint, "range-scoped");
+    assert_eq!(narrower.bars_in_range, 20);
+
+    let err = catalog_fingerprint(&FingerprintConfig {
+        data_home: home.path().to_path_buf(),
+        range: DataRange { start: RANGE_END.into(), end: RANGE_START.into() },
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("is after"), "an inverted range refuses: {err}");
+}
