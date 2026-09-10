@@ -81,6 +81,83 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Declaration — daily-resolution-v1 candidate signals: K = 2 (`prior_turnover_desc`, `momentum12x1`), criterion = cost-armed net RoR on the specification window under the frozen stop and hold, tie broken by closed-trade count; no selection/validation split; NO run exists yet and none may until this entry is committed (2026-09-10) — plan 2026-09-08-1215 U4 (R7), queue `daily-candidate-declaration-and-signal-freeze`
+
+- **What this entry is, and what it is not.** The R7 declaration: the candidate list, each
+  candidate's warmup lookback, the selection criterion and the tie rule, recorded **before** any
+  candidate-evaluation run exists in the registry. It selects nothing and measures nothing. The R30
+  diagnostic pass (2026-09-08) is deliberately upstream of this gate and is not a candidate
+  evaluation. No frozen artifact moves in this entry; no run is created by it.
+- **Why K is 2, and why that is a ceiling and not a choice.** The daily identity sources
+  (`strategy/daily.rs`, `strategy/daily_signal.rs`) are **closed** after the U2 identity move, so
+  the candidate set is exactly the freezable `RankingSignalKind` variants they already carry.
+  Adding a third would move `daily_strategy_code_hash` and cost a same-version re-baseline — that
+  is a new declaration, not an amendment of this one.
+
+  | candidate (`LS_BTD_SIGNAL`) | rule | warmup lookback |
+  |---|---|---|
+  | `prior_turnover_desc` | prior-session close × volume, descending; symbol ascending on ties | 1 prior bar |
+  | `momentum12x1` | `close[t−1] / close[t−13] − 1` (12-session momentum skipping the immediately prior session), descending; symbol ascending on ties | 13 prior bars |
+
+  `placeholder` is the same ordering as `prior_turnover_desc` but is barred from judgment by
+  construction (KTD9), so it is not a candidate — it is the pre-freeze default the two runs replace.
+- **K = 2 does NOT raise the pre-registration's `search.n_max`.** `n_max = 1` counts **looks at the
+  HOLDOUT** — the artifact's own `sigma_trials_trigger` says it would rise only "if this lineage
+  were ever re-registered to permit more than one look at the same holdout." Both candidate runs
+  observe the **specification window only** (2016-08-01 ..= 2019-12-31); no holdout date enters any
+  run before the judgment (R7/R11). The holdout is still looked at exactly once, by U6. So
+  `sigma_trials` stays null by design and `rederivation_trigger` (5) does not fire. Selecting the
+  better of two arms on the specification window and testing once on the holdout is the design the
+  pre-registration already assumes; this entry records that reading rather than leaving it inferred.
+- **Warmup, and the asymmetry it creates.** The judgment home's catalog floor is 2016-08-01 — the
+  specification window's own first session — so there are no pre-window bars to load.
+  `momentum12x1` therefore cannot score the window's first **12** sessions; the runner records them
+  as `observation.warmup_sessions` (U4 code half, PR #311 `4f2adcb`) and the pre-turn re-check
+  measures participation over the remaining sessions and refuses any entry inside the marked
+  prefix. `prior_turnover_desc` has no warmup. The criterion below is a **ratio of sums** over
+  closed trades and is therefore invariant to the session count, so the 12-session difference does
+  not enter the comparison — recorded here so the asymmetry is declared rather than discovered.
+- **Criterion.** Net return on risk, `Σ realized_pnl / Σ risk_capital` over closed trades, with the
+  transaction-cost model **armed** from the committed `lab/config/transaction-costs.json`
+  (commission 0.015%/side, sell tax 0.20%), under the frozen terms: stop `1.5 × ATR(1)` per
+  position, hold 16 sessions, `target_m = 8`, long only, `notional_per_position = 781,250 KRW`,
+  starting balance 100,000,000 KRW. Higher net RoR wins. This is the same statistic the frozen
+  verdict names, so the candidate comparison and the eventual judgment are measured on one scale.
+- **Tie rule.** If the two net RoR values agree to four decimal places, the candidate with **more
+  closed trades** wins — the same statistic on a larger sample. If that also ties,
+  `prior_turnover_desc` wins, as the candidate carrying no hypothesis beyond liquidity. Stated so
+  the choice is mechanical and cannot be made after seeing the numbers.
+- **Selection / validation split: none.** With K = 2 and a single comparison on one window, a
+  sub-window split would halve the sample behind each number while protecting against nothing that
+  the pre-turn admissibility re-check (U5) does not already cover — that re-check runs exactly once
+  on the selected candidate's run and may REFUSE, which is the guard against a fitted selection.
+- **Stop conditions carried into the runs.** A candidate run that aborts on `HeldSymbolMissingBar`
+  halts this unit until Stop condition (5) is decided — R30 did not fire it, but a candidate run on
+  a different held set still can. A run whose observation refuses to build (no closed trade, or a
+  closed trade without `risk_capital`) is recorded as a refusal, not as a candidate result.
+- **The runs, exactly as they will be invoked.** Release profile, one per candidate, both against
+  the FROZEN judgment home (which is read-only by marker as of today; the backtest only reads the
+  catalog and writes to `runs/`, so the freeze does not block it):
+
+  ```sh
+  export LS_DATA_HOME=/Users/mini/dev/korea-adapter-sdk-ls/data/next-daily-2016
+  export LS_BTD_SDATE=20160801 LS_BTD_EDATE=20191231
+  export LS_BT_COST_CONFIG=<repo>/adapters/nautilus/lab/config/transaction-costs.json
+  LS_BTD_SIGNAL=prior_turnover_desc  cargo run --release -p nautilus-ls-lab --bin lab-backtest-daily
+  LS_BTD_SIGNAL=momentum12x1         cargo run --release -p nautilus-ls-lab --bin lab-backtest-daily
+  ```
+
+  Each run's manifest must record `daily_params.ranking_signal` as the selected variant, the armed
+  rates in `params`, `ranking_signal_is_placeholder: false`, and `catalog_fingerprint`
+  `f538ddeed501f525a357bc632260169b8461aab8d9b462062a6824636e0cba75` — the specification window's
+  value, which the R30 runs already carry. A different fingerprint means the catalog moved and the
+  runs are void.
+- **What the result entry will record.** One table — candidate, closed trades, censored, Σ risk
+  capital, net RoR (cost-armed), warmup sessions, run id — then the selection under the criterion
+  and tie rule above, and finally `FROZEN_RANKING_SIGNAL = Some(<selected>)` as its own commit,
+  which moves the **param** hash only (`identity_guards`' param pin is updated in that same commit;
+  both code hashes stay).
+
 ## Probe — R32 overnight paper-hold, DAY 1 of 2: one marketable buy PLACED and FILLED on the domestic paper lane and LEFT IN THE BOOK (005930 × 1 @ 265,500, order 11017); deposit read 499,929,721 KRW cash-orderable against the 100,000,000 KRW steady-state requirement; the verdict (does the position survive the session boundary?) is DAY 2's `make r32-hold-verify` read; no strategy code, no param, no run (2026-09-10) — plan 2026-09-08-1215, queue `daily-probe-paper-overnight-hold`
 
 - **What this probe is, and is not.** An operator-attended, in-window act (R32), not a smoke and
