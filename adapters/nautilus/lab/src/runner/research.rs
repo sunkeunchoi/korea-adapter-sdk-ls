@@ -42,7 +42,7 @@ use crate::agent::policy::PolicyDecision;
 use crate::agent::recording::DecisionRecorder;
 use crate::agent::replay::{read_envelopes, replay};
 use crate::artifacts::data_quality::DataQualityReport;
-use crate::artifacts::manifest::{DataRange, Manifest};
+use crate::artifacts::manifest::{range_fingerprint, DataRange, Manifest};
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{list_runs, ANALYSIS_FILE, DATA_QUALITY_FILE, MANIFEST_FILE, PERFORMANCE_FILE};
 use crate::params::OrbParams;
@@ -1298,6 +1298,101 @@ pub struct StatusOutcome {
     pub lines: Vec<String>,
 }
 
+/// `lab-research catalog fingerprint` — the range-scoped catalog fingerprint of a data home,
+/// computed from the bars alone (plan 2026-09-08-1215, Gate 2 of the holdout judgment).
+///
+/// `lineage judge` compares a holdout run's `catalog_fingerprint` against a committed pin.
+/// The only other way to learn that value is to run a backtest over the holdout window and
+/// read its manifest — which puts a holdout result on disk before the judgment, an R11
+/// "look". This verb reads the same bars through the same `range_fingerprint` over the same
+/// `range_bounds_ns` a run uses, and runs NO strategy, so the pin can be authored without
+/// observing anything the judgment is meant to observe first.
+#[derive(Debug, Clone)]
+pub struct FingerprintConfig {
+    /// The data home whose `catalog/` is hashed.
+    pub data_home: PathBuf,
+    /// The `YYYYMMDD` range — the SAME semantics as a run's `data_range` (inclusive, KST days).
+    pub range: DataRange,
+}
+
+/// The verb's output.
+#[derive(Debug, Clone)]
+pub struct FingerprintOutcome {
+    /// The range-scoped fingerprint — byte-for-byte what a run over `range` records as
+    /// `manifest.catalog_fingerprint`.
+    pub fingerprint: String,
+    /// Bars inside the range.
+    pub bars_in_range: usize,
+    /// Distinct bar types (instrument × aggregation) with at least one in-range bar.
+    pub series_in_range: usize,
+    /// The printed lines.
+    pub lines: Vec<String>,
+}
+
+/// Gather the fingerprint config from `LS_DATA_HOME`, `LS_CATALOG_FP_SDATE`, `LS_CATALOG_FP_EDATE`.
+///
+/// # Errors
+///
+/// If any of the three is absent or a date is not `YYYYMMDD`.
+pub fn fingerprint_config_from_env() -> anyhow::Result<FingerprintConfig> {
+    let data_home: PathBuf = std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?
+        .into();
+    let range = env_range("LS_CATALOG_FP_SDATE", "LS_CATALOG_FP_EDATE")?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "LS_CATALOG_FP_SDATE and LS_CATALOG_FP_EDATE are required (YYYYMMDD, inclusive) — \
+             the fingerprint is range-scoped, and an unbounded hash is not what any run records"
+        )
+    })?;
+    Ok(FingerprintConfig { data_home, range })
+}
+
+/// Compute the range-scoped catalog fingerprint. No checkpoint is required and no calendar is
+/// consulted: this is a hash of what is on disk, not a go/no-go.
+///
+/// # Errors
+///
+/// If the catalog is absent, the range is malformed, or the bars cannot be read.
+pub async fn catalog_fingerprint(cfg: &FingerprintConfig) -> anyhow::Result<FingerprintOutcome> {
+    let catalog_path = cfg.data_home.join("catalog");
+    if !catalog_path.exists() {
+        anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());
+    }
+    let (start_ns, end_ns) =
+        crate::runner::backtest_daily::range_bounds_ns(&cfg.range.start, &cfg.range.end)?;
+    if start_ns > end_ns {
+        anyhow::bail!(
+            "LS_CATALOG_FP_SDATE {} is after LS_CATALOG_FP_EDATE {}",
+            cfg.range.start,
+            cfg.range.end
+        );
+    }
+    let bars = read_all_bars(&catalog_path).await?;
+    let in_range: Vec<&Bar> = bars
+        .iter()
+        .filter(|b| {
+            let ts = b.ts_event.as_u64();
+            ts >= start_ns && ts <= end_ns
+        })
+        .collect();
+    let series_in_range = in_range
+        .iter()
+        .map(|b| b.bar_type.to_string())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let fingerprint = range_fingerprint(&bars, start_ns, end_ns);
+    let lines = vec![format!(
+        "catalog-fingerprint: data_home={} range={}..={} bars_in_range={} series_in_range={} \
+         fingerprint={fingerprint}",
+        cfg.data_home.display(),
+        cfg.range.start,
+        cfg.range.end,
+        in_range.len(),
+        series_in_range
+    )];
+    Ok(FingerprintOutcome { fingerprint, bars_in_range: in_range.len(), series_in_range, lines })
+}
+
 /// The ingest→backtest go/no-go behind the calendar seam (R6; AE5; KTD6). Enforced-only after
 /// the catalog Consumer Retirement Gate (#189 U7): the watermark and expected-range boundary
 /// checks resolve against PROVEN first/last Trading Sessions from the injected calendar `gate`
@@ -1791,7 +1886,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | lineage recheck --run <spec-run> | lineage judge --run <holdout-run> --recheck <recheck-run> | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | lineage recheck --run <spec-run> | lineage judge --run <holdout-run> --recheck <recheck-run> | runs compare | replay | catalog status | catalog compact | catalog fingerprint | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1978,7 +2073,13 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 print_lines(&out.lines);
                 Ok(ok_fail(!out.refused))
             }
-            other => anyhow::bail!("unknown `catalog` subcommand {other:?} — want `catalog status` | `catalog compact`\n{USAGE}"),
+            Some("fingerprint") => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(catalog_fingerprint(&fingerprint_config_from_env()?))?;
+                print_lines(&out.lines);
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `catalog` subcommand {other:?} — want `catalog status` | `catalog compact` | `catalog fingerprint`\n{USAGE}"),
         },
         Some("analyze") => match std::env::args().nth(2).as_deref() {
             Some("--scaffold") => {

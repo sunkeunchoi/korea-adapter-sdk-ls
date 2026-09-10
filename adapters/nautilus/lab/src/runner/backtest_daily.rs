@@ -369,14 +369,8 @@ where
     F: FnOnce(&[MountedSymbol]) -> S + Send + 'static,
 {
     let catalog_path = cfg.data_home.join("catalog");
-    let start_date = parse_date(&cfg.range.start).map_err(DailyRunFailure::Refused)?;
-    let end_date = parse_date(&cfg.range.end).map_err(DailyRunFailure::Refused)?;
-    let start_ns = kst_to_unix_nanos(start_date, midnight())
-        .map_err(|error| DailyRunFailure::Refused(error.into()))?
-        .as_u64();
-    let end_ns = kst_to_unix_nanos(end_date, end_of_day())
-        .map_err(|error| DailyRunFailure::Refused(error.into()))?
-        .as_u64();
+    let (start_ns, end_ns) =
+        range_bounds_ns(&cfg.range.start, &cfg.range.end).map_err(DailyRunFailure::Refused)?;
 
     let instruments = read_all_instruments(&catalog_path)
         .await
@@ -1510,6 +1504,23 @@ fn in_range(b: &Bar, start_ns: u64, end_ns: u64) -> bool {
 
 fn parse_date(s: &str) -> anyhow::Result<NaiveDate> {
     Ok(NaiveDate::parse_from_str(s.trim(), "%Y%m%d")?)
+}
+
+/// The nanosecond bounds a `YYYYMMDD` data range covers on this path: KST midnight of
+/// `start` through KST 23:59:59 of `end`, inclusive. ONE definition, shared by the run
+/// (its `catalog_fingerprint` is `range_fingerprint` over exactly these bounds) and by
+/// `lab-research catalog fingerprint`, so the verb reproduces a run's fingerprint by
+/// construction rather than by a second reading of "the range".
+///
+/// # Errors
+///
+/// If either date is not `YYYYMMDD` or does not convert to a KST instant.
+pub fn range_bounds_ns(start: &str, end: &str) -> anyhow::Result<(u64, u64)> {
+    let start_date = parse_date(start)?;
+    let end_date = parse_date(end)?;
+    let start_ns = kst_to_unix_nanos(start_date, midnight())?.as_u64();
+    let end_ns = kst_to_unix_nanos(end_date, end_of_day())?.as_u64();
+    Ok((start_ns, end_ns))
 }
 fn midnight() -> NaiveTime {
     NaiveTime::from_hms_opt(0, 0, 0).unwrap()

@@ -472,6 +472,34 @@ fn missing_env_var_names_the_variable() {
 }
 
 #[test]
+fn catalog_fingerprint_names_its_range_variables_and_is_range_scoped() {
+    // The verb is range-scoped by construction: with no range it refuses and names both
+    // variables rather than hashing an unbounded catalog no run would ever record.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("catalog")).unwrap();
+    let out = bin()
+        .args(["catalog", "fingerprint"])
+        .env("LS_DATA_HOME", dir.path())
+        .env_remove("LS_CATALOG_FP_SDATE")
+        .env_remove("LS_CATALOG_FP_EDATE")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("LS_CATALOG_FP_SDATE") && stderr.contains("LS_CATALOG_FP_EDATE"), "{stderr}");
+    // A malformed date is a hard error naming the variable, never a silently empty hash.
+    let out = bin()
+        .args(["catalog", "fingerprint"])
+        .env("LS_DATA_HOME", dir.path())
+        .env("LS_CATALOG_FP_SDATE", "2024-01-03")
+        .env("LS_CATALOG_FP_EDATE", "20240131")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("LS_CATALOG_FP_SDATE must be YYYYMMDD"));
+}
+
+#[test]
 fn terminal_error_with_an_account_like_token_is_scrubbed() {
     // An error carrying a 6+-digit run is masked before it reaches stderr (KTD8):
     // a bogus run id with an embedded account-like token surfaces via the
