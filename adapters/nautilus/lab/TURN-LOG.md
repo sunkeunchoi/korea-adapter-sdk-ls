@@ -81,6 +81,47 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Probe — R32 overnight paper-hold, DAY 1 of 2: one marketable buy PLACED and FILLED on the domestic paper lane and LEFT IN THE BOOK (005930 × 1 @ 265,500, order 11017); deposit read 499,929,721 KRW cash-orderable against the 100,000,000 KRW steady-state requirement; the verdict (does the position survive the session boundary?) is DAY 2's `make r32-hold-verify` read; no strategy code, no param, no run (2026-09-10) — plan 2026-09-08-1215, queue `daily-probe-paper-overnight-hold`
+
+- **What this probe is, and is not.** An operator-attended, in-window act (R32), not a smoke and
+  not a certification. It asks ONE design question the rehearsal (U7–U13) is built on: does the
+  LS paper gateway carry a position across the session boundary and report it unchanged on the
+  next session's `t0424`? It also reads the deposit the R17 mount preflight will gate against.
+  Nothing here touches a frozen artifact, a strategy hash, or a run.
+- **Why a new leg and not the existing order smokes.** Every existing order run is built to end
+  FLAT: `live-smoke-order` tears down by paper reset and `live-smoke-order-chain` hard-fails on
+  a fill. R32 needs the opposite, so it has its own `#[ignore]` leg
+  (`order/chain.rs::r32_overnight_hold`, phases `place` / `verify` behind the same fail-closed
+  autonomy chain as `paper-reset`) and two make targets, `r32-hold-place` and `r32-hold-verify`.
+  The place phase confirmed its own refusal first: with no TTY and no nonce it placed nothing and
+  exited on `detected unattended context (no TTY on stdin)`.
+- **Day 1 witness (credential-free, 11:19 KST, KRX open).**
+  - baseline: `held=no rows=[] cash=[sunamt=499982821 sunamt1=499982821 tappamt=0]
+    deposit=[mnyordableamt=499982821 dps=499982821 d2dps=499982821]` — the book was flat.
+  - band: `symbol=005930 last=265500 up=350000 dn=189000`; the buy is a limit at the ceiling
+    (`OrdprcPtnCode="00"`, `BnsTpCode="2"`, MbrNo `NXT`), the certified marketable shape.
+  - submit: `ordno=11017 rsp_cd=00040 result=acked`; confirm attempt 1: `resting=false held=true`.
+  - place: `held=yes row=[expcode=005930 janqty=1 mdposqt=1 pamt=265500 price=266000
+    appamt=266000] cash=[sunamt=499983282 sunamt1=499982821 tappamt=266000]
+    deposit=[mnyordableamt=499929721 dps=499982821 d2dps=499717282]`.
+  - Deposit reading against the plan's steady-state exposure: cash-orderable 499,929,721 KRW
+    versus 100,000,000 KRW required (128 × 781,250) — **clears by ~5×**. `d2dps` already shows
+    the T+2 settlement of the buy (−265,539 including fees), which is the field the R17
+    preflight should read, not `dps`.
+- **What DAY 2 must do, in order.** (1) In the 2026-09-11 session (any time after the open, before
+  anything else touches the domestic lane), run `make r32-hold-verify` (read-only; paper guard
+  only; nothing placed). (2) Paste its `R32-HOLD phase=verify ...` line into a DAY 2 entry here.
+  `held=yes` with `janqty=1` and `pamt=265500` on `expcode=005930` is the PASS that unblocks U7;
+  `held=no` is the design-invalidating outcome named in the plan's Risks — record it and open the
+  "flat every morning + notional book" decision rather than adjusting U7. (3) Only then
+  `lab-next done daily-probe-paper-overnight-hold`, and only then may `make paper-reset` flatten
+  the lane again.
+- **Standing hazard while the hold is in the book.** The domestic lane's flat-asserting order
+  smokes (`live-smoke-order-chain`, the CSPAT negative probes' flat-verify) will report NOT flat
+  by design until the reset. Do not run `paper-reset` before step (2) above — it would destroy
+  the probe. The plan's deferred question (a second paper credential for an `.env.rehearsal`
+  lane) is still open and is what would remove this hazard permanently.
+
 ## Identity move — the daily lineage's ONE pre-judgment hash move: ranking-signal variants, live hooks, holding seeding, instrument claims and an explicit Netting OMS all land together; `daily_strategy_code_hash` moves `d39b2159…` → `fb78cc55…`, params hash pinned at `c7980e8b…`, ORB's `7571abef…` UNTOUCHED (2026-09-09) — plan 2026-09-08-1215 U2, queue `daily-identity-move-ranking-signal-live-hooks`
 
 - **The digests, both sides, and the one that did NOT move.** `daily_strategy_code_hash`

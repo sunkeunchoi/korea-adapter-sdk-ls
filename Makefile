@@ -19,7 +19,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-ws-p3 live-smoke-ws-p4 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t3518 live-smoke-t3521 live-smoke-o3103 live-smoke-o3104 live-smoke-o3108 live-smoke-o3116 live-smoke-o3117 live-smoke-o3123 live-smoke-o3127 live-smoke-o3128 live-smoke-o3136 live-smoke-o3137 live-smoke-o3139 live-smoke-t8462 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1906 live-smoke-t8450 live-smoke-t1638 live-smoke-t1308 live-smoke-t1449 live-smoke-t1621 live-smoke-t2545 live-smoke-t8406 live-smoke-t8407 live-smoke-t1631 live-smoke-t1632 live-smoke-t1633 live-smoke-t1716 live-smoke-t1902 live-smoke-t1904 live-smoke-t1927 live-smoke-t1941 live-smoke-t1702 live-smoke-t1717 live-smoke-t1665 live-smoke-t1471 live-smoke-t1475 live-smoke-t1959 live-smoke-t1950 live-smoke-t1954 live-smoke-t1971 live-smoke-t1972 live-smoke-t1974 live-smoke-t1956 live-smoke-t1969 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t1410 live-smoke-t1411 live-smoke-t1488 live-smoke-t1636 live-smoke-t1809 live-smoke-t1109 live-smoke-t1301 live-smoke-t1486 live-smoke-t8454 live-smoke-t1637 live-smoke-t1602 live-smoke-t1603 live-smoke-t1617 live-smoke-t1752 live-smoke-t1771 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-t0424 live-smoke-t0167 live-smoke-cspbq00200 live-smoke-clnaq00100 live-smoke-cfoeq11100 live-smoke-t0441 live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 live-smoke-t8427 live-smoke-t2210 live-smoke-t2424 live-smoke-t2541 live-smoke-t2214 live-smoke-t8428 live-smoke-nws-t3102 live-smoke-order live-smoke-order-chain paper-reset live-smoke-fo-order live-smoke-overseas-fo-order live-smoke-fo-position raw-probe live-smoke-t8412-negative
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-ws-p3 live-smoke-ws-p4 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t3518 live-smoke-t3521 live-smoke-o3103 live-smoke-o3104 live-smoke-o3108 live-smoke-o3116 live-smoke-o3117 live-smoke-o3123 live-smoke-o3127 live-smoke-o3128 live-smoke-o3136 live-smoke-o3137 live-smoke-o3139 live-smoke-t8462 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1906 live-smoke-t8450 live-smoke-t1638 live-smoke-t1308 live-smoke-t1449 live-smoke-t1621 live-smoke-t2545 live-smoke-t8406 live-smoke-t8407 live-smoke-t1631 live-smoke-t1632 live-smoke-t1633 live-smoke-t1716 live-smoke-t1902 live-smoke-t1904 live-smoke-t1927 live-smoke-t1941 live-smoke-t1702 live-smoke-t1717 live-smoke-t1665 live-smoke-t1471 live-smoke-t1475 live-smoke-t1959 live-smoke-t1950 live-smoke-t1954 live-smoke-t1971 live-smoke-t1972 live-smoke-t1974 live-smoke-t1956 live-smoke-t1969 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t1410 live-smoke-t1411 live-smoke-t1488 live-smoke-t1636 live-smoke-t1809 live-smoke-t1109 live-smoke-t1301 live-smoke-t1486 live-smoke-t8454 live-smoke-t1637 live-smoke-t1602 live-smoke-t1603 live-smoke-t1617 live-smoke-t1752 live-smoke-t1771 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-t0424 live-smoke-t0167 live-smoke-cspbq00200 live-smoke-clnaq00100 live-smoke-cfoeq11100 live-smoke-t0441 live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 live-smoke-t8427 live-smoke-t2210 live-smoke-t2424 live-smoke-t2541 live-smoke-t2214 live-smoke-t8428 live-smoke-nws-t3102 live-smoke-order live-smoke-order-chain paper-reset r32-hold-place r32-hold-verify live-smoke-fo-order live-smoke-overseas-fo-order live-smoke-fo-position raw-probe live-smoke-t8412-negative
 
 # Per-account credential lanes (paper-account-credential-lanes wave; env-lane
 # cutover, plan 2026-07-01-002):
@@ -164,6 +164,44 @@ paper-reset:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: paper-reset did not run (0 tests) or did not pass"; exit 1; }; \
 	echo "$$out" | grep -q "PAPER-RESET canceled=" || { echo "FAIL: paper-reset produced no witness line"; exit 1; }
+
+## R32 OVERNIGHT-HOLD PROBE (plan 2026-09-08-1215, queue `daily-probe-paper-overnight-hold`):
+## the ONE order run that must NOT end flat. `r32-hold-place` buys ONE marketable
+## CSPAT00601 position (LS_R32_SYMBOL, default 005930; LS_R32_QTY, default 1) at the
+## band ceiling on the domestic paper lane, confirms the fill via t0425+t0424, prints a
+## credential-free `R32-HOLD phase=place ...` witness (t0424 row + CSPAQ22200 deposit)
+## and LEAVES THE POSITION IN THE BOOK. Same fail-closed guards as paper-reset
+## (paper + LS_ORDER_SMOKE=1 + fresh LS_ORDER_SMOKE_NONCE + attended PTY). A buy that
+## does not fill within the bounded wait is retry-canceled and the run hard-fails.
+## NOTE: while the hold is in the book, the domestic lane's flat-asserting order
+## smokes (`live-smoke-order-chain`) will report NOT flat by design — do not `paper-reset`
+## until the verify phase has been recorded in the TURN-LOG.
+##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make r32-hold-place
+r32-hold-place:
+	@lane="$(LS_SMOKE_LANE)"; [ -n "$$lane" ] || lane="domestic"; \
+	lane_file=".env.$$lane"; \
+	[ -f "$$lane_file" ] || { echo "FAIL: r32-hold-place: lane file $$lane_file missing (LS_SMOKE_LANE=$$lane); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+	set -a; . "./$$lane_file"; set +a; \
+	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601 LS_R32_PHASE=place; \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::r32_overnight_hold 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "1 passed" || { echo "FAIL: r32-hold-place did not run (0 tests) or did not pass"; exit 1; }; \
+	echo "$$out" | grep -q "R32-HOLD placed=confirmed" || { echo "FAIL: r32-hold-place produced no confirmed witness"; exit 1; }
+
+## R32 verify phase — READ-ONLY (paper guard only, no order opt-in, nothing placed):
+## the NEXT session's t0424 row + CSPAQ22200 deposit as `R32-HOLD phase=verify ...`.
+## `held=no` is the design-invalidating outcome and is RECORDED, not failed.
+##   make r32-hold-verify
+r32-hold-verify:
+	@lane="$(LS_SMOKE_LANE)"; [ -n "$$lane" ] || lane="domestic"; \
+	lane_file=".env.$$lane"; \
+	[ -f "$$lane_file" ] || { echo "FAIL: r32-hold-verify: lane file $$lane_file missing (LS_SMOKE_LANE=$$lane); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+	set -a; . "./$$lane_file"; set +a; \
+	export LS_R32_PHASE=verify; \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::r32_overnight_hold 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "1 passed" || { echo "FAIL: r32-hold-verify did not run (0 tests) or did not pass"; exit 1; }; \
+	echo "$$out" | grep -q "R32-HOLD phase=verify" || { echo "FAIL: r32-hold-verify produced no witness line"; exit 1; }
 
 ## Guarded F/O chained paper order (plan 2026-06-30-003, U4/U6): submit → modify →
 ## cancel the DOMESTIC futures/options order chain (CFOAT00100/00200/00300) against the

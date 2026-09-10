@@ -577,3 +577,241 @@ async fn paper_reset() {
         );
     }
 }
+
+/// R32 overnight-hold probe (plan 2026-09-08-1215; queue
+/// `daily-probe-paper-overnight-hold`). The ONE order run that must NOT end flat.
+///
+/// `LS_R32_PHASE` selects the phase explicitly — NO default:
+///
+/// * `place` — behind the full autonomy chain (paper + `LS_ORDER_SMOKE=1` + fresh
+///   nonce + attended PTY): read the `t0424` baseline and CSPAQ22200 deposit, fetch the
+///   symbol's `t1102` band, place ONE marketable `CSPAT00601` BUY at the ceiling for
+///   `LS_R32_QTY` shares (default 1) of `LS_R32_SYMBOL` (default `005930`), then confirm
+///   the fill by a bounded re-read of `t0425` + `t0424`. The position is LEFT IN THE
+///   BOOK. An order still resting after the bounded wait is canceled and the run
+///   hard-fails (a resting order is not a hold, and it must not be left to expire).
+/// * `verify` — read-only (paper guard only, no order opt-in): the next session's
+///   `t0424` row + CSPAQ22200 deposit, printed as the witness whatever they say.
+///   `held=no` is the design-invalidating outcome the plan's Risks section names; it
+///   is RECORDED, never converted into a failure.
+///
+/// `#[ignore]` — runs only via `make r32-hold-place` / `make r32-hold-verify`.
+#[tokio::test]
+#[ignore = "guarded PAPER-ONLY overnight-hold probe: `place` submits a real marketable buy and leaves it; run via `make r32-hold-place` / `make r32-hold-verify`"]
+async fn r32_overnight_hold() {
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let phase = std::env::var("LS_R32_PHASE").unwrap_or_default();
+    let symbol = std::env::var("LS_R32_SYMBOL").unwrap_or_else(|_| "005930".into());
+    let symbol = symbol.trim().to_string();
+    if symbol.len() != 6 || !symbol.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        panic!("r32 refuses: LS_R32_SYMBOL must be a 6-char issue code, got '{symbol}'");
+    }
+    let qty: u64 = match std::env::var("LS_R32_QTY").unwrap_or_else(|_| "1".into()).trim().parse() {
+        Ok(q) if q >= 1 => q,
+        _ => panic!("r32 refuses: LS_R32_QTY must be a positive integer"),
+    };
+
+    match phase.as_str() {
+        "place" => r32_place(&symbol, qty).await,
+        "verify" => r32_verify(&symbol, qty).await,
+        other => panic!(
+            "r32 refuses: LS_R32_PHASE must be explicitly 'place' or 'verify' (no default), got '{other}'"
+        ),
+    }
+}
+
+/// Read the CSPAQ22200 orderable/deposit block as `(mnyordableamt, dps, d2dps)`.
+/// A failed read is `None` — the witness says so rather than the run failing, because
+/// the `t0424` row is the probe's primary output and the deposit its secondary.
+async fn r32_read_deposit(sdk: &LsSdk) -> Option<(String, String, String)> {
+    match sdk.account().orderable(&CSPAQ22200Request::new("1")).await {
+        Ok(resp) => resp.outblock2.first().map(|b| {
+            (
+                b.mnyordableamt.trim().to_string(),
+                b.dps.trim().to_string(),
+                b.d2dps.trim().to_string(),
+            )
+        }),
+        Err(e) => {
+            println!("R32-HOLD deposit read failed: {}", scrub_secrets(&e.to_string()));
+            None
+        }
+    }
+}
+
+async fn r32_place(symbol: &str, qty: u64) {
+    let member_no = std::env::var("LS_ORDER_SMOKE_MBRNO").unwrap_or_else(|_| "NXT".into());
+    if member_no.trim().is_empty() {
+        panic!("r32 refuses: empty member number (set LS_ORDER_SMOKE_MBRNO)");
+    }
+    // The SAME fail-closed autonomy chain as every order leg. A refusal places nothing.
+    let sdk = match autonomous_order_smoke_sdk() {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+
+    // ---- Baseline: what the book and the deposit look like BEFORE the buy. ----
+    let baseline = match sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => panic!("{}", loud_failure("r32-baseline-failed", &[], &e.to_string())),
+    };
+    let dep = r32_read_deposit(&sdk).await;
+    println!(
+        "{}",
+        r32_witness(
+            "baseline",
+            symbol,
+            qty,
+            None,
+            &baseline.outblock1,
+            &baseline.outblock,
+            dep.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())),
+        )
+    );
+
+    // ---- Band, then ONE marketable buy at the ceiling. ----
+    let band = match sdk.market_session().quote(&T1102Request::new(symbol, "K")).await {
+        Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => {
+                println!(
+                    "R32-HOLD band symbol={symbol} last={} up={} dn={}",
+                    resp.outblock.price.trim(),
+                    b.uplmt,
+                    b.dnlmt
+                );
+                b
+            }
+            Err(e) => panic!("r32 refuses to place on a degenerate band: {}", scrub_secrets(&e)),
+        },
+        Err(e) => panic!("{}", loud_failure("r32-band-failed", &[], &e.to_string())),
+    };
+    let req = build_marketable_buy(symbol, qty, &band, &member_no);
+    let ordno = match sdk.orders().submit(&req).await {
+        Ok(resp) => {
+            let o = resp.order_no().trim().to_string();
+            println!("R32-HOLD submit symbol={symbol} qty={qty} ordno={o} rsp_cd={} result=acked", resp.rsp_cd);
+            o
+        }
+        Err(e) if is_market_closed(&e) => {
+            panic!("r32: paper session closed (01458) — nothing placed; retry in-window")
+        }
+        Err(e) => panic!("{}", loud_failure("r32-submit-failed", &[], &e.to_string())),
+    };
+
+    // ---- Confirm the fill: bounded re-read of t0425 (resting?) + t0424 (held?). ----
+    const MAX_ATTEMPTS: usize = 5;
+    let mut confirmed: Option<ls_sdk::account::T0424Response> = None;
+    let mut resting = false;
+    for attempt in 1..=MAX_ATTEMPTS {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let w = scan_symbol_working_orders(&sdk, symbol).await;
+        let h = sdk
+            .account()
+            .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+            .await;
+        match (w, h) {
+            (Ok(w), Ok(h)) => {
+                resting = matches!(flat_verdict(&w), FlatVerdict::Resting(_));
+                let held = r32_held_row(&h.outblock1, symbol, qty).is_some();
+                println!(
+                    "R32-HOLD confirm attempt={attempt} resting={resting} held={held}"
+                );
+                if held && !resting {
+                    confirmed = Some(h);
+                    break;
+                }
+            }
+            (w, h) => {
+                let why = match (&w, &h) {
+                    (Err(e), _) => format!("t0425 scan failed: {}", scrub_secrets(&e.to_string())),
+                    (_, Err(e)) => format!("t0424 read failed: {}", scrub_secrets(&e.to_string())),
+                    _ => "unknown".into(),
+                };
+                println!("R32-HOLD confirm attempt={attempt} {why}");
+            }
+        }
+    }
+
+    match confirmed {
+        Some(h) => {
+            let dep = r32_read_deposit(&sdk).await;
+            println!(
+                "{}",
+                r32_witness(
+                    "place",
+                    symbol,
+                    qty,
+                    Some(&ordno),
+                    &h.outblock1,
+                    &h.outblock,
+                    dep.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())),
+                )
+            );
+            println!("R32-HOLD placed=confirmed ordno={ordno} — position LEFT IN THE BOOK; run `make r32-hold-verify` next session");
+        }
+        None => {
+            // A resting order is not a hold and must not be left to expire at the close:
+            // best-effort cancel the remainder, then hard-fail naming the order.
+            if resting {
+                if let Ok(w) = scan_symbol_working_orders(&sdk, symbol).await {
+                    for r in w.iter().filter(|r| parse_qty(&r.ordrem) > 0) {
+                        let cancel =
+                            CSPAT00801Request::new(r.ordno.trim(), r.expcode.trim(), r.ordrem.trim());
+                        match sdk.orders().cancel(&cancel).await {
+                            Ok(_) => println!("R32-HOLD cancel ordno={} result=acked", r.ordno.trim()),
+                            Err(e) => println!(
+                                "R32-HOLD cancel ordno={} result=[{}]",
+                                r.ordno.trim(),
+                                scrub_secrets(&e.to_string())
+                            ),
+                        }
+                    }
+                }
+            }
+            panic!(
+                "{}",
+                loud_failure(
+                    "r32-fill-unconfirmed",
+                    &[ordno.clone()],
+                    "the marketable buy did not show as a held t0424 row within the bounded wait; \
+                     any resting remainder was retry-canceled — check the board and re-run in-window"
+                )
+            );
+        }
+    }
+}
+
+async fn r32_verify(symbol: &str, qty: u64) {
+    // Read-only: paper guard + resolved-paper assertion, no order opt-in, nothing placed.
+    let sdk = match read_only_paper_sdk() {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+    let h = match sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => panic!("{}", loud_failure("r32-verify-read-failed", &[], &e.to_string())),
+    };
+    let dep = r32_read_deposit(&sdk).await;
+    println!(
+        "{}",
+        r32_witness(
+            "verify",
+            symbol,
+            qty,
+            None,
+            &h.outblock1,
+            &h.outblock,
+            dep.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())),
+        )
+    );
+}
