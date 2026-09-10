@@ -81,6 +81,59 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Result — the two declared candidates ran on the specification window and `momentum12x1` wins on the declared criterion by 3.45x with no tie to break (net RoR 0.047061 vs 0.013641); the constant freeze is NOT in this entry because it is not the one-line flip the plan assumed — it makes `DailyParams::default()` un-validatable and breaks 9 lib tests, which is a design decision, not a mechanical step (2026-09-10) — plan 2026-09-08-1215 U4, queue `daily-candidate-declaration-and-signal-freeze`
+
+- **Both runs are post-declaration.** The declaration entry below was committed AND pushed (PR #315)
+  before either binary was invoked, so the criterion and the tie rule were immutable by the time any
+  number existed. Both runs observed the specification window only; no holdout date entered either.
+
+  | candidate | run id | closed | censored | Σ risk capital (KRW) | Σ realized (KRW) | **net RoR** | warmup |
+  |---|---|---|---|---|---|---|---|
+  | `prior_turnover_desc` | `20260910T110214Z-backtest-daily-ms-v0` | 5,823 | 99 | 395,678,991 | 5,397,345 | **0.013641** | 0 |
+  | `momentum12x1` | `20260910T110449Z-backtest-daily-ms-v0` | 6,285 | 107 | 348,050,079 | 16,379,489 | **0.047061** | 13 |
+
+  Both carry `catalog_fingerprint` `f538ddee…` — the specification-window value the R30 runs carry,
+  as the declaration required — `ranking_signal_is_placeholder: false`, the armed rates
+  (commission 0.00015/side, sell tax 0.002) in `params`, 837 sessions, and a clean
+  `data_quality.json` (no coverage gaps, no adjustment-basis shifts, zero approximated fills).
+  Neither aborted on `HeldSymbolMissingBar`, so Stop condition (5) still does not fire.
+- **The selection: `momentum12x1`.** Higher net RoR on the declared criterion by a factor of 3.45.
+  The tie rule is not reached, and would not have changed the answer if it were — momentum also has
+  the larger closed-trade count (6,285 vs 5,823). The selection is therefore mechanical, exactly as
+  the declaration required, and nothing about it was decided after seeing the numbers.
+- **This number is IN-SAMPLE and is not evidence about the hypothesis.** `momentum12x1` was SELECTED
+  on this window, so its specification-window net RoR is a selection statistic, not a test statistic.
+  It must not be compared to `verdict.hurdle` (0.036134) as though it cleared it — that hurdle is
+  defined against the HOLDOUT, which no run has touched. The proximity of 0.047061 to the frozen
+  `effect_size_net_ror` (0.048546) is likewise in-sample and is recorded as an observation, never as
+  a projection. What can be said: the criterion separated the two candidates cleanly rather than
+  landing inside noise, which is the only thing this comparison was asked to do.
+- **CORRECTION to the declaration: the warmup prefix is 13 sessions, not 12.** The declaration
+  states `momentum12x1` "cannot score the window's first 12 sessions". The runs mark **13**
+  (2016-08-01 ..= 2016-08-18; first scoreable session 2016-08-19), which is right and the declaration
+  was off by one: on in-range session `k` the catalog holds exactly `k-1` prior closes (the floor IS
+  session 1), the signal needs 13, so it first scores at `k = 14`. The declaration is left as
+  committed rather than amended — it is the pre-run artifact and correcting it after seeing results
+  is exactly what R7 exists to prevent. The error is in a descriptive count only: the candidate list,
+  the criterion, the tie rule and the split decision are untouched, and the criterion is a ratio of
+  sums over closed trades, so the prefix length does not enter the comparison at all.
+- **Why `FROZEN_RANKING_SIGNAL` is NOT flipped in this entry.** The plan describes the freeze as a
+  constant flip that moves the param hash and nothing else. Measured, it is not: `DailyParams::validate`
+  calls `validate_ranking_signal(FROZEN_RANKING_SIGNAL)`, so freezing makes **`DailyParams::default()`
+  itself fail validation** — the serde default must stay `Placeholder` under KTD9 so legacy manifests
+  keep their unjudgeable marker, which means after the freeze the default value is a value that
+  cannot be run. Nine lib tests fail on exactly that (four in `params_daily`, four in
+  `runner::research`, one in `runner::mount_universe` that deliberately pins the pre-freeze posture);
+  every integration suite passes. That is a small, contained blast radius, but *what the default
+  should mean after a freeze* is a design decision with governance weight (getting it wrong the other
+  way — defaulting deserialization to the frozen signal — would silently re-label placeholder runs as
+  judgeable), and it is not a step this entry can take mechanically. Measured and recorded here so
+  the freeze turn starts from a known shape rather than discovering it.
+- **State after this entry.** The candidate comparison is COMPLETE and its winner is recorded. U5
+  (the one-shot pre-turn re-check) needs the freeze first, so the queue item stays open on that step
+  alone. No frozen artifact moved; no strategy source or parameter changed; both runs are machine-local
+  in the gitignored judgment home, which has been marker-frozen against writes since earlier today.
+
 ## Declaration — daily-resolution-v1 candidate signals: K = 2 (`prior_turnover_desc`, `momentum12x1`), criterion = cost-armed net RoR on the specification window under the frozen stop and hold, tie broken by closed-trade count; no selection/validation split; NO run exists yet and none may until this entry is committed (2026-09-10) — plan 2026-09-08-1215 U4 (R7), queue `daily-candidate-declaration-and-signal-freeze`
 
 - **What this entry is, and what it is not.** The R7 declaration: the candidate list, each
