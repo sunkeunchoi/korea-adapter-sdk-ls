@@ -36,6 +36,7 @@ use crate::dispatch::prereg::PreRegistration;
 use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
 use crate::dispatch::tracking::read_report;
 use crate::params::OrbParams;
+use crate::params_daily::DailyParams;
 use crate::runner::research::read_manifest;
 
 /// The governed-params hash (KTD3): a content hash over the full ORB parameter set. Two
@@ -43,6 +44,13 @@ use crate::runner::research::read_manifest;
 /// change flips it, so old-params sessions no longer qualify (R13 — N resets).
 pub fn governed_params_hash(params: &OrbParams) -> String {
     hash_bytes(&serde_json::to_vec(params).expect("OrbParams is always serializable"))
+}
+
+/// The daily lineage's governed-parameter identity. Signal selection lives in
+/// [`DailyParams`], so freezing a variant moves this digest while the concatenated
+/// daily strategy source — and therefore its code hash — remains unchanged.
+pub fn daily_governed_params_hash(params: &DailyParams) -> String {
+    hash_bytes(&serde_json::to_vec(params).expect("DailyParams is always serializable"))
 }
 
 /// The head's governed `OrbParams` — the identity real live/backtest sessions are keyed

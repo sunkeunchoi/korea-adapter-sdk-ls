@@ -64,6 +64,13 @@ pub(crate) struct SymbolSpec {
     /// A limit-locked series: `O = H = L = C` on every session, so ATR(1) is exactly
     /// zero — *available*, and it passes an `is_some` check (KTD9).
     pub(crate) locked: bool,
+    /// `SESSION_DAYS` index → that session's volume, overriding [`Self::volume`]. A
+    /// session set to **zero** still prints a bar (the symbol is a live candidate and
+    /// its prices are real) but the matching engine derives its tick sizes from the
+    /// bar volume, so a zero yields no trade tick at all and an order submitted on
+    /// that bar is never filled. That is the one lever that produces a SUBMITTED entry
+    /// which never opens a position and can still be aimed at a single symbol.
+    pub(crate) volumes: HashMap<usize, i64>,
 }
 
 impl SymbolSpec {
@@ -76,6 +83,7 @@ impl SymbolSpec {
             first_session: 0,
             gaps: BTreeSet::new(),
             locked: false,
+            volumes: HashMap::new(),
         }
     }
 
@@ -151,15 +159,16 @@ pub(crate) fn series(spec: &SymbolSpec) -> Vec<serde_json::Value> {
         .enumerate()
         .filter(|(i, _)| *i >= spec.first_session && !spec.gaps.contains(i))
         .map(|(i, date)| {
+            let volume = spec.volumes.get(&i).copied().unwrap_or(spec.volume);
             if spec.locked {
                 // A KRX limit-locked session: O = H = L = C, so the true range is
                 // exactly zero and so is ATR(1).
                 let c = spec.base;
-                daily_json(date, c, c, c, c, spec.volume)
+                daily_json(date, c, c, c, c, volume)
             } else {
                 let c = spec.base + (i as i64) * 100;
                 let low = spec.lows.get(&i).copied().unwrap_or(c - 500);
-                daily_json(date, c, c + 500, low, c, spec.volume)
+                daily_json(date, c, c + 500, low, c, volume)
             }
         })
         .collect()

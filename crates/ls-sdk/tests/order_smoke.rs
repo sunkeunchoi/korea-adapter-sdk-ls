@@ -43,7 +43,9 @@
 #![allow(dead_code)] // helpers are exercised by offline tests + the ignored live run.
 
 use ls_core::{LsConfig, LsError, LsResult};
-use ls_sdk::account::{T0424OutBlock1, T0424Request, T0441OutBlock1, T0441Request};
+use ls_sdk::account::{
+    CSPAQ22200Request, T0424OutBlock, T0424OutBlock1, T0424Request, T0441OutBlock1, T0441Request,
+};
 use ls_sdk::market_session::{T1102Request, T2111Request, T8467Request};
 use ls_sdk::orders::{
     CFOAT00100Request, CFOAT00200Request, CFOAT00300Request, CSPAT00601Request, CSPAT00701Request,
@@ -889,6 +891,101 @@ fn is_market_closed(err: &LsError) -> bool {
     matches!(err, LsError::ApiError { code, .. } if code == PAPER_SESSION_CLOSED_CODE)
 }
 
+// ---------------------------------------------------------------------------
+// R32 overnight-hold probe helpers (plan 2026-09-08-1215, queue
+// `daily-probe-paper-overnight-hold`)
+// ---------------------------------------------------------------------------
+//
+// The probe is the ONE order run that must NOT end flat: it buys a small position on
+// the paper lane, leaves it in the book overnight, and the next session reads the
+// `t0424` row (`expcode`/`janqty`/`pamt`) plus the account's available deposit. A paper
+// gateway that resets positions between sessions invalidates the U7–U13 rehearsal
+// design, so the verify phase records `held=no` honestly rather than failing.
+
+/// Build a MARKETABLE `CSPAT00601` BUY: a limit (`OrdprcPtnCode="00"`) priced AT the
+/// band ceiling so it crosses the book upward and fills at the best ask. The mirror of
+/// [`build_marketable_sell`] and the same shape as the certified
+/// `Scenario::Marketable` leg (`BnsTpCode="2"` is BUY).
+fn build_marketable_buy(
+    symbol: &str,
+    qty: u64,
+    band: &Band,
+    member_no: &str,
+) -> CSPAT00601Request {
+    CSPAT00601Request::limit(
+        symbol,
+        qty.to_string(),
+        band.uplmt.to_string(),
+        "2", // BnsTpCode "2" = BUY
+        member_no,
+    )
+}
+
+/// The `t0424` row for `symbol` whose balance quantity (`janqty`) is at least `qty`
+/// — the positive witness that the hold is in the book. `None` when the symbol is
+/// absent or the balance is short (a partial fill is NOT a confirmed hold).
+fn r32_held_row<'a>(rows: &'a [T0424OutBlock1], symbol: &str, qty: u64) -> Option<&'a T0424OutBlock1> {
+    rows.iter()
+        .find(|r| r.expcode.trim() == symbol && parse_qty(&r.janqty) >= qty)
+}
+
+/// One credential-free `R32-HOLD` witness line for the TURN-LOG. Carries only public
+/// identifiers (phase, symbol, order number, the `t0424` row fields, the cash
+/// summary and the CSPAQ22200 orderable/deposit amounts) — never a token, appkey,
+/// account number, or `rsp_msg`. `deposit` is `(mnyordableamt, dps, d2dps)` from
+/// CSPAQ22200 when the read succeeded.
+fn r32_witness(
+    phase: &str,
+    symbol: &str,
+    qty: u64,
+    ordno: Option<&str>,
+    holdings: &[T0424OutBlock1],
+    cash: &T0424OutBlock,
+    deposit: Option<(&str, &str, &str)>,
+) -> String {
+    let held = match r32_held_row(holdings, symbol, qty) {
+        Some(r) => format!(
+            "held=yes row=[expcode={} janqty={} mdposqt={} pamt={} price={} appamt={}]",
+            r.expcode.trim(),
+            r.janqty.trim(),
+            r.mdposqt.trim(),
+            r.pamt.trim(),
+            r.price.trim(),
+            r.appamt.trim()
+        ),
+        None => format!(
+            "held=no rows=[{}]",
+            holdings
+                .iter()
+                .map(|r| format!("{}x{}", r.expcode.trim(), r.janqty.trim()))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    let deposit = match deposit {
+        Some((mny, dps, d2)) => format!("mnyordableamt={mny} dps={dps} d2dps={d2}"),
+        None => "cspaq22200=unavailable".into(),
+    };
+    format!(
+        "R32-HOLD phase={phase} symbol={symbol} qty={qty} ordno={} {held} \
+         cash=[sunamt={} sunamt1={} tappamt={}] deposit=[{deposit}]",
+        ordno.unwrap_or("-"),
+        cash.sunamt.trim(),
+        cash.sunamt1.trim(),
+        cash.tappamt.trim()
+    )
+}
+
+/// Build a real, gateway-pointed SDK for a READ-ONLY phase: the paper guard plus the
+/// resolved-paper assertion, WITHOUT the order opt-in (nothing is placed). Used by the
+/// R32 verify phase, which only reads `t0424` / CSPAQ22200.
+fn read_only_paper_sdk() -> LsResult<LsSdk> {
+    paper_guard()?;
+    let config = LsConfig::from_env()?;
+    assert_resolved_paper(&config.environment)?;
+    LsSdk::new(config)
+}
+
 // ===========================================================================
 // Offline fail-closed tests (run in the normal suite)
 // ===========================================================================
@@ -1392,6 +1489,75 @@ fn paper_reset_marketable_sell_prices_at_the_band_floor() {
     assert_eq!(req.inblock.ordprcptncode, "00", "aggressive limit (matches the marketable scenario)");
     assert_eq!(req.inblock.isuno, "005930");
     assert_eq!(req.inblock.mbrno, "NXT");
+}
+
+#[test]
+fn r32_marketable_buy_prices_at_the_band_ceiling_and_is_a_buy() {
+    let band = validate_band("54600", "29400").unwrap();
+    let req = build_marketable_buy("005930", 1, &band, "NXT");
+    assert_eq!(req.inblock.bnstpcode, "2", "BUY side");
+    assert_eq!(req.inblock.ordqty, "1");
+    assert_eq!(req.inblock.ordprc, "54600", "priced at the ceiling so it crosses upward");
+    assert_eq!(req.inblock.ordprcptncode, "00", "aggressive limit, never a guessed market code");
+    assert_eq!(req.inblock.isuno, "005930");
+}
+
+#[test]
+fn r32_held_row_requires_the_symbol_with_at_least_the_probe_qty() {
+    let row = |expcode: &str, janqty: &str| T0424OutBlock1 {
+        expcode: expcode.into(),
+        janqty: janqty.into(),
+        ..Default::default()
+    };
+    let rows = vec![row("000660", "3"), row("005930", "1")];
+    assert!(r32_held_row(&rows, "005930", 1).is_some(), "exact balance confirms");
+    assert!(r32_held_row(&rows, "005930", 2).is_none(), "a short balance is not a hold");
+    assert!(r32_held_row(&rows, "035420", 1).is_none(), "an absent symbol is not a hold");
+    assert!(r32_held_row(&[], "005930", 1).is_none(), "an empty book is not a hold");
+}
+
+#[test]
+fn r32_witness_is_credential_free_and_records_held_no_honestly() {
+    let cash = T0424OutBlock {
+        sunamt: "100000000".into(),
+        sunamt1: "99900000".into(),
+        tappamt: "100000".into(),
+        ..Default::default()
+    };
+    let held = vec![T0424OutBlock1 {
+        expcode: "005930".into(),
+        janqty: "1".into(),
+        mdposqt: "0".into(),
+        pamt: "71000".into(),
+        price: "71500".into(),
+        appamt: "71500".into(),
+        ..Default::default()
+    }];
+    let line = r32_witness(
+        "verify",
+        "005930",
+        1,
+        None,
+        &held,
+        &cash,
+        Some(("99900000", "100000000", "99900000")),
+    );
+    assert!(line.starts_with("R32-HOLD phase=verify symbol=005930 qty=1 ordno=- held=yes "));
+    assert!(line.contains("janqty=1"));
+    assert!(line.contains("pamt=71000"));
+    assert!(line.contains("mnyordableamt=99900000"));
+    // The design-invalidating outcome is recorded, not hidden.
+    let empty = r32_witness("verify", "005930", 1, None, &[], &cash, None);
+    assert!(empty.contains("held=no rows=[]"));
+    assert!(empty.contains("cspaq22200=unavailable"));
+    // A partial fill on a different symbol lists what IS there.
+    let other = vec![T0424OutBlock1 {
+        expcode: "000660".into(),
+        janqty: "2".into(),
+        ..Default::default()
+    }];
+    let partial = r32_witness("place", "005930", 1, Some("12345"), &other, &cash, None);
+    assert!(partial.contains("ordno=12345 held=no rows=[000660x2]"));
 }
 
 // ===========================================================================

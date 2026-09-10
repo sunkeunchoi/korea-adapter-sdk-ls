@@ -916,6 +916,12 @@ pub struct JudgmentAttempt {
     pub run_id: String,
     /// The catalog fingerprint the evaluation ran against.
     pub catalog_fingerprint: String,
+    /// Strategy identity. Absent on legacy, non-resumable claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_code_hash: Option<String>,
+    /// Governed daily parameters. Absent on legacy, non-resumable claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params_hash: Option<String>,
     /// When the claim was recorded (UTC, caller-supplied so tests are deterministic).
     pub claimed_utc: String,
     /// The frozen artifact's content hash at claim time — the citation the judgment binds
@@ -960,6 +966,63 @@ impl JudgmentLedger {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Serialize a CLI judgment through its verdict back-fill. OS locking releases on
+    /// process death, so a crash does not leave an unresumable lock. The ledger's own
+    /// exclusive first create remains the claim; this separate file is only a mutex.
+    pub fn lock_judgment(&self) -> Result<std::fs::File, LineagePreRegError> {
+        let fail = |e| LineagePreRegError::Ledger {
+            path: self.path.display().to_string(), detail: format!("judgment lock: {e}"),
+        };
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(fail)?;
+        }
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false)
+            .open(self.path.with_extension("lock")).map_err(fail)?;
+        file.try_lock().map_err(|e| LineagePreRegError::Ledger {
+            path: self.path.display().to_string(), detail: format!("judgment already running: {e}"),
+        })?;
+        Ok(file)
+    }
+
+    /// Claim once, or recover exactly one complete, matching unfinished claim.
+    /// Empty files, missing newlines, partial/legacy rows and any verdict refuse.
+    /// The returned row preserves the original claim time on recovery.
+    pub fn claim_or_resume(&self, wanted: &JudgmentAttempt) -> Result<JudgmentAttempt, LineagePreRegError> {
+        let valid_hash = |h: &Option<String>| h.as_ref().is_some_and(|h|
+            h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        if wanted.schema_version != JUDGMENT_SCHEMA_VERSION
+            || !valid_hash(&wanted.strategy_code_hash) || !valid_hash(&wanted.params_hash)
+            || wanted.observed_net_ror.is_some() || wanted.cleared.is_some()
+        {
+            return Err(LineagePreRegError::Invariant { detail: "invalid resumable claim identity".into() });
+        }
+        let Some(text) = self.read_text()? else {
+            self.append(wanted, true)?;
+            return Ok(wanted.clone());
+        };
+        let lines: Vec<_> = text.lines().collect();
+        if text.ends_with('\n') && lines.len() == 1 {
+            if let (Ok(saved), Ok(raw)) = (
+                serde_json::from_str::<JudgmentAttempt>(lines[0]),
+                serde_json::from_str::<serde_json::Value>(lines[0]),
+            ) {
+                if saved.schema_version == JUDGMENT_SCHEMA_VERSION
+                    && saved.run_id == wanted.run_id
+                    && saved.catalog_fingerprint == wanted.catalog_fingerprint
+                    && saved.strategy_code_hash == wanted.strategy_code_hash
+                    && saved.params_hash == wanted.params_hash
+                    && saved.prereg_content_hash == wanted.prereg_content_hash
+                    && !saved.claimed_utc.is_empty()
+                    && raw.get("observed_net_ror").is_none() && raw.get("cleared").is_none()
+                {
+                    return Ok(saved);
+                }
+            }
+        }
+        let (run_id, claimed_utc) = self.claim()?.unwrap_or_default();
+        Err(LineagePreRegError::AlreadyJudged { run_id, claimed_utc })
     }
 
     /// Read the ledger's bytes, distinguishing "absent" from "cannot be read".
@@ -1144,6 +1207,8 @@ pub fn judge_holdout(
             schema_version: JUDGMENT_SCHEMA_VERSION,
             run_id: run_id.to_string(),
             catalog_fingerprint: catalog_fingerprint.to_string(),
+            strategy_code_hash: None,
+            params_hash: None,
             claimed_utc: claimed_utc.to_string(),
             prereg_content_hash: prereg.content_hash.clone(),
             observed_net_ror: None,
@@ -1152,14 +1217,34 @@ pub fn judge_holdout(
         true,
     )?;
 
+    Ok(evaluate_holdout(prereg, run_id, observed_net_ror))
+}
+
+/// CLI sibling of [`judge_holdout`]: a matching unfinished claim can resume.
+/// Callers hold [`JudgmentLedger::lock_judgment`] through the subsequent back-fill.
+/// The original entry point deliberately keeps its unconditional second-call refusal.
+pub fn judge_holdout_resuming(
+    prereg: &LoadedLineagePreReg,
+    ledger: &JudgmentLedger,
+    claim: &JudgmentAttempt,
+    observed_net_ror: f64,
+) -> Result<HoldoutVerdict, LineagePreRegError> {
+    if claim.prereg_content_hash != prereg.content_hash || !observed_net_ror.is_finite() {
+        return Err(LineagePreRegError::Invariant { detail: "judgment provenance/statistic mismatch".into() });
+    }
+    ledger.claim_or_resume(claim)?;
+    Ok(evaluate_holdout(prereg, &claim.run_id, observed_net_ror))
+}
+
+fn evaluate_holdout(prereg: &LoadedLineagePreReg, run_id: &str, observed_net_ror: f64) -> HoldoutVerdict {
     let cleared = prereg.values.clears(observed_net_ror);
-    Ok(HoldoutVerdict {
+    HoldoutVerdict {
         observed_net_ror,
         cleared,
         hurdle: prereg.values.hurdle(),
         prereg_content_hash: prereg.content_hash.clone(),
         run_id: run_id.to_string(),
-    })
+    }
 }
 
 /// A non-consuming dry run over the **specification window only**.

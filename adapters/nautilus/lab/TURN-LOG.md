@@ -81,6 +81,304 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Probe — R32 overnight paper-hold, DAY 1 of 2: one marketable buy PLACED and FILLED on the domestic paper lane and LEFT IN THE BOOK (005930 × 1 @ 265,500, order 11017); deposit read 499,929,721 KRW cash-orderable against the 100,000,000 KRW steady-state requirement; the verdict (does the position survive the session boundary?) is DAY 2's `make r32-hold-verify` read; no strategy code, no param, no run (2026-09-10) — plan 2026-09-08-1215, queue `daily-probe-paper-overnight-hold`
+
+- **What this probe is, and is not.** An operator-attended, in-window act (R32), not a smoke and
+  not a certification. It asks ONE design question the rehearsal (U7–U13) is built on: does the
+  LS paper gateway carry a position across the session boundary and report it unchanged on the
+  next session's `t0424`? It also reads the deposit the R17 mount preflight will gate against.
+  Nothing here touches a frozen artifact, a strategy hash, or a run.
+- **Why a new leg and not the existing order smokes.** Every existing order run is built to end
+  FLAT: `live-smoke-order` tears down by paper reset and `live-smoke-order-chain` hard-fails on
+  a fill. R32 needs the opposite, so it has its own `#[ignore]` leg
+  (`order/chain.rs::r32_overnight_hold`, phases `place` / `verify` behind the same fail-closed
+  autonomy chain as `paper-reset`) and two make targets, `r32-hold-place` and `r32-hold-verify`.
+  The place phase confirmed its own refusal first: with no TTY and no nonce it placed nothing and
+  exited on `detected unattended context (no TTY on stdin)`.
+- **Day 1 witness (credential-free, 11:19 KST, KRX open).**
+  - baseline: `held=no rows=[] cash=[sunamt=499982821 sunamt1=499982821 tappamt=0]
+    deposit=[mnyordableamt=499982821 dps=499982821 d2dps=499982821]` — the book was flat.
+  - band: `symbol=005930 last=265500 up=350000 dn=189000`; the buy is a limit at the ceiling
+    (`OrdprcPtnCode="00"`, `BnsTpCode="2"`, MbrNo `NXT`), the certified marketable shape.
+  - submit: `ordno=11017 rsp_cd=00040 result=acked`; confirm attempt 1: `resting=false held=true`.
+  - place: `held=yes row=[expcode=005930 janqty=1 mdposqt=1 pamt=265500 price=266000
+    appamt=266000] cash=[sunamt=499983282 sunamt1=499982821 tappamt=266000]
+    deposit=[mnyordableamt=499929721 dps=499982821 d2dps=499717282]`.
+  - Deposit reading against the plan's steady-state exposure: cash-orderable 499,929,721 KRW
+    versus 100,000,000 KRW required (128 × 781,250) — **clears by ~5×**. `d2dps` already shows
+    the T+2 settlement of the buy (−265,539 including fees), which is the field the R17
+    preflight should read, not `dps`.
+- **What DAY 2 must do, in order.** (1) In the 2026-09-11 session (any time after the open, before
+  anything else touches the domestic lane), run `make r32-hold-verify` (read-only; paper guard
+  only; nothing placed). (2) Paste its `R32-HOLD phase=verify ...` line into a DAY 2 entry here.
+  `held=yes` with `janqty=1` and `pamt=265500` on `expcode=005930` is the PASS that unblocks U7;
+  `held=no` is the design-invalidating outcome named in the plan's Risks — record it and open the
+  "flat every morning + notional book" decision rather than adjusting U7. (3) Only then
+  `lab-next done daily-probe-paper-overnight-hold`, and only then may `make paper-reset` flatten
+  the lane again.
+- **Standing hazard while the hold is in the book.** The domestic lane's flat-asserting order
+  smokes (`live-smoke-order-chain`, the CSPAT negative probes' flat-verify) will report NOT flat
+  by design until the reset. Do not run `paper-reset` before step (2) above — it would destroy
+  the probe. The plan's deferred question (a second paper credential for an `.env.rehearsal`
+  lane) is still open and is what would remove this hazard permanently.
+
+## Identity move — the daily lineage's ONE pre-judgment hash move: ranking-signal variants, live hooks, holding seeding, instrument claims and an explicit Netting OMS all land together; `daily_strategy_code_hash` moves `d39b2159…` → `fb78cc55…`, params hash pinned at `c7980e8b…`, ORB's `7571abef…` UNTOUCHED (2026-09-09) — plan 2026-09-08-1215 U2, queue `daily-identity-move-ranking-signal-live-hooks`
+
+- **The digests, both sides, and the one that did NOT move.** `daily_strategy_code_hash`
+  **`d39b2159a80d93a7af7e666069ef80a20fdd598bb7affc17a701e513974575fe`** →
+  **`fb78cc5502a023939a8341c53cd071cbc2b89ff93d0e9826d952347cddb5a8b4`**. Part of that move is
+  definitional rather than behavioural: `DAILY_SOURCE` is now
+  `concat!(include_str!("daily.rs"), include_str!("daily_signal.rs"))`, so the hash covers two
+  files where it covered one. New: `daily_governed_params_hash(&DailyParams::default())` =
+  **`c7980e8b24625a2d0773b0c07dfb7bdaddd38eb3033a0c6b4a9d5043e04b68f0`**. Both are pinned in
+  `tests/identity_guards.rs`. **ORB's `strategy_code_hash` is unchanged at `7571abef…`** — the
+  head stays **v35** and the rung-1 ladder's sole discriminator is intact.
+- **Why `hooks.rs` re-exports instead of moving anything.** The daily strategy needs
+  `EmissionGate`, `MarkFeed` and `Heartbeats`, and the first two live in `orb.rs`. Moving their
+  definitions would have been the tidy refactor and would have moved ORB's digest for zero
+  behavioural reason — and there is deliberately no "inert edit" exemption
+  (`docs/solutions/architecture-patterns/head-identity-hash-is-file-scoped-so-live-only-wiring-forces-a-rebaseline.md`).
+  `strategy/hooks.rs` is therefore eight lines of `pub use`. The same rule is why the pinned
+  digest `7571abef…` is asserted above rather than assumed.
+- **What the move carries, all of it before any judgment (KTD7).** `RankingSignalKind` as a
+  freezable `DailyParams` variant with `Placeholder` kept as a REAL `#[serde(default)]` variant,
+  so `judgment_arguments()`'s refusal keeps a producer; candidate implementations in
+  `daily_signal.rs`, each declaring its warmup lookback; the `signal_unavailable` rejection;
+  `with_emission_gate` / `with_heartbeats` / `with_mark_feed`; `seed_open_legs(&[BookLeg])` with
+  position ids derived as `{instrument}-{strategy}`; an `on_position_opened` that joins a restored
+  leg instead of panicking; and `with_external_order_claims`, which is also the only place
+  `oms_type = Netting` is set. **Bar delivery is deliberately NOT here** — KTD15 puts that seam in
+  the lab's data client, which is U9.
+- **The live/backtest split is asserted, not assumed.** A test pins that the backtest
+  `StrategyConfig` carries `oms_type: None` and `external_order_claims: None`, and that only the
+  live builder sets `Some(OmsType::Netting)` and the claim list. That separation is what makes the
+  backtest equation hold across this move.
+- **`FROZEN_RANKING_SIGNAL` is `None`, and a test says so.** Choosing a signal is U4 and an
+  attended governance act; `validate()` will reject any other variant once the constant is `Some`.
+  Nothing in this turn selects, evaluates or ranks a candidate.
+- **After this, `daily.rs` and `daily_signal.rs` are closed.** Touching either costs a
+  same-version re-baseline, so U9 must not need a new strategy API — that is precisely why every
+  live hook landed here rather than when its consumer arrives. U6's judgment does not run until
+  U9's whole-day integration test has driven a session through this exact hook set.
+- **Authorship and verification, recorded separately.** The unit was authored by **Codex
+  (`gpt-5.6-sol`)** under the `ce-work` cross-model contract, in a detached worktree with no
+  commit, push or canonical authority; the served model is reported `unverified` by the adapter
+  receipt and is recorded as such rather than relabelled. Scope inspection, the authoritative
+  `cargo test --workspace`, and the canonical commit `e6c3ebf` are host-owned. The transport
+  carried exactly the eleven expected paths — no `orb.rs`, no frozen artifact, no adapter-crate
+  file, no formatting churn.
+- **Two dead ends worth not repeating, both cheap to avoid.** A first attempt reformatted seven
+  files with `rustfmt` and moved ORB's digest to `0596a1cf…` before undoing it; a second reported
+  itself BLOCKED because the wiremock-backed suite binds sockets that its sandbox denies, which
+  discarded complete work. Authoritative verification is host-owned and a sandbox `EPERM` is not
+  evidence of breakage — both are now stated in the unit packet.
+
+## Fix — the daily backtest's silent fill-skip CLOSED: the catalog is adjustment-adjusted, so its prices sit on NO exchange tick grid and an effective-dated ladder would not have fixed it; the run now mounts a per-symbol GCD grid and skips ZERO fills — 7,981 → 0, unopened 5,167 → 0, positions 1,311 → 5,922; no strategy code, no param (2026-09-08) — plan 2026-09-08-1215, queue `daily-backtest-historical-tick-grid-fill-skip`
+
+- **What did NOT change.** No governed param, no ingest, no catalog, no frozen artifact.
+  `strategy_code_hash` is unchanged at **`d39b2159…`** across both probe runs — the fix touches
+  `runner/backtest_daily.rs` and nothing under `strategy/`, so it does not compete with the
+  single identity move U2 still owes the lineage. **The adapter is untouched**:
+  `nautilus_ls::instruments::map_equity` still derives `price_increment` from today's reference
+  price under `TickRegime::Post2023`, which is correct for live order placement and is the
+  behaviour the rehearsal chain (U7..U13) depends on.
+- **The first diagnosis was half right, and the tests are what corrected it.** The R30 entry
+  below attributes the skip to a regime/band mismatch — today's tick applied to a 2016 price —
+  and names `TickRegime::for_date` as the unused switch. That is real but it is not sufficient,
+  and a fix built only on it would have closed less than half the defect while looking complete.
+  Writing the guard test first surfaced the rest: **the catalog is adjustment-adjusted**
+  (`checkpoint.adjusted_prices == true`), and an adjusted price sits on **no exchange tick grid
+  at all**. Checked against the ladder that actually governed each date: `000660` 33,550 / tick
+  50 — on grid; `005930` 30,340 / tick 50 — **off**; `006400` 112,589 / tick 500 — **off**;
+  `011200` 6,333 / tick 10 — **off**; `068270` 92,700 / tick 100 — on grid. Three of five. The
+  30,340 is 005930's pre-split price carried through the 2018 50:1 split. An effective-dated
+  ladder lookup would still have refused those three, and the run would still have finalized
+  green having silently traded a subsample.
+- **What the run mounts instead.** Per symbol, `gcd(g, f)` where `g` is the GCD of every in-range
+  OHLC price and `f` is the adapter's increment. Three properties, and the first is the one that
+  matters: it **divides every price the engine will see, by construction** — so no fill can be
+  skipped as a structural fact rather than a runtime check that has to fire to help. It is never
+  coarser than `f` (when `f` already divides everything, `gcd(g, f) == f` and nothing moves, so a
+  sparse symbol cannot invent a coarse grid from one bar). And for a symbol no corporate action
+  touched it recovers the **real exchange tick** — `000660` re-grids to 50, not to 1 — so the
+  increment keeps as much of its original meaning as the data still supports. Nothing is rounded
+  and no price is invented: the daily path submits market orders and fills at real catalog bar
+  prices, so the increment is only a fill-price *validator* here.
+- **Run-scoped, and NOT per session — nautilus 0.60 forecloses the obvious shape.**
+  `SimulatedExchange::add_instrument` on an id that already exists constructs a **new**
+  `OrderMatchingEngine` and inserts it over the old one, discarding that engine's book and state,
+  and derives `raw_id` from `self.instruments.len()`, which does not grow on a replace — so every
+  symbol swapped within one session would collide on a single raw id. Recorded because the
+  per-session swap is the design a reader will reach for first.
+- **The measurement, same binary profile and same range as the probe below.** Run
+  `20260908T122223Z-backtest-daily-ms-v0`, release, `20160801..20191231`, home
+  `data/next-daily-2016`:
+
+  | | before | after |
+  |---|---|---|
+  | `Skipping fill` warnings | 7,981 | **0** |
+  | entry orders never opened | 5,167 | **0** |
+  | positions | 1,311 | **5,922** |
+  | open at range end | 31 | 99 |
+  | instruments re-gridded | — | 243 of 286 |
+  | wall clock | 94 s | 106 s |
+
+  843 of the 6,696 nominal entries (837 sessions x `target_m = 8`) still do not open, and that is
+  the honest remainder rather than a residue of this defect: those are sessions with fewer than
+  eight takeable candidates after the already-held exclusion. `unopened_entry_orders` is **zero**,
+  which is the direct statement that no order the strategy submitted failed to become a position.
+- **`HeldSymbolMissingBar` still does not fire, and the answer is now much better evidenced.**
+  The probe below cleared Stop condition (5) on 1,311 positions. The same range at 4.5x the
+  position count — **5,922** positions, 99 still open at range end — clears it again. The guard
+  was exercised far harder and stayed silent.
+- **What is now admissible, and what still is not.** Neither run's net RoR is evidence: both ran
+  the **Placeholder** signal (`ranking_signal_is_placeholder: true`), which is a diagnostic, not a
+  candidate. Recorded only so the two are comparable: `+0.0412` before, `+0.0385` after. The
+  candidate declaration (U4) may now proceed on a substrate where a ranking is compared on its
+  merits rather than on its interaction with a 2026 tick grid.
+- **`LAB_SRC_FINGERPRINT` moves `fb1e8e59…` → `1d42010f…`** (`backtest_daily.rs`'s own bytes; the
+  new test file is under `lab/tests/`, which no declared entry covers). Every prebuilt lab binary
+  refuses once at this transition, as at every digest move; the recovery is a release rebuild in
+  the adapter workspace.
+- **Why P7 never saw it, in P7's own words.** `lab/tests/backtest_daily_run/fixture.rs` already
+  carries the comment: *"Every price is a multiple of 100 — the KRX instrument masters this
+  fixture ingests carry `price_increment = 100`, and the matching engine skips the fill (a WARN,
+  not an error) for any price off that grid, so an off-grid fixture silently trades nothing."*
+  The behaviour was known and worked around **in the fixture**, which is exactly why the first
+  contact with a real deep-history catalog was the first time it could bite. A fixture built to
+  satisfy a validator cannot test that validator.
+
+## Probe — R30 diagnostic pass over the daily specification window: `HeldSymbolMissingBar` does NOT fire, one run costs 94 s — but the pass surfaced a SILENT fill-path defect that would corrupt every candidate comparison and the holdout judgment: 7,981 fills skipped on an off-grid price, 5,167 entry orders never opened (2026-09-08) — plan 2026-09-08-1215, queue `daily-probe-heldsymbol-missing-bar`
+
+- **What this run is, and is not.** A NON-EVALUATIVE diagnostic (R30), deliberately upstream of
+  R7's candidate-declaration gate, which binds only the first candidate-EVALUATION run. It proves
+  no candidate's viability and selects nothing. `ranking_signal_is_placeholder: true`.
+- **The two questions it was asked, both answered.** (1) `HeldSymbolMissingBar` **does NOT fire**
+  on the real catalog over the specification window — exit 0, and Stop condition (5) therefore
+  does not trigger. This is a real exercise of the guard, not a vacuous pass: 1,311 positions on
+  a 16-session hold across 837 sessions. It is still not a clearance for the candidate runs, which
+  can fire on a different held set (R30's own wording). (2) One full specification-window pass
+  costs **94 seconds** wall clock (release profile, `LS_BTD_SDATE=20160801 LS_BTD_EDATE=20191231`,
+  home `data/next-daily-2016`). K <= 6 candidate runs is ten minutes, so run time constrains
+  nothing in U4.
+- **The run, for the record.** `20260908T114221Z-backtest-daily-ms-v0`. 837 sessions, 286 symbols
+  in the universe snapshot, 1,311 positions (31 open at range end, 1,280 closed), 5,167 entry
+  orders that never opened, observed net RoR `+0.0412` (a number that MUST NOT be read as evidence
+  — see the defect below). `catalog_fingerprint f538ddee…`, `strategy_code_hash d39b2159…`,
+  `lab_src_fingerprint fb1e8e59…`. The data-quality report is clean on every axis it covers:
+  zero coverage gaps, zero shallow-history symbols, zero adjustment-basis shifts, zero
+  approximated fills.
+- **THE FINDING — a silent, systematic fill failure that no gate in this plan would have caught.**
+  The run emitted **7,981** `Skipping fill … price N is not compatible with <symbol>
+  price_precision=0 price_increment=T` warnings across **136 of the 286** universe symbols (48%).
+  Nautilus's matching engine validates a fill price against the instrument's `price_increment`
+  and, when it does not sit on that grid, **silently declines the fill and leaves the order
+  unfilled** — which is exactly the 5,167 unopened entry orders. The strategy asked for
+  `target_m = 8` entries per session and got **1.57**.
+- **Root cause, and why it is a backtest problem rather than an adapter bug.**
+  `adapters/nautilus/src/instruments.rs` derives each `Equity`'s `price_increment` ONCE, from the
+  master row's *current* reference price (`recprice`, else `jnilclose`) under a hardcoded
+  `TickRegime::Post2023`. Its own comment says so: "The instrument's static increment uses today's
+  regime." For LIVE order placement that is correct — today's order is priced in today's band
+  under today's ladder. `TickRegime::for_date` exists and is correct, but `instruments.rs:113` is
+  its only production caller and it does not use it. A 2016 close of `33,550` for `000660` is
+  checked against that symbol's **2026** tick of `1,000`; `005930`'s 2016 close of `30,340`
+  against a tick of `500`. The increment histogram is exactly the shape that predicts:
+  500 (2,916), 100 (1,801), 50 (1,458), 1,000 (1,158), 10 (526), 5 (122). This is the trap
+  `docs/solutions/conventions/exchange-rule-constants-need-an-effective-date-switch-before-history-is-acquired.md`
+  names, at the one call site that never got the switch.
+- **Why it never surfaced before, and why it is worse than an abort.** The ORB lineage trades
+  minute bars from a rolling window under a year deep, so its prices sit in today's band and the
+  Post2023 regime is the right one — the defect is specific to a deep-history DAILY catalog, which
+  only P7's path reads, and P7 was proven on fixtures. The failure mode is a WARN: the run exits 0,
+  the data-quality report is clean, and the summary block looks healthy. The 1,311 fills that DID
+  land are the subset whose price happened to sit on a coarser 2026 grid — a **price-level- and
+  tick-band-correlated subsample**, not a random one. Both exits fire from `on_bar`, so a skipped
+  EXIT fill leaves a position open past its pre-registered `holding_period_sessions` with no
+  guard: the same class of silent verdict-statistic drift that `HeldSymbolMissingBar` exists to
+  refuse, arriving by a path that guard does not watch.
+- **Consequence for this plan, stated before any number is used.** Any U4 candidate comparison run
+  on this substrate ranks signals by their interaction with the 2026 tick grid as much as by their
+  own merit, and the U6 holdout judgment is `N_max = 1` — spending it on a number this path
+  produced is unrecoverable. `+0.0412` above is recorded as a diagnostic artifact and is
+  **inadmissible as evidence**. The candidate declaration (U4) does not begin until the fill path
+  is fixed and the probe re-run clean, and the fix moves no hashed strategy source: `daily.rs` and
+  `daily_signal.rs` are not involved, so it does not compete with U2's single identity move.
+
+## Governance — the daily lineage's OPENING is re-prioritized AHEAD of the procurement verdict: the 2026-08-27 "stay frozen and unopened until the quote clears" decision is REVERSED as its own recorded act; every frozen artifact stays byte-identical, no strategy code, no param, no run (2026-09-08) — plan 2026-09-08-1215, queue `daily-lineage-reprioritization`
+
+- **What did NOT change.** No strategy code, no governed param, no ingest, no catalog, no
+  backtest, no gateway call. `strategy_code_hash` is untouched, so head identity does not move
+  and the documented head stays **v35**. All three frozen governance artifacts are
+  byte-identical, confirmed by digest and not by memory:
+  `config/lineage-preregistration.json` **`0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`**,
+  `config/preregistration.json` **`abdb90a1f15b73d6180864e3e0c707f3be10e56b324a7d744a5bddf8122342e9`**,
+  `config/sample-margin.json` **`e4f1bba9b89096a7cfe3d6ffd306a5c6a01f9c7d46fa209ea2559b03ca48b6a6`**.
+  The ORB lineage remains **CLOSED** (2026-08-10, declared 2026-08-11) under the pre-registered
+  Lineage-closure rule. **This entry does not open anything**: the "Open lineage (STANDING)"
+  block above still reads `currently open: NONE`, and it moves only in the separate opening
+  commit, which is gated on the pre-turn admissibility re-check clearing.
+- **The decision this reverses, and where it came from.** Plan `2026-08-27-1453`, Key Decision
+  2: *"`daily-resolution-v1` stays frozen and unopened until the quote clears the ceiling"* —
+  chosen over withdrawing the freeze up front, on the reasoning that a withdrawal plus a
+  price-driven stand-down would leave no strategy program at all. That reasoning survives; its
+  **ordering** does not. The condition it waits on is a third party's lead time, and it is
+  unbounded: the verifying-sample ask has not returned, so the procurement verdict
+  (`arc-procurement-verdict`) has no clock. Meanwhile the chain from "open lineage" to "attended
+  paper session" is entirely in-tree work. Holding the opening behind an unbounded external wait
+  buys nothing and spends the whole calendar. The `suspend-vs-amend` convention requires a
+  changed decision to be a separately recorded act rather than an implication of the commit that
+  acts on it, which is why this entry exists and why it precedes any opening.
+- **What the reversal SPENDS — recorded up front, because none of it is recoverable.** Opening
+  the daily lineage now consumes four things:
+  1. **The lineage's single holdout judgment.** `N_max = 1` over the 1,566-session holdout
+     (`2020-01-02 ..= 2026-05-20`), enforced by `lineage_prereg::judge_holdout` against
+     `ledger/lineage-holdout-judgments.jsonl`. Once judged, this lineage has no second look at
+     that window, whatever the procurement arc later returns.
+  2. **Its role as the procurement arc's fallback.** The 08-27 decision kept the freeze intact
+     precisely so a quote above the ceiling would still leave a strategy program standing. After
+     this reversal the fallback is being spent in parallel with the thing it was insurance
+     against; a REFUSE at the re-check or a FAIL at the judgment therefore leaves the arc with
+     no held-back alternative.
+  3. **The one-lineage queue position.** Exactly one lineage is open at a time (CONCEPTS.md
+     "Strategy lineage"). If the procurement verdict later clears its ceiling, the #241 portfolio
+     epoch **queues behind this lineage** rather than opening beside it — 08-27 R16's new search
+     epoch waits on this lineage reaching a terminal.
+  4. **The selection-tax reset's availability.** 08-27 R18 asks whether the one-time reset the
+     daily freeze spent is available to a #241 epoch. That question is now answered against a
+     lineage that is open and being judged, not against one held in reserve.
+- **The new order.** R30 diagnostic probe (does `HeldSymbolMissingBar` fire on the real
+  352-symbol catalog over the specification window, and how long does one run take) → identity
+  move (all live hooks and the ranking-signal variants land in **one** hash move, before any
+  judgment) → candidate declaration and signal freeze on the specification window
+  (`2016-08-01 ..= 2019-12-31`) → **exactly one** pre-turn admissibility re-check → CLEAR opens
+  the lineage / REFUSE closes this plan against it → the single holdout judgment. In parallel,
+  and deliberately not gated on the judgment: the daily paper **rehearsal** runner (see
+  CONCEPTS.md "Paper rehearsal"). Rehearsal sessions run under the mount safety envelope with
+  **no dispatch chain**, count toward no rung's N, and are marked no-evidence by a typed
+  `rehearsal: Some(true)` field rather than by prose — driver defects found after a judgment are
+  paid for twice.
+- **The queue now carries this plan's ladder, and the single priority marker MOVED.** Fifteen
+  items staged through `lab-next` (the two probes plus U2..U13, each carrying its dependency as
+  a recorded `block` condition), and three existing items superseded rather than edited, because
+  their unblock prose asserted the ordering this entry reverses:
+  `rung1-ladder-reentry-successor-margin-head` -> `rung1-ladder-reentry-daily-certified-head`
+  (its unblock routed through "the procurement verdict"; it now waits on this lineage's own
+  judgment), `arc-procurement-verdict` -> `arc-procurement-verdict-post-reprioritization` (its
+  note asserted the daily freeze is held intact as the only fallback), and
+  `orb-cost-artifact-hash-and-head-identity` ->
+  `orb-cost-artifact-hash-and-head-identity-rehearsal-scoped` (unchanged in substance, plus one
+  scope sentence: it blocks ORB and ladder paper sessions, not the daily rehearsal). Exactly one
+  item holds priority at a time, so **priority moved off `arc-send-verifying-sample-ask` onto
+  `daily-probe-heldsymbol-missing-bar`** — deliberate, and the operational half of this
+  reversal: the ask is blocked on the operator's signature and an unbounded external lead time,
+  the probe is the frontier of work that can actually start. The ask keeps its `block` condition
+  and loses nothing but the marker.
+
+- **The procurement arc is NOT stood down and is NOT blocked by this.** Every `arc-*` queue item
+  stays actionable on its own schedule. What changed is only that the daily lineage no longer
+  waits on the arc's terminal; the arc no longer waits on anything here.
+
 ## Governance — the two freshness oracles RECONCILED: the watch projection expands a declared tree node by node, so a `src/bin/**` edit the morning preflight could not see now reaches it; `LAB_SRC_FINGERPRINT` moves `a5a7472b…` → `fb1e8e59…`; no strategy code, no param, no run (2026-09-07) — queue `fingerprint-src-bin-freshness-oracle-divergence`
 
 - **What did NOT change.** No governed param, no strategy code, no ingest, no catalog, no

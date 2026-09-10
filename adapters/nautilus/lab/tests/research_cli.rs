@@ -43,6 +43,98 @@ use tempfile::tempdir;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+// Reuse U3's socket-free fixture and acceptance cases for the CLI contract.
+#[path = "lineage_recheck.rs"]
+mod lineage_acceptance;
+
+fn lineage_command(f: &lineage_acceptance::Fixture, verb: &str) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_lab-research"));
+    cmd.args(["lineage", verb, "--run"])
+        .arg(if verb == "judge" { &f.hold } else { &f.spec })
+        .env_remove("LS_TRADING_ENV")
+        .env("LS_CALENDAR_SNAPSHOT", &f.calendar)
+        .env("LS_LINEAGE_TEST_LEDGER", f.ledger.path())
+        .env("LS_LINEAGE_TEST_CATALOG_RECORD", &f.catalog);
+    if verb == "judge" { cmd.arg("--recheck").arg(&f.spec); }
+    cmd
+}
+
+/// AE1/AE2: the compiled verb persists CLEAR/REFUSE evidence and maps it to
+/// status 0/1; both measured and projected ICC survive the output path.
+#[test]
+fn lineage_cli_recheck_verdicts_and_identity_output() {
+    for (icc, code, verdict) in [(0.30, 0, "CLEAR"), (0.60, 1, "REFUSE")] {
+        let f = lineage_acceptance::Fixture::new(icc, 0);
+        let out = lineage_command(&f, "recheck").output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(code), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+        assert!(stdout.contains(verdict) && stdout.contains("0.327334"), "{stdout}");
+        assert!(stdout.contains(&format!("{icc:.6}")), "{stdout}");
+        let report: serde_json::Value = serde_json::from_slice(&std::fs::read(f.spec.join("recheck.json")).unwrap()).unwrap();
+        assert_eq!(report["verdict"], verdict);
+        assert_eq!(report["params_hash"], nautilus_ls_lab::runner::lineage::PINNED_DAILY_PARAMS_HASH);
+        assert!(!f.ledger.path().exists());
+    }
+}
+
+/// AE11: the process can finish its own interrupted claim, writes exactly two
+/// rows, and refuses a completed or different-run claim without appending.
+#[test]
+fn lineage_cli_judge_claim_backfill_resume_and_repeat() {
+    for mode in ["fresh", "resume", "different"] {
+        let f = lineage_acceptance::Fixture::new(0.30, 0);
+        assert!(lineage_command(&f, "recheck").output().unwrap().status.success());
+        if mode != "fresh" {
+            let mut claim = f.claim();
+            if mode == "different" { claim.run_id = "another-run".into(); }
+            f.ledger.append(&claim, true).unwrap();
+        }
+        let out = lineage_command(&f, "judge").output().unwrap();
+        if mode == "different" {
+            assert_eq!(out.status.code(), Some(1));
+            assert_eq!(f.ledger.read_all().unwrap().len(), 1);
+            assert!(!f.hold.join("judgment.json").exists());
+        } else {
+            assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stdout));
+            assert_eq!(f.ledger.read_all().unwrap().len(), 2);
+            assert!(f.hold.join("judgment.json").exists());
+            let before = std::fs::read(f.ledger.path()).unwrap();
+            let repeat = lineage_command(&f, "judge").output().unwrap();
+            assert_eq!(repeat.status.code(), Some(1));
+            assert!(String::from_utf8_lossy(&repeat.stdout).contains("REFUSE"));
+            assert_eq!(std::fs::read(f.ledger.path()).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn lineage_cli_placeholder_strategy_and_argument_refusals() {
+    for reason in ["placeholder", "orb"] {
+        let f = lineage_acceptance::Fixture::new(0.30, 0);
+        for run in [&f.spec, &f.hold] {
+            let filename = if reason == "orb" { "manifest.json" } else { "observation.json" };
+            let path = run.join(filename);
+            let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            if reason == "orb" { value["strategy_id"] = json!("orb"); }
+            else { value["ranking_signal_is_placeholder"] = json!(true); }
+            std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        for verb in ["recheck", "judge"] {
+            let out = lineage_command(&f, verb).output().unwrap();
+            assert_eq!(out.status.code(), Some(1));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(stdout.contains(if reason == "orb" { "strategy-id mismatch" } else { "PLACEHOLDER" }), "{stdout}");
+        }
+        assert!(!f.ledger.path().exists());
+    }
+    for args in [vec!["lineage", "unknown"], vec!["lineage", "judge", "--run", "missing"],
+        vec!["lineage", "recheck", "--run", "one", "--run", "two"]]
+    {
+        let out = Command::new(env!("CARGO_BIN_EXE_lab-research")).args(args).env_remove("LS_TRADING_ENV").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+    }
+}
+
 // --------------------------------------------------------------------------
 // Fixture: a catalog with one +5% gapping symbol (005930) — two daily bars for
 // the universe scan and a clean-breakout minute session on 20240105.

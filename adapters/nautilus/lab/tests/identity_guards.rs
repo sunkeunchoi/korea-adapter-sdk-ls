@@ -33,8 +33,9 @@ use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls_lab::artifacts::manifest::{strategy_code_hash, Manifest};
 use nautilus_ls_lab::artifacts::performance::PerformanceReport;
 use nautilus_ls_lab::artifacts::{MANIFEST_FILE, PERFORMANCE_FILE};
-use nautilus_ls_lab::dispatch::ladder::governed_params_hash;
+use nautilus_ls_lab::dispatch::ladder::{daily_governed_params_hash, governed_params_hash};
 use nautilus_ls_lab::params::OrbParams;
+use nautilus_ls_lab::params_daily::{DailyParams, RankingSignalKind};
 use nautilus_ls_lab::runner::backtest::{run, BacktestConfig};
 use nautilus_model::data::Bar;
 use nautilus_model::identifiers::InstrumentId;
@@ -61,6 +62,14 @@ const PINNED_ORB_CODE_HASH: &str =
 /// serialized JSON this hashes and detach every existing run from the running binary.
 const PINNED_DEFAULT_GOVERNED_PARAMS_HASH: &str =
     "6a09279cb3182c90b0c2ec6d2b0ff0ba69ccbb94b69f184caf70098d5ecc0f3e";
+
+/// `daily_strategy_code_hash(DAILY_SOURCE)` after the one pre-judgment identity move.
+const PINNED_DAILY_CODE_HASH: &str =
+    "fb78cc5502a023939a8341c53cd071cbc2b89ff93d0e9826d952347cddb5a8b4";
+
+/// `daily_governed_params_hash(&DailyParams::default())` before signal selection.
+const PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH: &str =
+    "c7980e8b24625a2d0773b0c07dfb7bdaddd38eb3033a0c6b4a9d5043e04b68f0";
 
 // ---------------------------------------------------------------------------
 // Scenario 1-2: the two pinned digests, by direct equality against the binary
@@ -109,6 +118,55 @@ fn a_daily_code_hash_differs_from_the_orb_value() {
         strategy_code_hash(),
         PINNED_ORB_CODE_HASH,
         "and computing the sibling cannot have moved the original"
+    );
+}
+
+#[test]
+fn the_daily_code_and_governed_parameter_hashes_are_pinned() {
+    let code = nautilus_ls_lab::artifacts::manifest::daily_strategy_code_hash(
+        nautilus_ls_lab::strategy::DAILY_SOURCE,
+    );
+    let params = daily_governed_params_hash(&DailyParams::default());
+    assert_eq!(code, PINNED_DAILY_CODE_HASH, "daily code hash moved");
+    assert_eq!(
+        params, PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH,
+        "daily governed-params hash moved"
+    );
+    assert_ne!(code, PINNED_ORB_CODE_HASH);
+    assert_ne!(params, PINNED_DEFAULT_GOVERNED_PARAMS_HASH);
+
+    let selected = DailyParams {
+        ranking_signal: RankingSignalKind::PriorTurnoverDesc,
+        ..DailyParams::default()
+    };
+    assert_ne!(
+        daily_governed_params_hash(&selected),
+        params,
+        "choosing a signal moves the daily parameter identity"
+    );
+    assert_eq!(
+        nautilus_ls_lab::artifacts::manifest::daily_strategy_code_hash(
+            nautilus_ls_lab::strategy::DAILY_SOURCE,
+        ),
+        code,
+        "choosing a signal does not move the daily code identity"
+    );
+}
+
+/// The judging path refuses a run whose hashes differ from these same pins, but it carries
+/// its own literal copies. Nothing else ties the two sets together, so a re-baseline that
+/// updated one file and not the other would leave this guard green while `lineage judge`
+/// refused every legitimate run (or, worse, admitted one built from the old source).
+#[test]
+fn the_lineage_judging_pins_match_the_guarded_digests() {
+    assert_eq!(
+        nautilus_ls_lab::runner::lineage::PINNED_DAILY_CODE_HASH, PINNED_DAILY_CODE_HASH,
+        "runner::lineage's code pin drifted from the identity_guards pin"
+    );
+    assert_eq!(
+        nautilus_ls_lab::runner::lineage::PINNED_DAILY_PARAMS_HASH,
+        PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH,
+        "runner::lineage's params pin drifted from the identity_guards pin"
     );
 }
 
@@ -379,7 +437,7 @@ use nautilus_ls_lab::artifacts::manifest::{
     range_fingerprint, universe_hash, DailyManifestParts, DataRange,
 };
 use nautilus_ls_lab::artifacts::{list_runs, run_id, RunSource, RunWriter};
-use nautilus_ls_lab::params_daily::{DailyParams, DAILY_STRATEGY_ID};
+use nautilus_ls_lab::params_daily::DAILY_STRATEGY_ID;
 use nautilus_ls_lab::runner::research::{latest_finalized_run, latest_finalized_run_for};
 
 /// Read a staged run's manifest off disk. `research::read_manifest` is crate-private, and

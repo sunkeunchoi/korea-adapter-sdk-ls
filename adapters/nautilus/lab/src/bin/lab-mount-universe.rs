@@ -30,6 +30,25 @@
 //!
 //! Then point `LS_MOUNT_UNIVERSE_FILE` at `--out` for the attended `--mount`.
 
+//!
+//! # `--daily` — the rehearsal universe (plan 2026-09-08-1215 U10)
+//!
+//! Produces the file the daily-resolution rehearsal (`lab-live --rehearse-daily`, U9)
+//! consumes: every scored symbol's rank under the ranking signal plus its ATR(1), derived
+//! OFFLINE from the rehearsal home's prior daily bars. Makes NO gateway call for any date —
+//! the daily strategy decides at the 15:20 close-auction bar, so there is no open to fetch.
+//!
+//! ```sh
+//! export LS_DATA_HOME=/ABSOLUTE/path/to/rehearsal-home      # the ADVANCING daily home (KTD10)
+//! export LS_MOUNT_UNIVERSE_DATE=2026-09-11                  # the KST session date
+//! export LS_MOUNT_UNIVERSE_METADATA=/…/universe-metadata-YYYYMMDD.json   # REQUIRED: the
+//!                                                           #   designation source (R24)
+//! export LS_MOUNT_UNIVERSE_SIGNAL=placeholder               # pre-freeze only; refused once
+//!                                                           #   FROZEN_RANKING_SIGNAL pins
+//! cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- --daily \
+//!   --out /ABSOLUTE/path/to/daily-universe.json
+//! ```
+
 use nautilus_ls_lab::runner::mount_universe;
 
 #[tokio::main]
@@ -37,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     nautilus_ls::scrub::install();
     let mut args = std::env::args().skip(1);
     let mut out: Option<std::path::PathBuf> = None;
+    let mut daily = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--out" => {
@@ -46,8 +66,16 @@ async fn main() -> anyhow::Result<()> {
                         .into(),
                 );
             }
-            other => anyhow::bail!("unknown argument {other:?} (only --out <path> is accepted)"),
+            "--daily" => daily = true,
+            other => anyhow::bail!(
+                "unknown argument {other:?} (only --daily and --out <path> are accepted)"
+            ),
         }
+    }
+    if daily {
+        let cfg = mount_universe::daily_config_from_env()?;
+        let file = mount_universe::resolve_daily(&cfg).await?;
+        return mount_universe::emit_daily(&file, out.as_deref());
     }
     let cfg = mount_universe::config_from_env()?;
     let rows = mount_universe::resolve(&cfg).await?;

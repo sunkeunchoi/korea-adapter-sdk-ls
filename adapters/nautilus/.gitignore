@@ -23,3 +23,7 @@
 
 /*.lock
 !Cargo.lock
+# The holdout-judgment advisory lock lands beside the committed ledger, so the anchored
+# rule above does not reach it. The lock is never deleted on drop — OS release on process
+# death is what makes a crashed judgment resumable — so it must be ignored, not cleaned up.
+lab/ledger/*.lock
