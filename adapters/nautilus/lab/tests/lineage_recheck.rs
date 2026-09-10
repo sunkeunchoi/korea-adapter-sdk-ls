@@ -493,3 +493,58 @@ fn missing_frozen_catalog_pin_is_not_replaced_by_universe_manifest_hash() {
     assert!(out.lines.join(" ").contains("no catalog_fingerprint"));
     assert!(!f.ledger.path().exists());
 }
+
+/// The COMMITTED catalog record carries the holdout pin (Gate 2, plan 2026-09-08-1215).
+///
+/// Every test above runs against a synthetic record, so none of them would notice the real
+/// one losing its pin — and it can: `ls-ingest LS_INGEST_MODE=backfill-report` writes this
+/// file from a struct that does not carry the key, so re-running that report over this path
+/// silently drops it and returns `judge` to the unconditional refusal the test above pins.
+/// That regression is invisible until the one judgment is attempted, so it is guarded here.
+///
+/// The value itself is deliberately NOT pinned as a literal: the pin is catalog-derived and a
+/// legitimate re-derivation (prereg `rederivation_trigger` (1)) moves it. What must hold is
+/// that a pin EXISTS, is a fingerprint, and is not the specification-window value — pinning
+/// the literal would turn a governed re-derivation into a test failure.
+#[test]
+fn the_committed_catalog_record_carries_a_holdout_scoped_fingerprint_pin() {
+    /// The specification-window fingerprint of the same catalog — what the R30 diagnostic runs
+    /// carry. `judge` compares against the HOLDOUT run, so this value here would be a pin the
+    /// judged run can never reproduce.
+    const SPECIFICATION_WINDOW_FINGERPRINT: &str =
+        "f538ddeed501f525a357bc632260169b8461aab8d9b462062a6824636e0cba75";
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("config/daily-catalog-20160801-20260812.json");
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the catalog record is committed"))
+            .expect("the catalog record is valid JSON");
+
+    let pin = record.get("catalog_fingerprint").and_then(|v| v.as_str()).unwrap_or_else(|| {
+        panic!(
+            "{} has no top-level `catalog_fingerprint` — `lineage judge` refuses unconditionally \
+             without it. If a backfill-report regenerated this file, restore the key and its \
+             `catalog_fingerprint_provenance` sibling from that entry.",
+            path.display()
+        )
+    });
+    assert_eq!(pin.len(), 64, "a range_fingerprint is 64 hex chars, got {pin:?}");
+    assert!(
+        pin.bytes().all(|b| b.is_ascii_hexdigit()),
+        "the pin must be a hex fingerprint, got {pin:?}"
+    );
+    assert_ne!(
+        pin, SPECIFICATION_WINDOW_FINGERPRINT,
+        "the pin is the SPECIFICATION-window fingerprint; the judged run observes the holdout \
+         window, whose bars hash to a different value, so this pin could never match"
+    );
+
+    // The sibling note is what makes the pin auditable: which window it covers, and that it was
+    // obtained without observing the holdout's results.
+    let note = record
+        .get("catalog_fingerprint_provenance")
+        .expect("the pin carries its provenance note");
+    let window = note.get("window").expect("the note names the window it covers");
+    assert_eq!(window.get("from").and_then(|v| v.as_str()), Some("2020-01-02"));
+    assert_eq!(window.get("to").and_then(|v| v.as_str()), Some("2026-05-20"));
+}

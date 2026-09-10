@@ -1,5 +1,19 @@
 {
   "schema_version": 1,
+  "catalog_fingerprint": "24adfc0e2eb75f18dad9965268ee7c7d73e0b4714d3c089160bbdb2668325578",
+  "catalog_fingerprint_provenance": {
+    "what": "The range_fingerprint of this catalog over the HOLDOUT window — the value `lab-research lineage judge` compares a holdout run's manifest.catalog_fingerprint against.",
+    "window": { "from": "2020-01-02", "to": "2026-05-20", "sessions": 1566 },
+    "window_source": "lineage-preregistration.json .supply.split.holdout",
+    "bars_in_range": 499466,
+    "series_in_range": 352,
+    "why_this_window": "The fingerprint is RANGE-SCOPED. The specification window over this same catalog hashes to f538ddeed501f525a357bc632260169b8461aab8d9b462062a6824636e0cba75 — the value the R30 diagnostic runs carry. Judging compares against the HOLDOUT run, so the holdout window is the only range whose hash that run can reproduce.",
+    "computed_by": "lab-research catalog fingerprint, LS_CATALOG_FP_SDATE=20200102 LS_CATALOG_FP_EDATE=20260520, on data/next-daily-2016",
+    "computed_at": "2026-09-10",
+    "no_look_taken": "That verb hashes the bars alone and runs no strategy, so authoring this pin observed nothing the single holdout judgment is meant to observe first (R11). The same verb reproduced the specification-window value byte-for-byte from the R30 manifests, which is what evidences the method.",
+    "not_the_manifest_hash": "provenance.manifest_hash below is the pit-universe manifest's content hash — a different quantity, deliberately NOT substituted here.",
+    "regeneration_hazard": "This file is written by `ls-ingest LS_INGEST_MODE=backfill-report`, whose BackfillReport struct does not carry these two keys — re-running that report over this path would silently DROP the pin and return `lineage judge` to its unconditional refusal. lineage_recheck.rs guards the key's presence; restore it from this entry if the guard fires."
+  },
   "provenance": {
     "manifest_path": "/Users/mini/dev/korea-adapter-sdk-ls/adapters/nautilus/lab/config/pit-universe-20260812.json",
     "manifest_hash": "6a63446ccb0e0f318389edcd21b9b943722e92f97701403ad8f8298e60f82881",
