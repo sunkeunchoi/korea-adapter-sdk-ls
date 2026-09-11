@@ -154,6 +154,55 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   `e4f1bba9…`. The lineage is still **NOT open** — this is U4's last step, and U5's one-shot
   admissibility re-check is what opens it.
 
+## Probe — R32 overnight paper-hold, DAY 2 of 2: **PASS** — the position SURVIVED the session boundary unchanged in quantity and average price (005930 × 1 @ 265,500 still held on the next session's `t0424`), so the LS paper gateway does carry a book across days and U7–U13's design premise stands; the book is live-marked, not frozen, and the T+2 settlement advanced one day across the boundary; no strategy code, no param, no run (2026-09-11) — plan 2026-09-08-1215, queue `daily-probe-paper-overnight-hold`
+
+- **The question, answered.** Day 1 (2026-09-10 11:19 KST) placed one marketable buy and left it in
+  the book; the entry above states the verdict is this read. It is now taken: the gateway reports
+  the same position, same quantity, same average price on the 2026-09-11 session. **`held=yes` with
+  `janqty=1` and `pamt=265500` on `expcode=005930` is the PASS the day-1 entry named**, and it
+  unblocks U7. The design-invalidating `held=no` branch (plan Risks — "flat every morning +
+  notional book") is NOT taken and needs no decision.
+- **Day 2 witness (credential-free, 13:24 KST, KRX open — an intraday read on the day-2 session,
+  not a pre-open one).**
+  - `R32-HOLD phase=verify symbol=005930 qty=1 ordno=- held=yes row=[expcode=005930 janqty=1
+    mdposqt=1 pamt=265500 price=260000 appamt=260000] cash=[sunamt=499977282 sunamt1=499717282
+    tappamt=260000] deposit=[mnyordableamt=499929721 dps=499982821 d2dps=499717282]`
+  - `make r32-hold-verify` MAKE_EXIT=0, `1 passed; 0 failed`, 1.49 s. Read-only: the verify phase
+    takes the paper guard only, no `LS_ORDER_SMOKE` opt-in, no nonce and no PTY, and places nothing.
+- **Two readings the rehearsal depends on, beyond `held=yes`.**
+  - **The book is live-marked across the boundary, not carried at cost.** `pamt` (average buy)
+    holds at 265,500 while `price` moves 266,000 → 260,000 and `appamt` follows it 266,000 →
+    260,000. So `t0424` gives the rehearsal a marked-to-market valuation each session and an
+    unrealized −5,500 on this lot; U8's observation assembly must read `pamt` for cost basis and
+    `price`/`appamt` for valuation, never one for the other.
+  - **Settlement advanced exactly one day.** Day 1 showed the buy only in `d2dps`
+    (499,717,282 = 499,982,821 − 265,539 including fees) while `sunamt1` still read the
+    pre-settlement 499,982,821. On day 2 `sunamt1` has become 499,717,282 — the same figure. This
+    confirms the day-1 entry's call that the **R17 mount preflight should gate on `d2dps`, not
+    `dps`**: `dps` is still the unmoved 499,982,821 two sessions after a filled buy.
+  - Cash-orderable `mnyordableamt` is unchanged at **499,929,721 KRW** against the plan's
+    100,000,000 KRW steady-state requirement — still clears by ~5×, now measured across a
+    session boundary rather than within one.
+- **The standing hazard is CLEARED — the lane is flat again.** After this entry was written and the
+  queue item closed, `make paper-reset` ran in the same session: it placed the marketable SELL
+  (`close symbol=005930 qty=1 ordno=23898 result=acked`) and a settled re-read confirms
+  `held=no rows=[005930x0] tappamt=0`. The flat-asserting order smokes
+  (`live-smoke-order-chain`, the CSPAT negative probes' flat-verify) are usable again. Round-trip
+  cost of the probe, from `d2dps`: bought −265,539, sold +258,944, **net −6,595 KRW** of paper
+  money. The deferred question of a second paper credential for an `.env.rehearsal` lane stays
+  open — it is what would remove this hazard permanently rather than per-probe.
+- **Finding for U13: `flat=not-yet` from `paper-reset` is a TIMING artifact, not a failed
+  remediation.** The reset's own witness ended `canceled=0 closed=1 flat=not-yet
+  remaining=[ord:23898]` — its verify loop is 3 attempts × a 1,500 ms settle, ~4.5 s total, and the
+  marketable SELL had not filled inside it. An immediate `t0424` read showed the intermediate state
+  plainly: `janqty=1 mdposqt=0` — the share still held but its *sellable* quantity reserved by the
+  working order. ~45 s later it was filled and flat. So on this lane a marketable SELL does not
+  fill as promptly as day 1's marketable BUY did (that one confirmed on attempt 1), and the reset's
+  bounded window is too short to see it. **U13's recovery verbs must not read `flat=not-yet` as a
+  trip condition**; they need either a longer bounded wait or a distinct "resting close order
+  outstanding" state, and `mdposqt` (not `janqty`) is the field that distinguishes a reserved
+  holding from an unmanaged one.
+
 ## Result — the two declared candidates ran on the specification window and `momentum12x1` wins on the declared criterion by 3.45x with no tie to break (net RoR 0.047061 vs 0.013641); the constant freeze is NOT in this entry because it is not the one-line flip the plan assumed — it makes `DailyParams::default()` un-validatable and breaks 9 lib tests, which is a design decision, not a mechanical step (2026-09-10) — plan 2026-09-08-1215 U4, queue `daily-candidate-declaration-and-signal-freeze`
 
 - **Both runs are post-declaration.** The declaration entry below was committed AND pushed (PR #315)
