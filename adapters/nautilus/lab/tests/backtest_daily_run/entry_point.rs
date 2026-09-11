@@ -25,8 +25,8 @@ use nautilus_ls_lab::runner::backtest_daily::{run, run_inner, select_daily_sessi
 use tempfile::tempdir;
 
 use crate::fixture::{
-    build_daily_fixture, cfg, daily_json, kst_date, rank_all, write_daily_series, RANGE_END,
-    RANGE_START,
+    build_daily_fixture, cfg, daily_json, kst_date, rank_all, write_daily_series,
+    IN_RANGE_SESSIONS, RANGE_END, RANGE_START,
 };
 
 /// A `lab-backtest-daily` invocation over `data_home` with no `LS_BTD_*` set beyond the
@@ -296,10 +296,19 @@ async fn the_frozen_atr_window_reaches_candidate_assembly() {
 
     let bridged = derivable(&c.assembly_params());
     let unbridged = derivable(&c.params);
-    assert_eq!(bridged, 20, "ATR(1) is derivable from the second in-range session onward");
+    // ATR(w) is derivable on in-range session i once i >= w + 1, so the count is
+    // IN_RANGE_SESSIONS - w. Deriving both from the window length rather than pinning
+    // literals keeps this honest if the fixture is resized again.
     assert_eq!(
-        unbridged, 7,
-        "ATR(14) leaves only the last 7 of 21 sessions with a derivable ATR — the other 13 \
-         would refuse every entry, and the run would still finalize green"
+        bridged,
+        IN_RANGE_SESSIONS - 1,
+        "ATR(1) is derivable from the second in-range session onward"
+    );
+    assert_eq!(
+        unbridged,
+        IN_RANGE_SESSIONS - 14,
+        "ATR(14) leaves only the last {} of {IN_RANGE_SESSIONS} sessions with a derivable \
+         ATR — the other 14 would refuse every entry, and the run would still finalize green",
+        IN_RANGE_SESSIONS - 14
     );
 }

@@ -91,19 +91,32 @@ async fn write_masters(catalog: &Path) {
     write_instruments(catalog, provider.all_any()).await.unwrap();
 }
 
-/// The 22 consecutive KST weekdays the multi-session fixtures use. Index 0 is the
+/// The 31 consecutive KST weekdays the multi-session fixtures use. Index 0 is the
 /// PRE-RANGE prior session (the `select_prior_today` lookback); index 1 onward are
-/// the 21 in-range sessions the pinned range covers.
-pub(crate) const SESSION_DAYS: [&str; 22] = [
+/// the 30 in-range sessions the pinned range covers.
+///
+/// **Why 30 and not the original 21.** The U4 freeze made `Momentum12x1` the signal
+/// every run takes, and it cannot score an in-range session before index 13. A position
+/// opened there needs the frozen 16-session hold to expire at index 29, so a 21-session
+/// window closed no trade at all — and a run with no closed trade cannot build its
+/// observation, because the verdict statistic is Σrealized/Σrisk_capital. The window is
+/// sized so hold expiry happens *naturally* here, with one session to spare, rather than
+/// every scenario having to stop a position out with a crash low.
+pub(crate) const SESSION_DAYS: [&str; 31] = [
     "20240102", "20240103", "20240104", "20240105", "20240108", "20240109", "20240110",
     "20240111", "20240112", "20240115", "20240116", "20240117", "20240118", "20240119",
     "20240122", "20240123", "20240124", "20240125", "20240126", "20240129", "20240130",
-    "20240131",
+    "20240131", "20240201", "20240202", "20240205", "20240206", "20240207", "20240208",
+    "20240209", "20240212", "20240213",
 ];
 
-/// The pinned range: session index 1 through 21 (0 is the out-of-range prior).
+/// The number of in-range sessions in [`SESSION_DAYS`] — every one of them is an
+/// observation row, warmup included.
+pub(crate) const IN_RANGE_SESSIONS: usize = SESSION_DAYS.len() - 1;
+
+/// The pinned range: session index 1 through 30 (0 is the out-of-range prior).
 pub(crate) const RANGE_START: &str = "20240103";
-pub(crate) const RANGE_END: &str = "20240131";
+pub(crate) const RANGE_END: &str = "20240213";
 
 /// A hand-chained flat daily series long enough to reach hold expiry: a constant
 /// close with a small per-session drift, so nothing ever breaches a stop placed a
@@ -139,7 +152,7 @@ fn flat_series(
         .collect()
 }
 
-/// The two-symbol, 22-session daily-only fixture. `crash` maps a symbol to the
+/// The two-symbol, 31-session daily-only fixture. `crash` maps a symbol to the
 /// (session index → low) overrides that drive a stop-out.
 pub(crate) async fn build_daily_fixture(
     data_home: &Path,

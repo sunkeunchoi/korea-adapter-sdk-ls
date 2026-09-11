@@ -748,7 +748,7 @@ fn a_manifest_carrying_daily_params_round_trips_every_field() {
         strategy_version: 3,
         target_m: 5,
         notional_per_position: 1_234_567.0,
-        ..DailyParams::default()
+        ..DailyParams::frozen()
     };
     let m = Manifest::new_daily(daily_parts(daily.clone())).expect("valid daily params");
     let text = serde_json::to_string(&m).unwrap();
@@ -882,7 +882,7 @@ fn a_hold_below_the_frozen_value_is_rejected_and_the_call_site_refuses_the_run()
     use nautilus_ls_lab::params_daily::{DailyParams, FROZEN_HOLDING_PERIOD_SESSIONS};
     let short = DailyParams {
         holding_period_sessions: FROZEN_HOLDING_PERIOD_SESSIONS - 1,
-        ..DailyParams::default()
+        ..DailyParams::frozen()
     };
     let err = short.validate().expect_err("a short hold is rejected");
     assert!(err.contains("holding_period_sessions"), "{err}");
@@ -895,7 +895,7 @@ fn a_hold_below_the_frozen_value_is_rejected_and_the_call_site_refuses_the_run()
     // would be shorter than the hold, which understates the standard error.
     let long = DailyParams {
         holding_period_sessions: FROZEN_HOLDING_PERIOD_SESSIONS + 1,
-        ..DailyParams::default()
+        ..DailyParams::frozen()
     };
     assert!(long.validate().is_err(), "a longer hold is refused too");
 }
@@ -907,13 +907,13 @@ fn a_non_positive_atr_window_or_sizing_term_is_rejected() {
     // fails closed (KTD9); a non-positive notional floors every entry quantity to 0.
     use nautilus_ls_lab::params_daily::DailyParams;
     for window in [0.0, -1.0, f64::NAN] {
-        let p = DailyParams { atr_window_sessions: window, ..DailyParams::default() };
+        let p = DailyParams { atr_window_sessions: window, ..DailyParams::frozen() };
         let err = p.validate().expect_err("a non-positive ATR window is rejected");
         assert!(err.contains("atr_window_sessions"), "{err}");
         assert!(Manifest::new_daily(daily_parts(p)).is_err(), "and the call site refuses");
     }
     for notional in [0.0, -1.0, f64::INFINITY] {
-        let p = DailyParams { notional_per_position: notional, ..DailyParams::default() };
+        let p = DailyParams { notional_per_position: notional, ..DailyParams::frozen() };
         let err = p.validate().expect_err("a non-positive sizing term is rejected");
         assert!(err.contains("notional_per_position"), "{err}");
         assert!(Manifest::new_daily(daily_parts(p)).is_err(), "and the call site refuses");
@@ -932,7 +932,7 @@ fn an_orb_manifest_carrying_daily_params_is_refused_not_ignored() {
     use nautilus_ls_lab::params_daily::DailyParams;
     let mut m = orb_manifest();
     m.validate_strategy_identity().expect("a plain ORB manifest is fine");
-    m.daily_params = Some(DailyParams::default());
+    m.daily_params = Some(DailyParams::frozen());
     let err = m.validate_strategy_identity().expect_err("refused, not ignored");
     assert!(err.contains("refused rather than ignored"), "{err}");
 
@@ -944,7 +944,7 @@ fn an_orb_manifest_carrying_daily_params_is_refused_not_ignored() {
 
     // And a manifest whose discriminator disagrees with its own params.
     let mut mismatched =
-        Manifest::new_daily(daily_parts(DailyParams::default())).expect("valid daily manifest");
+        Manifest::new_daily(daily_parts(DailyParams::frozen())).expect("valid daily manifest");
     mismatched.strategy_id = "something-else".to_string();
     assert!(mismatched.validate_strategy_identity().is_err(), "the two must agree");
 }
@@ -959,7 +959,7 @@ fn a_daily_run_is_distinguishable_from_an_orb_run_in_the_registry() {
     // — i.e. it carries `strategy_id: "orb"` — which is precisely the trap.
     use nautilus_ls_lab::params::{OrbParams, STRATEGY_ID};
     use nautilus_ls_lab::params_daily::{DailyParams, DAILY_STRATEGY_ID};
-    let m = Manifest::new_daily(daily_parts(DailyParams::default())).expect("valid");
+    let m = Manifest::new_daily(daily_parts(DailyParams::frozen())).expect("valid");
 
     assert_eq!(m.params.strategy_id, STRATEGY_ID, "the carried assembly params are ORB's");
     assert_ne!(m.strategy_id, STRATEGY_ID, "yet the manifest is NOT identified as ORB");
@@ -981,7 +981,7 @@ fn a_daily_run_is_distinguishable_from_an_orb_run_in_the_registry() {
         PINNED_ORB_CODE_HASH
     );
     // A daily strategy_id colliding with ORB's is rejected outright.
-    let colliding = DailyParams { strategy_id: STRATEGY_ID.to_string(), ..DailyParams::default() };
+    let colliding = DailyParams { strategy_id: STRATEGY_ID.to_string(), ..DailyParams::frozen() };
     let err = colliding.validate().expect_err("the ORB id is not available to the daily path");
     assert!(err.contains("collides"), "{err}");
     assert!(Manifest::new_daily(daily_parts(colliding)).is_err(), "and the call site refuses");

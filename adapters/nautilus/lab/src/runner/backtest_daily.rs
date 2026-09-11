@@ -260,12 +260,23 @@ impl DailyBacktestConfig {
     /// A config over `data_home` for `[start, end]` (YYYYMMDD), taking the frozen daily
     /// terms with `target_m` overridden — a fixture may run *fewer* than the frozen 8,
     /// never more, and [`DailyParams::validate`] enforces that ceiling.
+    ///
+    /// Since U4 the ranking signal is one of those frozen terms, so the base set is
+    /// [`DailyParams::frozen`] and not `DailyParams::default()`, whose `Placeholder` is
+    /// the KTD9 *marker* and does not validate. This mirrors [`resolve_ranking_signal`]
+    /// exactly — an unset `LS_BTD_SIGNAL` and an unset mount-universe override both mean
+    /// "the frozen signal", never the placeholder — so the two entry points cannot drift
+    /// on what an absent override means. An override naming another signal still reaches
+    /// [`DailyParams::validate`] and is refused there, which stays the single home for
+    /// that rule.
+    ///
+    /// [`resolve_ranking_signal`]: crate::runner::mount_universe::resolve_ranking_signal
     pub fn new(data_home: impl Into<PathBuf>, start: &str, end: &str, target_m: usize) -> Self {
         DailyBacktestConfig {
             data_home: data_home.into(),
             range: DataRange { start: start.to_string(), end: end.to_string() },
             params: OrbParams::default(),
-            daily: DailyParams { target_m, ..DailyParams::default() },
+            daily: DailyParams { target_m, ..DailyParams::frozen() },
             starting_balance: 100_000_000.0,
         }
     }

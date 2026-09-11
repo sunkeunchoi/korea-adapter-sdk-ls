@@ -68,8 +68,22 @@ const PINNED_DAILY_CODE_HASH: &str =
     "fb78cc5502a023939a8341c53cd071cbc2b89ff93d0e9826d952347cddb5a8b4";
 
 /// `daily_governed_params_hash(&DailyParams::default())` before signal selection.
+///
+/// This one did **not** move at the U4 freeze and must not: the freeze lives in a `const`,
+/// not in a struct field, and the serde default still carries `Placeholder`. It stays the
+/// anti-drift guard on the parameter struct's shape — a moved value here means a field was
+/// added, renamed or re-defaulted, which detaches every existing run from the binary.
 const PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH: &str =
     "c7980e8b24625a2d0773b0c07dfb7bdaddd38eb3033a0c6b4a9d5043e04b68f0";
+
+/// `daily_governed_params_hash(&DailyParams::frozen())` — the identity a **judgeable** run
+/// carries since the U4 freeze, and what `lineage judge` checks a candidate run against.
+///
+/// It is deliberately a different literal from the default pin above. Before the freeze the
+/// two coincided, because a run took the serde default; the freeze is precisely the act
+/// that separates them, and the plan declared that it moves the parameter hash.
+const PINNED_FROZEN_DAILY_GOVERNED_PARAMS_HASH: &str =
+    "387efc3ed1d2e6448df00375de6adfdf6f4c0b08a34d611426dfa1e726100283";
 
 // ---------------------------------------------------------------------------
 // Scenario 1-2: the two pinned digests, by direct equality against the binary
@@ -144,6 +158,12 @@ fn the_daily_code_and_governed_parameter_hashes_are_pinned() {
         params,
         "choosing a signal moves the daily parameter identity"
     );
+
+    // And the signal U4 actually froze is the one a run carries. This is the hash the
+    // judging path checks against; it must differ from the default set's.
+    let frozen = daily_governed_params_hash(&DailyParams::frozen());
+    assert_eq!(frozen, PINNED_FROZEN_DAILY_GOVERNED_PARAMS_HASH, "frozen daily params hash moved");
+    assert_ne!(frozen, params, "the freeze separates the runnable identity from the default");
     assert_eq!(
         nautilus_ls_lab::artifacts::manifest::daily_strategy_code_hash(
             nautilus_ls_lab::strategy::DAILY_SOURCE,
@@ -163,10 +183,18 @@ fn the_lineage_judging_pins_match_the_guarded_digests() {
         nautilus_ls_lab::runner::lineage::PINNED_DAILY_CODE_HASH, PINNED_DAILY_CODE_HASH,
         "runner::lineage's code pin drifted from the identity_guards pin"
     );
+    // Since U4 the judging path pins the FROZEN set's hash, because that is what a
+    // judgeable run carries. Pointing it back at the default set's would make `judge`
+    // refuse every legitimate post-freeze run.
     assert_eq!(
         nautilus_ls_lab::runner::lineage::PINNED_DAILY_PARAMS_HASH,
-        PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH,
+        PINNED_FROZEN_DAILY_GOVERNED_PARAMS_HASH,
         "runner::lineage's params pin drifted from the identity_guards pin"
+    );
+    assert_ne!(
+        nautilus_ls_lab::runner::lineage::PINNED_DAILY_PARAMS_HASH,
+        PINNED_DEFAULT_DAILY_GOVERNED_PARAMS_HASH,
+        "the judging pin must not fall back to the pre-freeze default-set hash"
     );
 }
 
@@ -483,7 +511,7 @@ fn stage_orb_run(data: &Path, hour: u32, version: u32) -> String {
 fn stage_daily_run(data: &Path, hour: u32) -> String {
     let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
     let m = Manifest::new_daily(DailyManifestParts {
-        daily: DailyParams::default(),
+        daily: DailyParams::frozen(),
         assembly_params: OrbParams::default(),
         daily_source: nautilus_ls_lab::strategy::DAILY_SOURCE,
         started_utc: started,

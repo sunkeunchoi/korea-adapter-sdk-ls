@@ -22,9 +22,15 @@ use crate::stats;
 /// from the running source: that would silently accept a changed head.
 pub const PINNED_DAILY_CODE_HASH: &str =
     "fb78cc5502a023939a8341c53cd071cbc2b89ff93d0e9826d952347cddb5a8b4";
-/// The daily governed-params pin in tests/identity_guards.rs.
+/// The daily governed-params pin in tests/identity_guards.rs — the **frozen** set's hash
+/// (`PINNED_FROZEN_DAILY_GOVERNED_PARAMS_HASH`), not the serde default's.
+///
+/// Moved at the U4 ranking-signal freeze, which the plan declared would move the parameter
+/// hash. A judgeable run carries `DailyParams::frozen()`, so this is the identity `judge`
+/// must require; the default set's `c7980e8b…` stays pinned in identity_guards as the
+/// anti-drift guard on the struct's shape, and the two are no longer the same literal.
 pub const PINNED_DAILY_PARAMS_HASH: &str =
-    "c7980e8b24625a2d0773b0c07dfb7bdaddd38eb3033a0c6b4a9d5043e04b68f0";
+    "387efc3ed1d2e6448df00375de6adfdf6f4c0b08a34d611426dfa1e726100283";
 /// Run-local recheck artifact.
 pub const RECHECK_FILE: &str = "recheck.json";
 /// Run-local judgment artifact.
