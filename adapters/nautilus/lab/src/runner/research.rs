@@ -2487,7 +2487,7 @@ mod tests {
     fn daily_manifest(hour: u32) -> Manifest {
         let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
         Manifest::new_daily(DailyManifestParts {
-            daily: DailyParams::default(),
+            daily: DailyParams::frozen(),
             assembly_params: OrbParams::default(),
             daily_source: crate::strategy::DAILY_SOURCE,
             started_utc: started,
@@ -2524,7 +2524,7 @@ mod tests {
     /// parses cleanly, so only the identity check can reject it.
     fn with_grafted_daily_params(manifest: &Manifest) -> serde_json::Value {
         let mut json = serde_json::to_value(manifest).unwrap();
-        json["daily_params"] = serde_json::to_value(DailyParams::default()).unwrap();
+        json["daily_params"] = serde_json::to_value(DailyParams::frozen()).unwrap();
         json
     }
 

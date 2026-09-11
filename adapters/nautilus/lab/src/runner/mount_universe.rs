@@ -1195,19 +1195,38 @@ mod tests {
         assert!(err.contains("momentum12x1"), "and the accepted spellings: {err}");
     }
 
-    /// Pre-freeze (`FROZEN_RANKING_SIGNAL == None`): no override is the placeholder, an
-    /// override selects the candidate. The post-freeze refusal is `validate_ranking_signal`'s
-    /// branch, already covered in params_daily; this pins the pre-freeze posture the
-    /// rehearsal ships under.
+    /// Post-freeze (U4, `FROZEN_RANKING_SIGNAL == Some(Momentum12x1)`): the frozen signal
+    /// is the ONLY signal the rehearsal can rank under.
+    ///
+    /// This replaces the pre-freeze test that pinned the opposite posture (no override →
+    /// placeholder, an override → the candidate to rehearse under). That posture was
+    /// correct only while the freeze was open, so it is rewritten rather than patched:
+    /// the selection window is closed, and what needs pinning now is that the rehearsal
+    /// cannot rank under a signal a *run* could not — including the placeholder that was
+    /// the pre-freeze default.
     #[test]
-    fn daily_signal_resolution_defaults_to_the_placeholder_before_the_freeze() {
-        assert!(FROZEN_RANKING_SIGNAL.is_none(), "this test pins the PRE-freeze posture");
-        assert_eq!(resolve_ranking_signal(None).unwrap(), RankingSignalKind::Placeholder);
-        assert_eq!(resolve_ranking_signal(Some("  ")).unwrap(), RankingSignalKind::Placeholder);
-        assert_eq!(
-            resolve_ranking_signal(Some("momentum12x1")).unwrap(),
-            RankingSignalKind::Momentum12x1
-        );
+    fn daily_signal_resolution_is_the_frozen_signal_and_refuses_every_other() {
+        let frozen = FROZEN_RANKING_SIGNAL.expect("U4 froze the ranking signal");
+        assert_eq!(frozen, RankingSignalKind::Momentum12x1);
+
+        // No override, and a blank one, now resolve to the FROZEN signal — not the
+        // placeholder. This is the line that moved at the freeze.
+        assert_eq!(resolve_ranking_signal(None).unwrap(), frozen);
+        assert_eq!(resolve_ranking_signal(Some("  ")).unwrap(), frozen);
+        // Naming the frozen signal explicitly is the same thing, not a special case.
+        assert_eq!(resolve_ranking_signal(Some("momentum12x1")).unwrap(), frozen);
+
+        // The losing candidate parses but is REFUSED — a well-formed override is exactly
+        // the way a rehearsal could have drifted off the registered lineage.
+        let err = resolve_ranking_signal(Some("prior_turnover_desc")).unwrap_err().to_string();
+        assert!(err.contains("mount-universe --daily refused"), "{err}");
+        assert!(err.contains("momentum_12x1"), "and names the frozen signal: {err}");
+
+        // The pre-freeze default is refused on the same branch: the placeholder marks a
+        // run as unjudgeable (KTD9), so it must not be rankable either.
+        assert!(resolve_ranking_signal(Some("placeholder")).is_err());
+
+        // An unparseable name still fails at parse, before the freeze check.
         assert!(resolve_ranking_signal(Some("turnover")).is_err());
     }
 

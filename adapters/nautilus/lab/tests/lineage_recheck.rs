@@ -103,7 +103,7 @@ fn stage(dir: &Path, id: &str, range: DataRange, sessions: &[NaiveDate], trades:
     std::fs::create_dir_all(dir).unwrap();
     let manifest: Manifest = serde_json::from_value(json!({
         "run_id": id, "source": "backtest", "strategy_id": "daily-ms", "strategy_version": 0,
-        "params": OrbParams::default(), "daily_params": DailyParams::default(),
+        "params": OrbParams::default(), "daily_params": DailyParams::frozen(),
         "data_range": range, "catalog_fingerprint": "fixture-catalog", "universe_hash": "fixture-universe",
         "strategy_code_hash": lineage::PINNED_DAILY_CODE_HASH, "created_utc": "2026-08-15T00:00:00Z"
     })).unwrap();
@@ -184,17 +184,26 @@ fn ae2_measured_clustering_can_refuse_the_lineage() {
     assert!(report.recomputed.effect_required_at_power > report.registered_effect);
 }
 
+/// Marked warmup sessions are removed from the participation denominator: 16 marked
+/// sessions leave 64 eligible, and participation is then a clean 1.0.
+///
+/// The pre-freeze half of this test computed the SAME fixture with the marker dropped and
+/// compared the two (0.8 over 80 eligible). That comparison is unreachable since U4: the
+/// run's signal is now `Momentum12x1`, which declares 13 prior bars, so an unmarked
+/// leading no-entry prefix is refused outright instead of being scored. The refusal is
+/// asserted in `unmarked_warmup_refuses_rather_than_scoring_participation_it_cannot_trust`;
+/// what stays here is the arithmetic the exclusion performs when the marker IS present.
 #[test]
 fn only_explicit_warmup_is_excluded_from_calendar_participation() {
     let f = Fixture::new(0.30, 16);
     let marked = f.admit();
-    change(&f.spec.join("observation.json"), |v| { v["warmup_sessions"] = json!([]); });
-    let unmarked = lineage::compute_recheck(&f.spec, &f.calendar).unwrap();
     assert_eq!(marked.measured.participation, 1.0);
-    assert_eq!(unmarked.measured.participation, 0.8);
     assert_eq!(marked.measured.eligible_sessions, 64);
-    assert_eq!(unmarked.measured.eligible_sessions, 80);
-    assert_eq!(marked.measured.icc, unmarked.measured.icc);
+
+    change(&f.spec.join("observation.json"), |v| { v["warmup_sessions"] = json!([]); });
+    let err = lineage::compute_recheck(&f.spec, &f.calendar)
+        .expect_err("an unmarked prefix under a lookback signal is not scoreable");
+    assert!(format!("{err:#}").contains("marks no warmup"), "{err:#}");
 }
 
 #[test]
@@ -342,12 +351,17 @@ fn unmarked_warmup_refuses_rather_than_scoring_participation_it_cannot_trust() {
     change(&f.spec.join("observation.json"), |v| { v["warmup_sessions"] = json!([]); });
     let err = lineage::compute_recheck(&f.spec, &f.calendar).unwrap_err();
     assert!(format!("{err:#}").contains("marks no warmup"), "{err:#}");
-    // A signal that needs only the current bar has no such prefix and is unaffected.
+    // Pre-freeze this arm switched the run to a one-bar signal, which has no such prefix
+    // and was therefore unaffected. Since U4 that escape does not exist: a signal other
+    // than the frozen one is refused before the warmup rule is ever reached, so the
+    // unmarked prefix cannot be argued away by re-labelling the run.
     change(&f.spec.join("manifest.json"), |v| {
         v["daily_params"]["ranking_signal"] =
             serde_json::to_value(RankingSignalKind::PriorTurnoverDesc).unwrap();
     });
-    assert!(lineage::compute_recheck(&f.spec, &f.calendar).is_ok());
+    let err = lineage::compute_recheck(&f.spec, &f.calendar)
+        .expect_err("an off-freeze signal is not admissible");
+    assert!(format!("{err:#}").contains("momentum_12x1"), "{err:#}");
 }
 
 #[test]

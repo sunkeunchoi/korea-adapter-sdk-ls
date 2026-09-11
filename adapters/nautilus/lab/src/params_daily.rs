@@ -73,9 +73,38 @@ impl Default for RankingSignalKind {
     }
 }
 
-/// The attended ranking-signal freeze. U4 changes this constant only after the
-/// candidate comparison; `None` keeps the pre-freeze placeholder admissible.
-pub const FROZEN_RANKING_SIGNAL: Option<RankingSignalKind> = None;
+/// The attended ranking-signal freeze (U4, 2026-09-11). **FROZEN: `Momentum12x1`.**
+///
+/// Set from the declared candidate comparison recorded in `TURN-LOG.md` (2026-09-10):
+/// both declared candidates ran on the *specification* window under the frozen stop and
+/// hold, and `momentum12x1` won the pre-declared criterion — cost-armed net RoR 0.047061
+/// against `prior_turnover_desc`'s 0.013641, 3.45x, with the closed-trade tiebreak never
+/// reached. The declaration was committed and pushed before either binary ran, so the
+/// criterion was immutable before any number existed (R7).
+///
+/// **0.047061 is in-sample and is not a projection.** The signal was *selected* on that
+/// window, so the figure must never be read against `verdict.hurdle`, which is defined on
+/// the untouched holdout. What this constant does is make that selection binding: from
+/// here a daily run either ranks under `Momentum12x1` or is refused.
+///
+/// # Why `DailyParams::default()` no longer validates
+///
+/// [`DailyParams::default`] still carries [`RankingSignalKind::Placeholder`], and
+/// [`DailyParams::validate`] now refuses it. That combination is deliberate, not an
+/// oversight:
+///
+/// * The serde default must stay `Placeholder` (KTD9). It is the marker that makes a
+///   legacy pre-freeze manifest *identifiable* as unjudgeable. Making the serde default
+///   the frozen signal instead would silently re-label every placeholder run as judgeable
+///   — the one outcome KTD9 exists to prevent.
+/// * So `DailyParams::default()` is a starting point, never a runnable set. Every caller
+///   that builds params for a run states the signal explicitly
+///   (`DailyParams { ranking_signal, ..DailyParams::default() }`), which is what the
+///   runner, the CLI (`LS_BTD_SIGNAL`) and [`resolve_ranking_signal`] already did before
+///   the freeze.
+///
+/// [`resolve_ranking_signal`]: crate::runner::mount_universe::resolve_ranking_signal
+pub const FROZEN_RANKING_SIGNAL: Option<RankingSignalKind> = Some(RankingSignalKind::Momentum12x1);
 
 /// The strategy identifier every daily run records in its manifest and run id — the
 /// registry discriminator (KTD14).
@@ -268,6 +297,28 @@ impl Default for DailyParams {
 }
 
 impl DailyParams {
+    /// The frozen, **runnable** daily parameter set: every frozen term at its freeze,
+    /// including the U4 ranking signal.
+    ///
+    /// This is the constructor a caller wants; [`DailyParams::default`] is not. The two
+    /// differ in exactly one field and for one reason: `default()` carries
+    /// [`RankingSignalKind::Placeholder`], which is the KTD9 marker that keeps a legacy
+    /// pre-freeze manifest identifiable as unjudgeable, and which [`Self::validate`]
+    /// therefore refuses. Serde keeps needing that default; a caller building a run never
+    /// does.
+    ///
+    /// Before the freeze the two were interchangeable, which is why `default()` spread
+    /// through the callers and the fixtures. It is not interchangeable now, and reaching
+    /// for it produces a set that fails validation on the signal rather than on whatever
+    /// the caller was actually varying.
+    #[must_use]
+    pub fn frozen() -> Self {
+        DailyParams {
+            ranking_signal: FROZEN_RANKING_SIGNAL.unwrap_or_default(),
+            ..DailyParams::default()
+        }
+    }
+
     /// Validate the daily parameter set at run construction, mirroring
     /// [`crate::params::OrbParams::validate`]: return the offending message rather than
     /// shipping an inert-by-misconfiguration run.
@@ -484,13 +535,38 @@ impl DailyParams {
 mod tests {
     use super::*;
 
+    /// Every test that exercises `validate` builds from [`DailyParams::frozen`], not from
+    /// `default()`. That is not a style choice: the signal check runs *before* the
+    /// frozen-term checks, so a defaulted set fails on the signal and never reaches the
+    /// term the test is about.
+    fn frozen_default() -> DailyParams {
+        DailyParams::frozen()
+    }
+
+    /// The serde default and the freeze deliberately DISAGREE, and that disagreement is
+    /// the KTD9 marker mechanic — not a bug to reconcile.
     #[test]
     fn ranking_signal_defaults_to_the_real_placeholder_variant() {
         let p = DailyParams::default();
         assert_eq!(p.ranking_signal, RankingSignalKind::Placeholder);
         assert!(p.ranking_signal.is_placeholder());
         assert_eq!(p.ranking_signal.name(), "prior_turnover_desc");
-        assert_eq!(FROZEN_RANKING_SIGNAL, None);
+
+        // U4 froze the signal; the serde default did NOT move with it. Making the serde
+        // default the frozen signal would silently re-label every legacy placeholder
+        // manifest as judgeable, which is exactly what KTD9's marker exists to prevent.
+        assert_eq!(FROZEN_RANKING_SIGNAL, Some(RankingSignalKind::Momentum12x1));
+        assert_ne!(
+            p.ranking_signal,
+            FROZEN_RANKING_SIGNAL.expect("frozen"),
+            "the default must stay the unjudgeable marker (KTD9)"
+        );
+
+        // The consequence, pinned so it cannot be 'fixed' by moving the serde default:
+        // a defaulted set is not runnable, and it fails ON THE SIGNAL.
+        let err = p.validate().expect_err("a defaulted set must not validate post-freeze");
+        assert!(err.contains("ranking_signal"), "{err}");
+        assert!(err.contains("momentum_12x1"), "{err}");
     }
 
     #[test]
@@ -520,8 +596,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_set_validates_and_carries_the_frozen_steady_state() {
-        let p = DailyParams::default();
+    fn the_frozen_set_validates_and_carries_the_frozen_steady_state() {
+        let p = frozen_default();
         assert!(p.validate().is_ok(), "{:?}", p.validate());
         assert_eq!(p.steady_state_concurrency(), FROZEN_STEADY_STATE_CONCURRENCY);
         // The cap is the TRANSIENT PEAK, one full cohort above the steady state — not the
@@ -548,13 +624,10 @@ mod tests {
     #[test]
     fn a_positive_but_off_freeze_stop_term_is_refused() {
         for (label, p) in [
-            (
-                "stop_atr_mult",
-                DailyParams { stop_atr_mult: 2.0, ..DailyParams::default() },
-            ),
+            ("stop_atr_mult", DailyParams { stop_atr_mult: 2.0, ..frozen_default() }),
             (
                 "atr_window_sessions",
-                DailyParams { atr_window_sessions: 14.0, ..DailyParams::default() },
+                DailyParams { atr_window_sessions: 14.0, ..frozen_default() },
             ),
         ] {
             let err = p
@@ -565,7 +638,7 @@ mod tests {
         }
 
         // The freeze itself still validates, so this is not a blanket refusal.
-        assert!(DailyParams::default().validate().is_ok());
+        assert!(frozen_default().validate().is_ok());
     }
 
     #[test]
@@ -598,7 +671,7 @@ mod tests {
     #[test]
     fn a_binding_concurrency_cap_is_rejected() {
         // ORB's max_concurrent default against the frozen steady state.
-        let p = DailyParams { max_concurrent: 5, ..DailyParams::default() };
+        let p = DailyParams { max_concurrent: 5, ..frozen_default() };
         let err = p.validate().expect_err("a cap of 5 binds against 128");
         assert!(err.contains("max_concurrent"), "{err}");
         assert!(err.contains("128"), "names the implied steady state: {err}");

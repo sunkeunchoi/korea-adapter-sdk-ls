@@ -81,6 +81,79 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Freeze — the daily lineage's ranking signal is FROZEN to `momentum12x1`: `FROZEN_RANKING_SIGNAL` moves `None` → `Some(Momentum12x1)` and the judgeable-run parameter identity moves with it, `c7980e8b…` → `387efc3e…`, exactly as the plan declared; the serde default stays `Placeholder` so legacy manifests keep their unjudgeable marker (KTD9); no strategy code hash moves, no run (2026-09-11) — plan 2026-09-08-1215 U4, queue `daily-candidate-declaration-and-signal-freeze`
+
+- **What was frozen, and on what evidence.** `momentum12x1`, selected by the comparison in the
+  entry below: cost-armed net RoR 0.047061 against `prior_turnover_desc`'s 0.013641 on the
+  specification window, 3.45×, tie rule never reached, declaration committed and pushed before
+  either binary ran (R7). **0.047061 stays in-sample** and is not comparable to `verdict.hurdle`;
+  the freeze changes nothing about that.
+- **The shape, which was the open decision.** The serde default keeps `RankingSignalKind::Placeholder`
+  and `DailyParams::validate` now refuses it, so **`DailyParams::default()` is deliberately not a
+  runnable set**. The alternative — making the serde default the frozen signal — was rejected: it
+  would silently re-label every legacy placeholder run as judgeable, which is the single outcome
+  KTD9's marker exists to prevent. The gap is closed by a named constructor,
+  **`DailyParams::frozen()`**, which is the base every caller and fixture now builds from. That
+  turned out to matter more than expected: the signal is validated *before* the frozen terms, so a
+  test that defaulted was failing on the signal and never reaching the term it was about.
+- **An unset `LS_BTD_SIGNAL` now means the frozen signal, not the placeholder.**
+  `DailyBacktestConfig::new` takes `DailyParams::frozen()`, which mirrors `resolve_ranking_signal`'s
+  `FROZEN_RANKING_SIGNAL.unwrap_or_default()`. The two entry points therefore agree on what an
+  absent override means. An override naming another signal is still refused in one place only —
+  `DailyParams::validate` — and `apply_signal_and_cost_env` deliberately does not duplicate that rule.
+- **The two parameter pins have SEPARATED, and that is the declared effect.**
+  `daily_governed_params_hash(&DailyParams::default())` is unchanged at `c7980e8b…` — the freeze
+  lives in a `const`, not a struct field — and stays pinned in identity_guards as the anti-drift
+  guard on the struct's shape. What a *judgeable run* carries is now
+  `daily_governed_params_hash(&DailyParams::frozen())` = **`387efc3ed1d2e6448df00375de6adfdf6f4c0b08a34d611426dfa1e726100283`**,
+  and `runner::lineage::PINNED_DAILY_PARAMS_HASH` moved to it. Before the freeze the two literals
+  coincided because a run took the serde default; the guard now asserts both, and asserts they
+  differ. `PINNED_DAILY_CODE_HASH` (`fb78cc55…`) is untouched — choosing a signal never moves the
+  code identity.
+- **The blast radius was measured, not assumed — and it is larger than the prior session reported.**
+  That session recorded "nine lib tests fail; every integration suite passes". The nine lib failures
+  reproduce exactly. The second half does not: with the const flipped, `identity_guards` fails 5,
+  `backtest_daily_run` 8, `lineage_recheck` 17, `mount_universe` 4 and `research_cli` 5. Nearly all
+  are one cause — a fixture building `DailyParams::default()` where it means "a valid set" — and are
+  fixed by `DailyParams::frozen()`. Two were not.
+- **Fixture finding 1: the 21-session daily fixture could no longer close a trade.** Momentum cannot
+  score before in-range session 13, and the frozen 16-session hold would then expire at session 29 —
+  past the end of a 21-session window. A run with no closed trade cannot build its observation at
+  all (Σrealized/Σrisk is undefined), so five scenarios died on a refusal that had nothing to do with
+  what they tested. The window was extended to **30 in-range sessions** so hold expiry happens
+  *naturally*, rather than giving every scenario a crash low to stop a position out — which would
+  have left hold expiry untested offline under the frozen signal. Counts that were pinned as
+  literals (`bars_in_range`, the ATR-derivability counts) are now derived from `IN_RANGE_SESSIONS`.
+- **Fixture finding 2: the mount-universe ranking test was about to become vacuous.** Its three
+  symbols carried a *constant* close, so every `Momentum12x1` score is exactly 0.0 and the emitted
+  order collapses to the symbol-ascending tiebreak — the test would have passed while asserting
+  nothing about the signal. The series now drift, at a per-session step deliberately capped at 500
+  so ATR(1) stays the 1,000-wide range rather than becoming the gap term. Turnover order
+  (`000660 > 035420 > 005930`) and momentum order (`005930 > 035420 > 000660`) now disagree by
+  construction, so a test cannot pass by reading the wrong one.
+- **Three tests changed meaning rather than being patched, and one was retired.**
+  - `daily_signal_resolution_defaults_to_the_placeholder_before_the_freeze` pinned the PRE-freeze
+    posture by its own admission; rewritten as
+    `daily_signal_resolution_is_the_frozen_signal_and_refuses_every_other`.
+  - `a_placeholder_signal_run_is_marked_and_yields_no_judgment` asserted that the shipped run is
+    unjudgeable. The freeze makes that unreachable — a placeholder run is refused at manifest
+    construction — so it now asserts the shipped run IS judgeable, and exercises the marker on a
+    hand-marked legacy observation, which is the only way one can still arrive.
+  - `only_explicit_warmup_is_excluded_from_calendar_participation` kept its arithmetic half; its
+    unmarked-but-scored comparison is now a refusal.
+  - **Retired:** `default_signal_and_unset_hooks_leave_fixture_trades_and_performance_byte_identical`.
+    It pinned U2's identity move by asserting the governed and generic routes produce byte-identical
+    artifacts, which held only because both ranked by prior turnover. Post-freeze the equation is not
+    merely false but *unprovable through the production entry point*: `run` ranks by momentum, and
+    the generic route cannot follow because momentum scoring needs prior closes that `run_daily` does
+    not take. The reason is recorded in place of the test so it is not reinstated against a
+    hand-built placeholder operand.
+- **Verification.** `cargo test -p nautilus-ls-lab` green across every target (lib 417, 0 failed).
+  Full `make adapter-check` run before commit. No frozen artifact was touched:
+  `lineage-preregistration.json` `0ecd9d11…`, `preregistration.json` `abdb90a1…`, `sample-margin.json`
+  `e4f1bba9…`. The lineage is still **NOT open** — this is U4's last step, and U5's one-shot
+  admissibility re-check is what opens it.
+
 ## Result — the two declared candidates ran on the specification window and `momentum12x1` wins on the declared criterion by 3.45x with no tie to break (net RoR 0.047061 vs 0.013641); the constant freeze is NOT in this entry because it is not the one-line flip the plan assumed — it makes `DailyParams::default()` un-validatable and breaks 9 lib tests, which is a design decision, not a mechanical step (2026-09-10) — plan 2026-09-08-1215 U4, queue `daily-candidate-declaration-and-signal-freeze`
 
 - **Both runs are post-declaration.** The declaration entry below was committed AND pushed (PR #315)

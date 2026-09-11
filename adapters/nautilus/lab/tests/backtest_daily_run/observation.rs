@@ -87,10 +87,18 @@ async fn a_finalized_daily_run_writes_a_consistent_observation() {
     assert_eq!(on_disk.sessions.len(), result.outcome.selection.sessions.len());
 }
 
-/// R26/KTD6: the shipped run carries the placeholder marker, and the marker is enforced
-/// rather than advisory — the run is unusable as a judgment.
+/// R26/KTD6, post-U4: the shipped run now carries the FROZEN signal and is judgeable,
+/// and the placeholder marker is still enforced rather than advisory.
+///
+/// Before the freeze this test ran the shipped config and asserted the opposite — that
+/// what came out was marked a placeholder and refused. That is no longer reachable
+/// through `run`: a placeholder run is refused at manifest construction (asserted in
+/// `warmup_and_cost`). So the two halves are now separated: the shipped run demonstrates
+/// that the freeze *opened* judgment, and the marker's enforcement is exercised on the
+/// artifact itself — which is the only place it can still arrive from, a legacy
+/// pre-freeze observation read off disk.
 #[tokio::test]
-async fn a_placeholder_signal_run_is_marked_and_yields_no_judgment() {
+async fn the_frozen_signal_run_is_judgeable_and_the_placeholder_marker_still_refuses() {
     let dir = tempdir().unwrap();
     build_daily_fixture(dir.path(), &HashMap::new()).await;
 
@@ -98,13 +106,21 @@ async fn a_placeholder_signal_run_is_marked_and_yields_no_judgment() {
     let result = run(cfg(dir.path(), 2), start).await.unwrap();
 
     assert!(
-        result.observation.ranking_signal_is_placeholder,
-        "the shipped signal is the placeholder — the signal carrying the hypothesis is \
-         turn one's act"
+        !result.observation.ranking_signal_is_placeholder,
+        "U4 froze the signal, so the shipped run is no longer marked unjudgeable"
     );
-    assert_eq!(result.observation.ranking_signal, PLACEHOLDER_RANKING_SIGNAL.name);
+    assert_eq!(result.observation.ranking_signal, "momentum_12x1");
+    assert!(
+        result.observation.judgment_arguments().is_ok(),
+        "the freeze is what opens the path to the judgment arguments"
+    );
 
-    let err = result.observation.judgment_arguments().unwrap_err();
+    // A legacy pre-freeze observation: the marker alone is what bars it, not how it was
+    // produced — so a run that predates the freeze stays unjudgeable forever.
+    let mut legacy = result.observation.clone();
+    legacy.ranking_signal_is_placeholder = true;
+    legacy.ranking_signal = PLACEHOLDER_RANKING_SIGNAL.name.to_string();
+    let err = legacy.judgment_arguments().unwrap_err();
     assert!(
         err.to_string().contains("PLACEHOLDER"),
         "the only path to the judgment arguments refuses, naming why: {err}"

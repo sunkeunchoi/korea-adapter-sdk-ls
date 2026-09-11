@@ -17,7 +17,9 @@ use nautilus_ls_lab::runner::backtest_daily::{
 };
 use tempfile::tempdir;
 
-use super::fixture::{build_daily_fixture, cfg, kst_date, RANGE_START, SESSION_DAYS};
+use super::fixture::{
+    build_daily_fixture, cfg, kst_date, IN_RANGE_SESSIONS, RANGE_START, SESSION_DAYS,
+};
 
 fn ymd(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(s, "%Y%m%d").unwrap()
@@ -33,16 +35,20 @@ fn lookup<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String
     move |key| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| (*v).to_string())
 }
 
-/// `LS_BTD_SIGNAL` selects the candidate under test by its manifest spelling; unset keeps
-/// the placeholder; a misspelling refuses rather than silently running the placeholder
-/// (which would then be a candidate evaluation of the wrong signal).
+/// `LS_BTD_SIGNAL` names a signal by its manifest spelling; a misspelling refuses rather
+/// than silently running something else.
+///
+/// Unset now means the **frozen** signal, not the placeholder — U4 closed the selection
+/// window, so there is no longer a pre-freeze default to fall back to. `DailyParams::frozen`
+/// is where that comes from, and `resolve_ranking_signal` resolves an absent mount-universe
+/// override the same way, so the two entry points agree on what "unset" means.
 #[test]
 fn the_signal_knob_selects_by_manifest_spelling_and_refuses_garbage() {
     let home = tempdir().unwrap();
     let mut c = cfg(home.path(), 2);
     let notes = apply_signal_and_cost_env(&mut c, lookup(&[])).unwrap();
     assert!(notes.is_empty());
-    assert_eq!(c.daily.ranking_signal, RankingSignalKind::Placeholder);
+    assert_eq!(c.daily.ranking_signal, RankingSignalKind::Momentum12x1);
 
     let notes = apply_signal_and_cost_env(&mut c, lookup(&[(SIGNAL_ENV, "momentum12x1")])).unwrap();
     assert_eq!(c.daily.ranking_signal, RankingSignalKind::Momentum12x1);
@@ -132,15 +138,23 @@ async fn a_lookback_signal_marks_its_unscoreable_leading_sessions_as_warmup() {
         );
     }
     assert_eq!(momentum.manifest.data_range.start, RANGE_START, "data_range stays the window");
-    assert_eq!(momentum.observation.sessions.len(), 21, "every in-range session is still a row");
+    assert_eq!(
+        momentum.observation.sessions.len(),
+        IN_RANGE_SESSIONS,
+        "every in-range session is still a row"
+    );
     assert!(!momentum.observation.ranking_signal_is_placeholder);
 
-    let placeholder = run(cfg(home.path(), 2), started(1)).await.unwrap();
-    assert!(placeholder.observation.warmup_sessions.is_empty(), "a one-bar signal has no warmup");
-    assert!(
-        kst_date(placeholder.performance.trades[0].ts_opened) < first_scoreable,
-        "and it enters before the lookback signal could"
-    );
+    // The pre-freeze contrast — a one-bar signal marks no warmup and enters before the
+    // lookback signal could — can no longer be RUN: U4 froze the signal, so a placeholder
+    // run is refused at manifest construction. That refusal is the stronger property, and
+    // it is what this arm now pins. (`Placeholder.warmup_bars() == 1` is still asserted
+    // directly, in `params_daily`'s unit tests.)
+    let mut c = cfg(home.path(), 2);
+    c.daily.ranking_signal = RankingSignalKind::Placeholder;
+    let err = run(c, started(1)).await.expect_err("a placeholder run is not admissible").to_string();
+    assert!(err.contains("ranking_signal"), "{err}");
+    assert!(err.contains("momentum_12x1"), "and names the frozen signal: {err}");
 }
 
 /// Gate 2's instrument: `lab-research catalog fingerprint` reproduces a run's
@@ -165,7 +179,11 @@ async fn the_fingerprint_verb_reproduces_a_runs_catalog_fingerprint_without_runn
     .unwrap();
     assert_eq!(same.fingerprint, ran.manifest.catalog_fingerprint, "same bars, same bounds, same hash");
     assert_eq!(same.series_in_range, 2, "two symbols' daily series");
-    assert_eq!(same.bars_in_range, 42, "21 in-range sessions x 2 symbols");
+    assert_eq!(
+        same.bars_in_range,
+        IN_RANGE_SESSIONS * 2,
+        "{IN_RANGE_SESSIONS} in-range sessions x 2 symbols"
+    );
     assert!(same.lines[0].contains(&format!("fingerprint={}", ran.manifest.catalog_fingerprint)));
 
     let narrower = catalog_fingerprint(&FingerprintConfig {

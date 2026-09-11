@@ -206,7 +206,7 @@ mod daily {
         build_daily_bar, build_minute_bar, write_bars, write_instruments, BarKind,
     };
     use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
-    use nautilus_ls_lab::params_daily::{DailyParams, RankingSignalKind};
+    use nautilus_ls_lab::params_daily::DailyParams;
     use nautilus_ls_lab::runner::mount_universe::{
         daily_to_json, resolve_daily, DailyUniverseConfig, DailyUniverseFile, DailyUniverseRow,
     };
@@ -305,6 +305,29 @@ mod daily {
             .collect()
     }
 
+    /// A series whose close DRIFTS by `step` each session.
+    ///
+    /// Needed since the U4 freeze: `flat_series` holds the close constant, so every
+    /// symbol's `Momentum12x1` score is exactly 0 and the emitted order collapses to the
+    /// symbol-ascending tiebreak. A ranking test on that fixture would assert nothing
+    /// about the signal.
+    ///
+    /// `step` must stay <= 500 so ATR(1) is 1,000 for every symbol regardless of drift:
+    /// true range is `max(high - low, |high - prev_close|, |low - prev_close|)`, and with
+    /// high/low at close ±500 the gap term is `500 + step`, which overtakes the 1,000-wide
+    /// range as soon as the drift exceeds 500.
+    fn drifting_series(n: usize, base: i64, step: i64, vol: i64) -> Vec<serde_json::Value> {
+        assert!(step <= 500, "a steeper drift would make ATR(1) the gap, not the range");
+        PRIOR_DAYS[PRIOR_DAYS.len() - n..]
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let c = base + (i as i64) * step;
+                daily_json(d, c, c + 500, c - 500, c, vol)
+            })
+            .collect()
+    }
+
     /// A complete artifact for the three symbols. `designated` symbols carry a halt
     /// designation (and therefore `tradable: false`, the value `validate()` checks).
     fn artifact_json(designated: &[&str]) -> String {
@@ -334,12 +357,15 @@ mod daily {
         .to_string()
     }
 
-    fn cfg(home: &Path, artifact: &Path, signal: RankingSignalKind) -> DailyUniverseConfig {
+    /// A daily mount config under the FROZEN signal — the only one `resolve_daily` admits
+    /// since U4. It took a `signal` argument while the freeze was still open; every
+    /// scenario below now mounts the way the rehearsal will.
+    fn cfg(home: &Path, artifact: &Path) -> DailyUniverseConfig {
         DailyUniverseConfig {
             data_home: home.to_path_buf(),
             session_date: chrono::NaiveDate::parse_from_str(SESSION, "%Y-%m-%d").unwrap(),
             metadata_path: artifact.to_path_buf(),
-            daily_params: DailyParams { ranking_signal: signal, ..DailyParams::default() },
+            daily_params: DailyParams::frozen(),
         }
     }
 
@@ -350,10 +376,13 @@ mod daily {
         let catalog = tmp.path().join("catalog");
         std::fs::create_dir_all(&catalog).unwrap();
         write_masters(&catalog).await;
-        // turnover = close × volume: 000660 > 035420 > 005930 by construction.
-        write_daily(&catalog, "005930", &flat_series(20, 70_000, 1_000)).await;
-        write_daily(&catalog, "000660", &flat_series(20, 130_000, 5_000)).await;
-        write_daily(&catalog, "035420", &flat_series(20, 200_000, 2_000)).await;
+        // Two orderings, deliberately different, so a test cannot pass by reading the
+        // wrong one: turnover (close × volume) descends 000660 > 035420 > 005930, while
+        // the frozen momentum signal — driven by each symbol's drift relative to its own
+        // price — descends 005930 > 035420 > 000660.
+        write_daily(&catalog, "005930", &drifting_series(20, 70_000, 500, 1_000)).await;
+        write_daily(&catalog, "000660", &drifting_series(20, 130_000, 100, 5_000)).await;
+        write_daily(&catalog, "035420", &drifting_series(20, 200_000, 300, 2_000)).await;
         let art = tmp.path().join("universe-metadata.json");
         std::fs::write(&art, artifact_json(designated)).unwrap();
         (tmp, art)
@@ -368,23 +397,26 @@ mod daily {
     #[tokio::test]
     async fn ranks_descend_by_signal_and_atr1_is_the_prior_bars_true_range() {
         let (tmp, art) = three_symbol_home(&[]).await;
-        let file = resolve_daily(&cfg(tmp.path(), &art, RankingSignalKind::Placeholder)).await.unwrap();
+        let file = resolve_daily(&cfg(tmp.path(), &art)).await.unwrap();
 
         assert_eq!(file.session_date, SESSION);
-        assert_eq!(file.ranking_signal, "prior_turnover_desc");
-        assert!(file.ranking_signal_is_placeholder);
-        assert_eq!(file.warmup_bars, 1);
+        assert_eq!(file.ranking_signal, "momentum_12x1");
+        assert!(!file.ranking_signal_is_placeholder, "U4 froze a real signal");
+        assert_eq!(file.warmup_bars, 13);
         assert!(!file.universe_metadata_hash.is_empty());
+
+        // Momentum descending — NOT the turnover order the fixture also carries, which is
+        // what makes this an assertion about the signal rather than about the file.
         let order: Vec<&str> = file.rows.iter().map(|r| r.shcode.as_str()).collect();
-        assert_eq!(order, ["000660", "035420", "005930"], "turnover descending");
+        assert_eq!(order, ["005930", "035420", "000660"], "momentum descending");
         assert_eq!(file.rows.iter().map(|r| r.rank).collect::<Vec<_>>(), [0, 1, 2]);
         for r in &file.rows {
             assert!((r.prior_atr1 - 1_000.0).abs() < 1e-9, "{}: ATR(1) = high-low of the prior bar", r.shcode);
             assert!(r.tradable, "{}: no designation → tradable", r.shcode);
+            assert_eq!(r.signal_value, None, "the momentum score is not exposed (daily.rs is closed)");
         }
         let rows = by_shcode(&file);
-        assert_eq!(rows["005930"].prior_close, 70_000);
-        assert_eq!(rows["000660"].signal_value, Some(130_000.0 * 5_000.0), "turnover IS the score");
+        assert_eq!(rows["005930"].prior_close, 70_000 + 19 * 500, "the last close before the session");
     }
 
     /// Scenario 2: a symbol with fewer prior bars than the signal's warmup is absent from
@@ -402,7 +434,7 @@ mod daily {
         let art = tmp.path().join("universe-metadata.json");
         std::fs::write(&art, artifact_json(&[])).unwrap();
 
-        let file = resolve_daily(&cfg(tmp.path(), &art, RankingSignalKind::Momentum12x1)).await.unwrap();
+        let file = resolve_daily(&cfg(tmp.path(), &art)).await.unwrap();
         assert_eq!(file.warmup_bars, 13);
         let order: Vec<&str> = file.rows.iter().map(|r| r.shcode.as_str()).collect();
         assert_eq!(order.len(), 2, "the 5-bar symbol is gone: {order:?}");
@@ -418,12 +450,22 @@ mod daily {
     #[tokio::test]
     async fn a_designated_symbol_is_kept_as_not_tradable() {
         let (tmp, art) = three_symbol_home(&["035420"]).await;
-        let file = resolve_daily(&cfg(tmp.path(), &art, RankingSignalKind::Placeholder)).await.unwrap();
+        let file = resolve_daily(&cfg(tmp.path(), &art)).await.unwrap();
         let rows = by_shcode(&file);
         assert_eq!(file.rows.len(), 3, "kept, not dropped");
         assert!(!rows["035420"].tradable);
-        assert_eq!(rows["035420"].rank, 1, "the gate does not re-rank");
         assert!(rows["000660"].tradable && rows["005930"].tradable);
+
+        // "Does not re-rank" stated as the comparison it actually means: the SAME catalog
+        // with nothing designated puts 035420 in the same position. Pinning a literal rank
+        // would instead re-assert the signal's ordering, which scenario 1 already owns.
+        let (undesignated, art2) = three_symbol_home(&[]).await;
+        let baseline = resolve_daily(&cfg(undesignated.path(), &art2)).await.unwrap();
+        assert_eq!(
+            rows["035420"].rank,
+            by_shcode(&baseline)["035420"].rank,
+            "the tradability gate must not move a designated symbol's rank"
+        );
     }
 
     /// Scenario 4: an ORB home — minute bars only — is refused by name, not resolved to an
@@ -438,7 +480,7 @@ mod daily {
         let art = tmp.path().join("universe-metadata.json");
         std::fs::write(&art, artifact_json(&[])).unwrap();
 
-        let err = resolve_daily(&cfg(tmp.path(), &art, RankingSignalKind::Placeholder))
+        let err = resolve_daily(&cfg(tmp.path(), &art))
             .await
             .unwrap_err()
             .to_string();
@@ -452,7 +494,7 @@ mod daily {
     #[tokio::test]
     async fn the_same_inputs_produce_byte_identical_output() {
         let (tmp, art) = three_symbol_home(&["000660"]).await;
-        let c = cfg(tmp.path(), &art, RankingSignalKind::Placeholder);
+        let c = cfg(tmp.path(), &art);
         let a = daily_to_json(&resolve_daily(&c).await.unwrap()).unwrap();
         let b = daily_to_json(&resolve_daily(&c).await.unwrap()).unwrap();
         assert_eq!(a, b);
@@ -465,7 +507,7 @@ mod daily {
     async fn a_missing_artifact_refuses() {
         let (tmp, _art) = three_symbol_home(&[]).await;
         let missing = tmp.path().join("nope.json");
-        let err = resolve_daily(&cfg(tmp.path(), &missing, RankingSignalKind::Placeholder))
+        let err = resolve_daily(&cfg(tmp.path(), &missing))
             .await
             .unwrap_err()
             .to_string();
