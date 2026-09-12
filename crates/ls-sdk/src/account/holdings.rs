@@ -456,6 +456,20 @@ impl T0424Request {
             },
         }
     }
+
+    /// Set the continuation `cts_expcode` for the NEXT page of a multi-page
+    /// holdings read, echoing the cursor the previous response returned in
+    /// [`T0424OutBlock::cts_expcode`].
+    ///
+    /// t0424 is single-page dispatch (`facets.self_paginated: false`): its
+    /// continuation rides in the BODY, not in the `tr_cont` headers, so a caller
+    /// that must enumerate every holding drives the cursor itself rather than
+    /// going through `Inner::post_paginated`. An empty value is the first page.
+    #[must_use]
+    pub fn with_cts_expcode(mut self, cts_expcode: impl Into<String>) -> Self {
+        self.inblock.cts_expcode = cts_expcode.into();
+        self
+    }
 }
 
 /// `t0424OutBlock` — the account cash / valuation summary block.
@@ -471,7 +485,9 @@ pub struct T0424OutBlock {
     /// Loan amount / 대출금액.
     #[serde(rename = "mamt", deserialize_with = "ls_core::string_or_number")]
     pub mamt: String,
-    /// Estimated deposit / 추정예수금.
+    /// Estimated **D+2** deposit / 추정D2예수금 — the settled cash, as the normalized
+    /// baseline names it. NOT the same as the plain 예수금: R32 measured the two
+    /// diverging on a fill day and reconverging by the next session.
     #[serde(rename = "sunamt1", deserialize_with = "ls_core::string_or_number")]
     pub sunamt1: String,
     /// Total valuation amount / 평가금액.
@@ -483,6 +499,17 @@ pub struct T0424OutBlock {
     /// Total day P&L / 총당일실현손익.
     #[serde(rename = "tdtsunik", deserialize_with = "ls_core::string_or_number")]
     pub tdtsunik: String,
+    /// Continuation issue code / CTS_종목번호 — the cursor for the NEXT page of
+    /// the holdings array, echoed back through
+    /// [`T0424Request::with_cts_expcode`]. **Empty means this was the last page**;
+    /// a non-empty value means the holdings array is TRUNCATED and a caller that
+    /// needs the whole book must fetch the next page (a single-page read of a
+    /// paginated account silently under-reports positions).
+    ///
+    /// A `String` field in the baseline, so it is NOT run through
+    /// [`ls_core::string_or_number`] — an issue code is never a JSON number.
+    #[serde(rename = "cts_expcode")]
+    pub cts_expcode: String,
 }
 
 /// `t0424OutBlock1` — one held stock position (repeated array block).

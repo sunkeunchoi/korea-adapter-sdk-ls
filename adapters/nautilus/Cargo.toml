@@ -120,5 +120,10 @@ syn = { version = "2", features = ["full", "visit"] }
 # Strategy macros (`nautilus_strategy!`, `StrategyCore`) for the throwaway backtest
 # placeholder strategy in tests/backtest_e2e.rs. Test-only, never shipped (KTD3 scope).
 nautilus-trading = "=0.60.0"
+# The execution engine + cache the U7 reconciliation test drives directly, so the
+# adapter's order status reports can be proven to attribute a CLAIMED instrument to
+# the strategy (and an unclaimed one to EXTERNAL) without a full `node.run` — which
+# this repo never drives offline. Already in the lockfile via nautilus-live.
+nautilus-execution = "=0.60.0"
 wiremock = "0.6"
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }

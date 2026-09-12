@@ -27,8 +27,15 @@ use ustr::Ustr;
 
 use crate::error::{AdapterError, AdapterResult};
 use crate::parse::strict_i64;
-use crate::rules::{tick_size, Market, TickRegime};
+use crate::rules::{tick_size, Market, PriceBand, TickRegime};
 use crate::KRX_VENUE;
+
+/// `info` key carrying the market segment string (`KOSPI`/`KOSDAQ`).
+pub const INFO_MARKET: &str = "market";
+/// `info` key carrying the session's 상한가.
+pub const INFO_DAILY_UPPER_LIMIT: &str = "daily_upper_limit";
+/// `info` key carrying the session's 하한가.
+pub const INFO_DAILY_LOWER_LIMIT: &str = "daily_lower_limit";
 
 /// The instrument domain being requested. v1 builds only [`Self::DomesticEquity`];
 /// the other arms exist so the mapping model accommodates them without redesign
@@ -141,7 +148,7 @@ pub fn map_equity(
 
     let mut info = Params::new();
     info.insert(
-        "market".to_string(),
+        INFO_MARKET.to_string(),
         Value::String(market_str(market).to_string()),
     );
     info.insert(
@@ -150,8 +157,8 @@ pub fn map_equity(
     );
     info.insert("etf".to_string(), Value::Bool(etf));
     info.insert("nxt_listed".to_string(), Value::Bool(nxt_listed));
-    info.insert("daily_upper_limit".to_string(), Value::from(uplmt));
-    info.insert("daily_lower_limit".to_string(), Value::from(dnlmt));
+    info.insert(INFO_DAILY_UPPER_LIMIT.to_string(), Value::from(uplmt));
+    info.insert(INFO_DAILY_LOWER_LIMIT.to_string(), Value::from(dnlmt));
     info.insert("reference_price".to_string(), Value::from(reference));
 
     let equity = Equity::new_checked(
@@ -178,6 +185,33 @@ pub fn map_equity(
     .map_err(|e| AdapterError::Config(format!("equity {shcode}: {e}")))?;
 
     Ok(equity)
+}
+
+/// The market segment a cached [`Equity`] was mapped for, read back out of `info`.
+///
+/// Falls back to [`Market::Kospi`] on a missing/unknown value, mirroring
+/// [`Market::from_gubun`] — the post-2023 ladder is market-independent, so the
+/// fallback is only load-bearing for pre-2023 KOSDAQ history.
+#[must_use]
+pub fn equity_market(equity: &Equity) -> Market {
+    match equity.info.as_ref().and_then(|i| i.get_str(INFO_MARKET)) {
+        Some("KOSDAQ") => Market::Kosdaq,
+        _ => Market::Kospi,
+    }
+}
+
+/// The session's daily price band (상한가 / 하한가) carried on a cached [`Equity`].
+///
+/// `None` when either limit is absent or non-positive — the caller must then REFUSE
+/// the order rather than price it unclamped (KTD5). Daily limits are session-scoped
+/// facts held in `info` rather than `max_price`/`min_price` instrument constants
+/// (KTD7), so this is the one place that knows where to look.
+#[must_use]
+pub fn daily_price_band(equity: &Equity) -> Option<PriceBand> {
+    let info = equity.info.as_ref()?;
+    let lower = info.get_i64(INFO_DAILY_LOWER_LIMIT)?;
+    let upper = info.get_i64(INFO_DAILY_UPPER_LIMIT)?;
+    (lower > 0 && upper >= lower).then_some(PriceBand { lower, upper })
 }
 
 /// Whole-universe domestic-equity instrument provider (fetch-cache-emit, mirroring
@@ -358,6 +392,41 @@ mod tests {
         let eq = map_equity(&row, None, UnixNanos::default()).unwrap();
         assert_eq!(eq.price_increment, Price::from("100"));
         assert_eq!(eq.info.unwrap().get_str("market"), Some("KOSDAQ"));
+    }
+
+    #[test]
+    fn daily_price_band_reads_the_session_limits_back_off_info() {
+        let eq = map_equity(&sample_row(), None, UnixNanos::default()).unwrap();
+        assert_eq!(
+            daily_price_band(&eq),
+            Some(PriceBand { lower: 42_000, upper: 78_000 }),
+            "the marketable-limit clamp reads the same limits map_equity wrote"
+        );
+        assert_eq!(equity_market(&eq), Market::Kospi);
+    }
+
+    #[test]
+    fn a_zero_daily_limit_yields_no_band_so_the_order_is_refused_not_unclamped() {
+        // A halted/newly-listed issue can report 0 limits. There is no safe clamp
+        // then, so the band must be absent and the submit path must refuse (KTD5) —
+        // never fall back to an unclamped marketable limit.
+        let mut row = sample_row();
+        row.uplmtprice = "0".to_string();
+        row.dnlmtprice = "0".to_string();
+        let eq = map_equity(&row, None, UnixNanos::default()).unwrap();
+        assert_eq!(daily_price_band(&eq), None);
+    }
+
+    #[test]
+    fn kosdaq_market_round_trips_through_info() {
+        let mut row = sample_row();
+        row.gubun = "2".to_string();
+        let eq = map_equity(&row, None, UnixNanos::default()).unwrap();
+        assert_eq!(
+            equity_market(&eq),
+            Market::Kosdaq,
+            "the pre-2023 KOSDAQ tick cap depends on this round-tripping"
+        );
     }
 
     #[test]

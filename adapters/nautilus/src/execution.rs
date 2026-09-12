@@ -10,34 +10,45 @@
 //! retries. The kill switch (`set_orders_enabled(false)`) is the halt hook and is
 //! engaged only **after** any closing action.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use ls_sdk::account::T0424Request;
+use ls_sdk::account::{T0424OutBlock1, T0424Request};
 use ls_sdk::orders::{
     CSPAT00601Request, CSPAT00701Request, CSPAT00801Request, OrderIntent, ReconcileOutcome,
-    T0425Request,
+    T0425OutBlock1, T0425Request,
 };
 use ls_sdk::LsSdk;
 use nautilus_common::clients::ExecutionClient;
-use nautilus_common::messages::execution::{CancelOrder, ModifyOrder, SubmitOrder};
+use nautilus_common::messages::execution::{
+    CancelOrder, GenerateOrderStatusReports, GeneratePositionStatusReports, ModifyOrder, SubmitOrder,
+};
 use nautilus_core::time::{get_atomic_clock_realtime, AtomicTime};
 use nautilus_core::UnixNanos;
 use nautilus_model::accounts::AccountAny;
-use nautilus_model::enums::{AccountType, LiquiditySide, OmsType, OrderSide};
+use nautilus_model::enums::{
+    AccountType, LiquiditySide, OmsType, OrderSide, OrderStatus, OrderType, PositionSideSpecified,
+    TimeInForce,
+};
 use nautilus_model::events::{OrderEventAny, OrderInitialized};
 use nautilus_model::identifiers::{AccountId, ClientId, InstrumentId, Symbol, TraderId, Venue, VenueOrderId};
+use nautilus_model::instruments::Equity;
 use nautilus_model::orders::{Order, OrderAny};
+use nautilus_model::reports::{OrderStatusReport, PositionStatusReport};
 use nautilus_model::types::{AccountBalance, Currency, MarginBalance, Price, Quantity};
 use nautilus_live::execution::emitter::ExecutionEventEmitter;
+use rust_decimal::Decimal;
 use tokio::sync::mpsc;
 
 use crate::error::{AdapterError, AdapterResult};
+use crate::instruments::{daily_price_band, equity_market};
 use crate::orders::ledger::{FillDelta, FillLedger};
 use crate::orders::map::{classify_reconcile, classify_submit_error, ReconcileEvent, SubmitAction};
 use crate::orders::poll::{drive_poll_pass, poll_pacer, DrivenOutcome};
+use crate::rules::{marketable_limit, TickRegime};
 use crate::ws::rows::OrderEventMsg;
 use crate::ws::supervisor::{RowKind, SubSpec, WsSupervisor};
 use crate::KRX_VENUE;
@@ -242,35 +253,229 @@ pub async fn check_stranded_orders_on(sdk: &LsSdk) -> AdapterResult<()> {
     Ok(())
 }
 
+/// The book a rehearsal session expects to inherit: symbol (`expcode`) → held
+/// quantity (`janqty`). Nothing else — entry ordinal, stop price and `entered_under`
+/// are leg facts the broker cannot confirm, so `book.json` stays authoritative for
+/// those and this predicate never pretends to check them (KTD6).
+///
+/// An EMPTY expected book is the flat account, which is why [`verify_flat_on`] is
+/// simply this predicate called with [`ExpectedBook::flat`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExpectedBook(BTreeMap<String, i64>);
+
+impl ExpectedBook {
+    /// The empty book — what a flat account must report.
+    #[must_use]
+    pub fn flat() -> Self {
+        ExpectedBook::default()
+    }
+
+    /// Build from `(symbol, quantity)` pairs. A non-positive quantity is DROPPED: a
+    /// zero-quantity expectation is the absence of a holding, and t0424 lists
+    /// same-day round-tripped symbols with `janqty=0`
+    /// (`docs/solutions/logic-errors/t0424-zero-balance-row-reads-as-open-holding.md`),
+    /// so the two must agree on what "not held" looks like.
+    pub fn from_pairs<I, S>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (S, i64)>,
+        S: Into<String>,
+    {
+        ExpectedBook(
+            pairs
+                .into_iter()
+                .filter(|(_, qty)| *qty > 0)
+                .map(|(sym, qty)| (sym.into().trim().to_string(), qty))
+                .collect(),
+        )
+    }
+
+    /// Whether the book is empty (the flat expectation).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// How many symbols the book expects to be held.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The expected quantities, symbol-ordered.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, i64)> {
+        self.0.iter().map(|(sym, qty)| (sym.as_str(), *qty))
+    }
+}
+
+/// Pages a `cts_expcode`-continued t0424 read may take before the enumeration is
+/// declared truncated.
+///
+/// The rehearsal's book is bounded by the strategy's target position count (the plan
+/// sizes the mount at ≤ 144 symbols), and a page carries many rows, so a healthy read
+/// terminates in a handful of pages. The bound exists for the OTHER case: a gateway
+/// that keeps echoing a cursor would otherwise spin this read forever inside a
+/// pre-mount probe. Exceeding it is a truncation, which is a MISMATCH — never a
+/// partial "the book matches".
+const MAX_BOOK_PAGES: usize = 20;
+
+/// Enumerate EVERY t0424 holding row, following the `cts_expcode` body cursor.
+///
+/// The single-page read the flat gate used to do is correct only for a flat or nearly
+/// flat account: a paginated account silently under-reports its positions, which for a
+/// book predicate is a false match rather than a missed one. Fail-closed throughout —
+/// a non-advancing cursor, a cursor loop, or more than [`MAX_BOOK_PAGES`] pages is an
+/// error, never a short read.
+///
+/// Continuation pages are paced against the Account bucket; the FIRST page is not, so
+/// the flat-account path (the teardown's `is_flat`, which runs this on every retry)
+/// costs exactly what it did before.
+///
+/// # Errors
+///
+/// The SDK error on a failed read; [`AdapterError::Config`] on a truncated or
+/// non-terminating enumeration.
+pub async fn collect_holdings_on(sdk: &LsSdk) -> AdapterResult<Vec<T0424OutBlock1>> {
+    let mut rows: Vec<T0424OutBlock1> = Vec::new();
+    let mut cursor = String::new();
+    let mut seen: Vec<String> = Vec::new();
+    for page in 0..MAX_BOOK_PAGES {
+        if page > 0 {
+            teardown_pacer().acquire().await;
+        }
+        let req = T0424Request::new("1", "0", "0", "0").with_cts_expcode(cursor.clone());
+        let resp = sdk.account().stock_balance(&req).await?;
+        rows.extend(resp.outblock1.iter().cloned());
+        let next = resp.outblock.cts_expcode.trim().to_string();
+        if next.is_empty() {
+            return Ok(rows);
+        }
+        if next == cursor || seen.contains(&next) {
+            return Err(AdapterError::Config(format!(
+                "book gate: the t0424 holdings inquiry returned a non-advancing continuation \
+                 cursor after {} page(s) — cannot enumerate the holdings; refusing (fail-closed)",
+                page + 1
+            )));
+        }
+        seen.push(next.clone());
+        cursor = next;
+    }
+    Err(AdapterError::Config(format!(
+        "book gate: the t0424 holdings inquiry was truncated (still continuing after \
+         {MAX_BOOK_PAGES} pages) — cannot enumerate the holdings; refusing (fail-closed)"
+    )))
+}
+
 /// The holdings/flat-start leg of the flat check over a bare SDK handle — the body
-/// [`LsExecClient::check_flat_start`] delegates to.
+/// [`LsExecClient::check_flat_start`] delegates to. Defined as the empty-book case of
+/// [`compare_book`], so the flat gate and the rehearsal's book predicate can never
+/// drift apart on what "held" means.
 ///
 /// # Errors
 ///
 /// [`AdapterError::Config`] if any holding row carries an open (or unparseable) balance.
 pub async fn check_flat_start_on(sdk: &LsSdk) -> AdapterResult<()> {
-    // Holdings check: no t0424 row may carry an OPEN balance. A same-day buy+sell
-    // round-trip leaves a lingering `janqty=0` row for the symbol (net-zero position,
-    // still listed for the session) — that is NOT an open holding, so gating on a
-    // bare `!is_empty()` false-fails "not flat". Mirror the order check above and
-    // fail CLOSED: a row is open if its `janqty` parses > 0 OR is unparseable (never
-    // treat a garbage balance as "0 = flat").
-    let holdings = sdk
-        .account()
-        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
-        .await?;
-    let open_holdings = holdings
-        .outblock1
-        .iter()
-        .filter(|r| r.janqty.trim().parse::<i64>().map_or(true, |n| n > 0))
-        .count();
-    if open_holdings > 0 {
+    compare_book(&collect_holdings_on(sdk).await?, &ExpectedBook::flat())
+}
+
+/// Compare enumerated t0424 rows against an expected book (R17, AE3).
+///
+/// Fail CLOSED on every axis. A row is held if its `janqty` parses `> 0`; an
+/// UNPARSEABLE `janqty` is a mismatch, never read as "0 = not held". A same-day
+/// buy+sell round-trip leaves a lingering `janqty=0` row for the symbol — that is not
+/// a holding, so a bare `!is_empty()` check would false-fail. The reason names the
+/// offending symbols so a refusal is diagnosable without a second read.
+///
+/// Rows are SUMMED per symbol: t0424 splits a symbol across rows by `jangb`
+/// (잔고구분 — cash vs loan vs …), and what the book expects is the total held, not
+/// one tranche of it.
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] naming the missing, extra and differing symbols.
+fn compare_book(rows: &[T0424OutBlock1], expected: &ExpectedBook) -> AdapterResult<()> {
+    let mut reported: BTreeMap<String, i64> = BTreeMap::new();
+    let mut unparseable: Vec<String> = Vec::new();
+    for row in rows {
+        let symbol = row.expcode.trim().to_string();
+        match row.janqty.trim().parse::<i64>() {
+            Ok(qty) if qty > 0 => {
+                *reported.entry(symbol).or_insert(0) += qty;
+            }
+            Ok(_) => {} // janqty <= 0 — listed but not held.
+            Err(_) => unparseable.push(format!("{symbol} janqty={:?}", row.janqty.trim())),
+        }
+    }
+    if !unparseable.is_empty() {
         return Err(AdapterError::Config(format!(
-            "flat-start gate: {open_holdings} holding position(s) present — refusing to \
-             start (R14)"
+            "book gate: {} holding row(s) carry an unparseable balance ({}) — a garbage balance \
+             is never read as \"0 = not held\"; refusing (fail-closed)",
+            unparseable.len(),
+            unparseable.join(", ")
         )));
     }
-    Ok(())
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut differing: Vec<String> = Vec::new();
+    for (symbol, want) in expected.iter() {
+        match reported.remove(symbol) {
+            None => missing.push(symbol.to_string()),
+            Some(got) if got != want => {
+                differing.push(format!("{symbol} expected {want}, t0424 reports {got}"))
+            }
+            Some(_) => {}
+        }
+    }
+    // Whatever is left in `reported` was held but not expected.
+    let extra: Vec<String> = reported.iter().map(|(s, q)| format!("{s} x{q}")).collect();
+
+    if missing.is_empty() && differing.is_empty() && extra.is_empty() {
+        return Ok(());
+    }
+    let mut reasons: Vec<String> = Vec::new();
+    if !missing.is_empty() {
+        reasons.push(format!(
+            "{} expected holding(s) absent from t0424: {}",
+            missing.len(),
+            missing.join(", ")
+        ));
+    }
+    if !differing.is_empty() {
+        reasons.push(format!("holding quantity mismatch: {}", differing.join("; ")));
+    }
+    if !extra.is_empty() {
+        reasons.push(format!(
+            "{} unexpected holding position(s) present: {}",
+            extra.len(),
+            extra.join(", ")
+        ));
+    }
+    Err(AdapterError::Config(format!(
+        "book gate: the account does not match the expected book ({} expected symbol(s)) — {} \
+         (R17; refusing rather than trading against an unknown book)",
+        expected.len(),
+        reasons.join("; ")
+    )))
+}
+
+/// The BOOK predicate over a bare SDK handle: the account's t0425 resting orders and
+/// its fully enumerated t0424 holdings must match `expected` exactly (R17, KTD6).
+///
+/// **Any resting order is a mismatch**, whatever the book says: a working order means
+/// the book is still moving, and a rehearsal that adopts a moving book cannot know
+/// what it inherited. A read failure, a truncation and a quantity difference are all
+/// mismatches too — this predicate confirms positively or refuses, and never returns
+/// `Ok` on an inconclusive read.
+///
+/// The two legs run in the flat gate's original order (orders, then holdings) so
+/// [`verify_flat_on`], which is this function with an empty book, keeps its exact
+/// single-verdict behavior and its short-circuit.
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] with the offending symbols/orders named.
+pub async fn verify_book_on(sdk: &LsSdk, expected: &ExpectedBook) -> AdapterResult<()> {
+    check_stranded_orders_on(sdk).await?;
+    compare_book(&collect_holdings_on(sdk).await?, expected)
 }
 
 /// The composed flat check over a bare SDK handle (t0425 resting orders, then t0424
@@ -279,13 +484,60 @@ pub async fn check_flat_start_on(sdk: &LsSdk) -> AdapterResult<()> {
 /// `.is_ok()` (KTD1): a truncated/failed/ambiguous read returns `Err`, never a false
 /// "flat".
 ///
+/// Defined as [`verify_book_on`] with the empty book (KTD6): flat IS a book
+/// expectation, and defining it twice is how the two drift.
+///
 /// # Errors
 ///
 /// [`AdapterError::Config`] with a reason if not flat (AE5).
 pub async fn verify_flat_on(sdk: &LsSdk) -> AdapterResult<()> {
-    check_stranded_orders_on(sdk).await?;
-    check_flat_start_on(sdk).await?;
-    Ok(())
+    verify_book_on(sdk, &ExpectedBook::flat()).await
+}
+
+/// Read the account's **D+2 deposit** over a bare SDK handle — the cash the rehearsal's
+/// pre-mount preflight sizes empty slots against (R17).
+///
+/// The source is **t0424's `sunamt1`** (추정D2예수금 in the normalized baseline), read
+/// off the same holdings inquiry the book predicate already makes. Two reasons it is
+/// this field and not another:
+///
+/// - **Not `Dps`.** The R32 overnight-hold probe measured `Dps` still reporting the
+///   pre-trade figure two sessions after a filled buy, while the D+2 figure had
+///   absorbed the settlement. Sizing entries off an unmoved deposit spends money that
+///   is already committed.
+/// - **Not `CSPAQ22200.D2Dps`, which carries the same number.** The adapter may only
+///   newly consume a TR that is already **Recommended** (the Verification Bar; the
+///   exception list is frozen and shrink-only), and `CSPAQ22200` is neither. t0424 is
+///   already consumed here, so the same fact costs no new TR surface and no extra
+///   Account-bucket call.
+///
+/// **The timing caveat this inherits.** R32 measured the two agreeing on day 2
+/// (`sunamt1 == d2dps == 499,717,282`) but DISAGREEING on the fill day itself: `d2dps`
+/// had already absorbed the buy while `sunamt1` still read the pre-settlement figure.
+/// So `sunamt1` lags by one session on a day that has filled. At the rehearsal's
+/// 15:00 pre-mount that is safe — the session's own orders do not go out until the
+/// closing auction, and the previous session's fills have settled in by then — but a
+/// caller reading this AFTER an intra-session fill is reading a stale, optimistic
+/// number.
+///
+/// # Errors
+///
+/// The SDK error on a failed read; [`AdapterError::Config`] if the amount does not
+/// parse — a deposit that cannot be read is never treated as sufficient.
+pub async fn read_d2_deposit_on(sdk: &LsSdk) -> AdapterResult<i64> {
+    // The cash summary rides on every page's out-block, so the first page is enough —
+    // this deliberately does NOT enumerate the holdings.
+    let resp = sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await?;
+    resp.outblock.sunamt1.trim().parse::<i64>().map_err(|_| {
+        AdapterError::Config(format!(
+            "deposit read: unparseable t0424 sunamt1 {:?} — refusing rather than treating an \
+             unreadable deposit as sufficient",
+            resp.outblock.sunamt1.trim()
+        ))
+    })
 }
 
 /// Cancel EVERY resting order on the account, returning the count actually canceled
@@ -404,6 +656,127 @@ pub async fn cancel_all_resting_on(sdk: &LsSdk) -> AdapterResult<usize> {
     Ok(canceled)
 }
 
+/// What the client asserts about the account at [`ExecutionClient::connect`] (KTD6).
+///
+/// The two postures differ in **exactly one thing**: whether `connect()` runs the
+/// flat assertion. Everything else — the SC lane, the poll loop, the kill switch, the
+/// teardown — is identical, because a rehearsal that inherits a book is not a
+/// different execution client, only a differently-started one.
+///
+/// The BOOK itself is proven BEFORE the node is built, by the caller running
+/// [`verify_book_on`] over the shared SDK (that is what can still refuse with exit 71,
+/// having placed no orders). By the time `connect()` runs, the node exists and a
+/// refusal there is far more expensive — so `BookAsserted` does not re-check, it
+/// stands down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartPosture {
+    /// The default: the account must be flat or the client refuses to start (R14).
+    #[default]
+    Flat,
+    /// The caller has already proven the account matches an expected book, so
+    /// `connect()` skips the flat assertion — and skips **only** that.
+    BookAsserted,
+}
+
+/// Where the marketable-limit policy reads the decision-time price from.
+///
+/// Injected by the runner (the rehearsal's mark feed, refreshed by the 15:00–15:20
+/// poll sweep), never fetched by the adapter: the adapter stays translation-only and
+/// the price the order is anchored to is the same one the strategy decided on.
+pub trait LastPriceSource: Send + Sync + std::fmt::Debug {
+    /// The last observed price for `instrument_id` in integer KRW, or `None` when the
+    /// feed has no observation — which must REFUSE the order, never price it at 0.
+    fn last_price(&self, instrument_id: &InstrumentId) -> Option<i64>;
+}
+
+/// Where the marketable-limit policy reads the session's cached [`Equity`] from — the
+/// clamp band (상하한가) and the market segment that selects the tick ladder.
+pub trait SessionInstruments: Send + Sync + std::fmt::Debug {
+    /// The cached equity for `instrument_id`, or `None` when it was never cached —
+    /// which must REFUSE the order, because there is then no band to clamp to.
+    fn equity(&self, instrument_id: &InstrumentId) -> Option<Equity>;
+}
+
+/// Converts the strategy's MARKET orders into limits that cross into the 15:30
+/// closing single-price auction (KTD5, R16).
+///
+/// `daily.rs` emits the same market order live that it emits in the backtest — that
+/// byte-identical strategy source is what keeps the frozen head judgeable — but the LS
+/// order surface (`CSPAT00601`) is limit-only. Rather than fork the strategy, the
+/// adapter owns the translation, so the divergence is one measurable adapter policy
+/// instead of a second strategy.
+///
+/// `ticks` is the crossing offset `k`. In a single-price auction every crossing limit
+/// executes at the one clearing price, so `k` is **fill insurance, not a price
+/// decision** — see [`marketable_limit`].
+///
+/// The plan sketches this as `{ ticks, prices }`; `instruments` is the third piece the
+/// same decision requires, because the clamp band is a session fact on the cached
+/// `Equity` and not something the price feed carries. `regime` is a parameter for the
+/// reason `rules.rs` states: a tick ladder read ambiently is a ladder that is silently
+/// wrong for some dates.
+#[derive(Clone, Debug)]
+pub struct MarketableLimitPolicy {
+    /// The crossing offset `k`, in ticks.
+    pub ticks: i64,
+    /// Which tick ladder applies to this session.
+    pub regime: TickRegime,
+    /// The decision-time price feed.
+    pub prices: Arc<dyn LastPriceSource>,
+    /// The session's cached instruments (for the daily price band + market segment).
+    pub instruments: Arc<dyn SessionInstruments>,
+}
+
+impl MarketableLimitPolicy {
+    /// Build a policy from its four parts.
+    #[must_use]
+    pub fn new(
+        ticks: i64,
+        regime: TickRegime,
+        prices: Arc<dyn LastPriceSource>,
+        instruments: Arc<dyn SessionInstruments>,
+    ) -> Self {
+        MarketableLimitPolicy { ticks, regime, prices, instruments }
+    }
+
+    /// Price a market order, or return the reason the order must be DENIED.
+    ///
+    /// A missing mark and a missing/absent band are both denials: the pre-2023 rule
+    /// module can price without a band, but the exchange cannot accept an order
+    /// outside the daily limits, and guessing one is how a rehearsal places an order
+    /// nobody predicted.
+    fn limit_for(&self, order_init: &OrderInitialized) -> Result<i64, String> {
+        let id = order_init.instrument_id;
+        let last = self.prices.last_price(&id).ok_or_else(|| {
+            format!(
+                "marketable-limit policy: no last price for {id} — refusing to convert a market \
+                 order without a decision-time mark"
+            )
+        })?;
+        let equity = self.instruments.equity(&id).ok_or_else(|| {
+            format!(
+                "marketable-limit policy: {id} is not in the session instrument cache — refusing \
+                 to convert a market order with no daily price band to clamp to"
+            )
+        })?;
+        let band = daily_price_band(&equity).ok_or_else(|| {
+            format!(
+                "marketable-limit policy: {id} carries no usable daily price band (상하한가) — \
+                 refusing rather than sending an unclamped limit"
+            )
+        })?;
+        marketable_limit(
+            equity_market(&equity),
+            self.regime,
+            last,
+            order_init.order_side,
+            self.ticks,
+            band,
+        )
+        .map_err(|e| format!("marketable-limit policy: {e}"))
+    }
+}
+
 /// The LS domestic cash-equity execution client.
 pub struct LsExecClient {
     client_id: ClientId,
@@ -430,6 +803,12 @@ pub struct LsExecClient {
     /// Retained handles of the spawned submit/modify/cancel workers (KTD2) — the
     /// teardown drains them before its cancel scan so no submission lands after it.
     order_tasks: OrderDispatchTasks,
+    /// What `connect()` asserts about the account (KTD6). `Flat` by default, so every
+    /// existing caller keeps the R14 gate it has today.
+    start_posture: StartPosture,
+    /// The market→closing-auction-limit translation (KTD5). `None` (the default) keeps
+    /// v1's limit-only behavior: a market order is refused, not silently priced.
+    marketable: Option<MarketableLimitPolicy>,
 }
 
 impl LsExecClient {
@@ -492,6 +871,8 @@ impl LsExecClient {
             last_drop_count: Arc::new(AtomicU64::new(0)),
             reconcile_armed: Arc::new(AtomicBool::new(false)),
             order_tasks: OrderDispatchTasks::new(),
+            start_posture: StartPosture::default(),
+            marketable: None,
         }
     }
 
@@ -518,6 +899,47 @@ impl LsExecClient {
     pub fn with_poll_cadence(mut self, cadence: Duration) -> Self {
         self.poll_cadence = cadence;
         self
+    }
+
+    /// Choose what `connect()` asserts about the account (KTD6). The default stays
+    /// [`StartPosture::Flat`]: a caller that says nothing keeps the R14 gate.
+    #[must_use]
+    pub fn with_start_posture(mut self, posture: StartPosture) -> Self {
+        self.start_posture = posture;
+        self
+    }
+
+    /// The posture this client will start under.
+    #[must_use]
+    pub fn start_posture(&self) -> StartPosture {
+        self.start_posture
+    }
+
+    /// Install the market→closing-auction-limit translation (KTD5). Without it a
+    /// market order is refused exactly as it is today.
+    #[must_use]
+    pub fn with_marketable_limit_policy(mut self, policy: MarketableLimitPolicy) -> Self {
+        self.marketable = Some(policy);
+        self
+    }
+
+    /// Prove the account matches `expected` — the pre-mount book probe (R17, AE3).
+    ///
+    /// # Errors
+    ///
+    /// [`AdapterError::Config`] naming the offending symbols/orders.
+    pub async fn verify_book(&self, expected: &ExpectedBook) -> AdapterResult<()> {
+        verify_book_on(&self.sdk, expected).await
+    }
+
+    /// The account's D+2 deposit (R17) — see [`read_d2_deposit_on`] for which field it
+    /// is and the one timing caveat that comes with it.
+    ///
+    /// # Errors
+    ///
+    /// The SDK error on a failed read; [`AdapterError::Config`] on an unreadable amount.
+    pub async fn read_d2_deposit(&self) -> AdapterResult<i64> {
+        read_d2_deposit_on(&self.sdk).await
     }
 
     /// The R14 flat-start gate: the account must have **no open orders** and **no
@@ -640,38 +1062,52 @@ fn side_code(order_side: OrderSide) -> Option<&'static str> {
     }
 }
 
-/// Build a domestic cash-equity **limit** submit request from a nautilus order, or
-/// a deny reason. v1 supports Buy/Sell LIMIT orders only: an ambiguous side or a
-/// market order (no price) is refused rather than silently sent as a limit-at-0 or
-/// a wrong-side order.
-fn submit_request(order_init: &OrderInitialized) -> Result<(CSPAT00601Request, &'static str), String> {
+/// Build a domestic cash-equity **limit** submit request from a nautilus order, or a
+/// deny reason. Returns the request, the validated `BnsTpCode`, and the limit price
+/// actually sent — the reconcile intent must key on the price that went out, which for
+/// a converted market order is not a price the order carried.
+///
+/// v1 accepts Buy/Sell LIMIT orders. A market order (no price) is refused exactly as
+/// before UNLESS a [`MarketableLimitPolicy`] is installed, in which case it is
+/// converted into the crossing limit the closing auction needs (KTD5). An ambiguous
+/// side is always refused rather than silently sent as a wrong-side order.
+fn submit_request(
+    order_init: &OrderInitialized,
+    policy: Option<&MarketableLimitPolicy>,
+) -> Result<(CSPAT00601Request, &'static str, i64), String> {
     let side = side_code(order_init.order_side)
         .ok_or_else(|| format!("unsupported order side {:?} (v1 accepts Buy/Sell only)", order_init.order_side))?;
-    let price = order_init.price.ok_or_else(|| {
-        "market orders are not supported in v1 (limit-only) — refusing rather than sending a \
-         price-0 limit"
-            .to_string()
-    })?;
+    let price = match order_init.price {
+        Some(price) => price.as_f64() as i64,
+        // `close_position`'s exits arrive here as market orders too, so they take the
+        // identical conversion — one policy, not one per emission site.
+        None => match policy {
+            Some(policy) => policy.limit_for(order_init)?,
+            None => {
+                return Err("market orders are not supported in v1 (limit-only) — refusing \
+                            rather than sending a price-0 limit"
+                    .to_string())
+            }
+        },
+    };
     let shcode = order_init.instrument_id.symbol.as_str();
     let isuno = format!("A{shcode}");
     let qty = order_init.quantity.as_f64() as i64;
-    let price = price.as_f64() as i64;
     let req = CSPAT00601Request::limit(isuno, qty.to_string(), price.to_string(), side, "");
-    Ok((req, side))
+    Ok((req, side, price))
 }
 
 /// Build the reconcile intent for a submit (keyed for the t0425 query). `side` is
-/// the already-validated `BnsTpCode`.
-fn submit_intent(sdk: &LsSdk, order_init: &OrderInitialized, side: &str) -> OrderIntent {
+/// the already-validated `BnsTpCode` and `price` the limit actually sent.
+fn submit_intent(sdk: &LsSdk, order_init: &OrderInitialized, side: &str, price: i64) -> OrderIntent {
     let shcode = order_init.instrument_id.symbol.as_str();
     let qty = (order_init.quantity.as_f64() as i64).to_string();
-    let price = order_init.price.map(|p| (p.as_f64() as i64).to_string()).unwrap_or_default();
     OrderIntent::submit(
         sdk.orders().account_no().to_string(),
         shcode.to_string(),
         side.to_string(),
         qty,
-        price,
+        price.to_string(),
         None,
     )
 }
@@ -795,6 +1231,7 @@ async fn run_submit(
     ledger: Arc<Mutex<FillLedger>>,
     clock: &'static AtomicTime,
     order_init: OrderInitialized,
+    policy: Option<MarketableLimitPolicy>,
 ) {
     let order: OrderAny =
         match OrderAny::from_events(vec![OrderEventAny::Initialized(order_init.clone())]) {
@@ -807,8 +1244,8 @@ async fn run_submit(
     let client_order_id = order_init.client_order_id;
     // Build the request, refusing (denying) unsupported order shapes fail-closed
     // rather than sending a wrong-side or price-0 order.
-    let (req, side) = match submit_request(&order_init) {
-        Ok(pair) => pair,
+    let (req, side, limit_price) = match submit_request(&order_init, policy.as_ref()) {
+        Ok(parts) => parts,
         Err(reason) => {
             emitter.emit_order_denied(&order, &reason);
             return;
@@ -840,7 +1277,7 @@ async fn run_submit(
             }
             SubmitAction::Pending => {
                 // May have rested — reconcile before deciding (AE1).
-                let intent = submit_intent(&sdk, &order_init, side);
+                let intent = submit_intent(&sdk, &order_init, side, limit_price);
                 let outcome = sdk.orders().reconcile(&intent, false).await;
                 match classify_reconcile(outcome) {
                     ReconcileEvent::Accepted => {
@@ -1053,6 +1490,177 @@ async fn run_cancel(
     }
 }
 
+/// Build the venue's **position** status reports from a bare SDK handle (KTD14, R29).
+///
+/// One Long report per t0424 row with `janqty > 0`. Without these, a restarted node
+/// has no position at all for yesterday's book; without `avg_px_open` nautilus builds
+/// no position either, so `pamt` (평균단가) is required and a `pamt` that does not
+/// parse is an ERROR, not a `None` — a position restored at an unknown cost basis is
+/// a position whose stop is wrong.
+///
+/// **`pamt` is the cost basis and `price`/`appamt` are the valuation.** The R32
+/// overnight probe measured them separating across a session boundary: `pamt` held at
+/// the average buy while `price` marked to market. Reading one for the other silently
+/// misprices every restored leg.
+///
+/// A flat account yields an empty vector — that is a fact, not a failure.
+///
+/// # Errors
+///
+/// The SDK error on a failed read; [`AdapterError::Config`] on a truncated
+/// enumeration or an unparseable `janqty`/`pamt`.
+pub async fn position_status_reports_on(
+    sdk: &LsSdk,
+    account_id: AccountId,
+    ts: UnixNanos,
+) -> AdapterResult<Vec<PositionStatusReport>> {
+    let rows = collect_holdings_on(sdk).await?;
+    let mut reports = Vec::new();
+    for row in &rows {
+        let symbol = row.expcode.trim();
+        let qty: i64 = row.janqty.trim().parse().map_err(|_| {
+            AdapterError::Config(format!(
+                "position report: unparseable janqty {:?} for {symbol} — refusing (fail-closed)",
+                row.janqty.trim()
+            ))
+        })?;
+        if qty <= 0 {
+            continue; // A listed-but-not-held row (same-day round trip) is not a position.
+        }
+        let avg_px: Decimal = row.pamt.trim().parse().map_err(|_| {
+            AdapterError::Config(format!(
+                "position report: unparseable pamt {:?} for {symbol} — nautilus builds no \
+                 position without an average open price, so refusing beats restoring a leg at an \
+                 unknown cost basis",
+                row.pamt.trim()
+            ))
+        })?;
+        reports.push(PositionStatusReport::new(
+            account_id,
+            InstrumentId::new(Symbol::from(symbol), Venue::from(KRX_VENUE)),
+            PositionSideSpecified::Long,
+            Quantity::from(qty),
+            ts,
+            ts,
+            None, // report_id — generated
+            None, // venue_position_id — LS assigns none; the netting book is per symbol
+            Some(avg_px),
+        ));
+    }
+    Ok(reports)
+}
+
+/// The order status a t0425 row is in, derived from its QUANTITIES rather than from
+/// the Korean `status` text (`"접수"`/`"체결"`/`"취소"`/`"정정"`).
+///
+/// The quantities are the same positive-only evidence the flat gate and the cancel
+/// scan already key on, and they do not depend on the broker's display strings staying
+/// stable. An unparseable quantity is an error, never a defaulted status.
+fn order_report_status(qty: i64, filled: i64, remaining: i64) -> OrderStatus {
+    if qty > 0 && filled >= qty {
+        OrderStatus::Filled
+    } else if remaining > 0 {
+        if filled > 0 {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Accepted
+        }
+    } else {
+        // Nothing resting and not fully filled: the order is gone from the book,
+        // whether it was canceled outright or the remainder expired at the close.
+        OrderStatus::Canceled
+    }
+}
+
+/// Map one t0425 row to an [`OrderStatusReport`], or the reason it cannot be mapped.
+fn order_status_report_row(
+    row: &T0425OutBlock1,
+    account_id: AccountId,
+    ts: UnixNanos,
+) -> AdapterResult<OrderStatusReport> {
+    let symbol = row.expcode.trim();
+    let parse = |field: &str, raw: &str| -> AdapterResult<i64> {
+        raw.trim().parse::<i64>().map_err(|_| {
+            AdapterError::Config(format!(
+                "order report: unparseable {field} {:?} on order {} ({symbol}) — refusing \
+                 (fail-closed)",
+                raw.trim(),
+                crate::scrub::scrub_secrets(row.ordno.trim())
+            ))
+        })
+    };
+    let qty = parse("qty", &row.qty)?;
+    let filled = parse("cheqty", &row.cheqty)?;
+    let remaining = parse("ordrem", &row.ordrem)?;
+    let price = parse("price", &row.price)?;
+    // The side is the broker's Korean 구분 text; an unrecognized value is refused, never
+    // defaulted — the same rule `side_code` applies on the way out.
+    let side = match row.medosu.trim() {
+        "매수" => OrderSide::Buy,
+        "매도" => OrderSide::Sell,
+        other => {
+            return Err(AdapterError::Config(format!(
+                "order report: unrecognized 구분 {other:?} on order {} ({symbol}) — refusing \
+                 rather than defaulting a side",
+                crate::scrub::scrub_secrets(row.ordno.trim())
+            )))
+        }
+    };
+    let mut report = OrderStatusReport::new(
+        account_id,
+        InstrumentId::new(Symbol::from(symbol), Venue::from(KRX_VENUE)),
+        None, // client_order_id — an inherited order has none this process knows
+        VenueOrderId::from(row.ordno.trim()),
+        side,
+        OrderType::Limit, // the LS order surface is limit-only (CSPAT00601)
+        TimeInForce::Day, // KRX regular-session orders do not survive the session
+        order_report_status(qty, filled, remaining),
+        Quantity::from(qty.max(0)),
+        Quantity::from(filled.max(0)),
+        // `ordtime` is a bare HH:MM:SS with no date, so it cannot be turned into a
+        // UNIX timestamp without assuming a session date. The report is a
+        // point-in-time restore and nautilus uses these only for ordering, so all
+        // three carry the read's own timestamp rather than a fabricated one.
+        ts, ts, ts,
+        None, // report_id — generated
+    );
+    if price > 0 {
+        report.price = Some(Price::from(price.to_string().as_str()));
+    }
+    Ok(report)
+}
+
+/// Build the venue's **order** status reports from a bare SDK handle (KTD14).
+///
+/// A single-page t0425 read, fail-closed on truncation exactly like
+/// [`check_stranded_orders_on`]: a partial order list handed to reconciliation is
+/// worse than none, because nautilus would treat the orders it did not see as gone.
+/// A flat account yields an empty vector.
+///
+/// # Errors
+///
+/// The SDK error on a failed read; [`AdapterError::Config`] on truncation or an
+/// unmappable row.
+pub async fn order_status_reports_on(
+    sdk: &LsSdk,
+    account_id: AccountId,
+    ts: UnixNanos,
+) -> AdapterResult<Vec<OrderStatusReport>> {
+    let orders = sdk.orders().inquiry(&T0425Request::for_symbol("")).await?;
+    if !orders.outblock.cts_ordno.trim().is_empty() {
+        return Err(AdapterError::Config(
+            "order report: the t0425 order inquiry was truncated (more pages) — cannot enumerate \
+             every order; refusing rather than reporting a partial order list"
+                .to_string(),
+        ));
+    }
+    orders
+        .outblock1
+        .iter()
+        .map(|row| order_status_report_row(row, account_id, ts))
+        .collect()
+}
+
 /// Classify a modify/cancel error per KTD6 and emit the action-appropriate event.
 /// A clean rejection emits modify/cancel-rejected (order stays open); an ambiguous
 /// outcome holds pending and drives an action-aware reconcile keyed on the ORIGINAL
@@ -1168,6 +1776,50 @@ impl ExecutionClient for LsExecClient {
         Ok(())
     }
 
+    /// Yesterday's book, as nautilus position reports (KTD14, R29).
+    ///
+    /// `cmd.instrument_id`, when set, narrows the reports to that instrument;
+    /// `start`/`end` are meaningless for a point-in-time balance read and are ignored.
+    async fn generate_position_status_reports(
+        &self,
+        cmd: &GeneratePositionStatusReports,
+    ) -> anyhow::Result<Vec<PositionStatusReport>> {
+        let mut reports =
+            position_status_reports_on(&self.sdk, self.account_id, self.clock.get_time_ns())
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(id) = cmd.instrument_id {
+            reports.retain(|r| r.instrument_id == id);
+        }
+        Ok(reports)
+    }
+
+    /// The account's live orders, as nautilus order status reports (KTD14).
+    ///
+    /// `cmd.open_only` keeps only the orders that still rest; `cmd.instrument_id`
+    /// narrows to one instrument.
+    async fn generate_order_status_reports(
+        &self,
+        cmd: &GenerateOrderStatusReports,
+    ) -> anyhow::Result<Vec<OrderStatusReport>> {
+        let mut reports =
+            order_status_reports_on(&self.sdk, self.account_id, self.clock.get_time_ns())
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if cmd.open_only {
+            reports.retain(|r| {
+                matches!(
+                    r.order_status,
+                    OrderStatus::Accepted | OrderStatus::PartiallyFilled
+                )
+            });
+        }
+        if let Some(id) = cmd.instrument_id {
+            reports.retain(|r| r.instrument_id == id);
+        }
+        Ok(reports)
+    }
+
     fn start(&mut self) -> anyhow::Result<()> {
         // Capture the runner's execution-event sender (panics outside an
         // initialized runner — the live node initializes it before start()).
@@ -1181,8 +1833,12 @@ impl ExecutionClient for LsExecClient {
     }
 
     async fn connect(&mut self) -> anyhow::Result<()> {
-        // R14 flat-start gate: refuse to start unless the account is flat.
-        self.verify_flat().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        // R14 flat-start gate: refuse to start unless the account is flat. Under
+        // `BookAsserted` the caller has already proven the book pre-mount, so this ONE
+        // call stands down — nothing else about connect changes (KTD6).
+        if self.start_posture == StartPosture::Flat {
+            self.verify_flat().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
 
         // Spawn the SC0/SC1 order-event lane over the exec client's OWN supervisor
         // instance / WsManager (KTD3 — isolated failure domain from market data).
@@ -1240,8 +1896,15 @@ impl ExecutionClient for LsExecClient {
         let clock = self.clock;
         // Retain the handle (KTD2) so a teardown can quiesce this dispatch before its
         // cancel scan — a dropped handle would let the submit land after the scan.
-        self.order_tasks
-            .track(tokio::spawn(run_submit(sdk, emitter, ledger, clock, cmd.order_init)));
+        let policy = self.marketable.clone();
+        self.order_tasks.track(tokio::spawn(run_submit(
+            sdk,
+            emitter,
+            ledger,
+            clock,
+            cmd.order_init,
+            policy,
+        )));
         Ok(())
     }
 
@@ -1277,6 +1940,43 @@ mod tests {
         // An ambiguous/no side must be refused (None) — never defaulted to a live
         // SELL. This is the fail-closed guard `submit_request` relies on.
         assert_eq!(side_code(OrderSide::NoOrderSide), None);
+    }
+
+    #[test]
+    fn order_report_status_reads_the_quantities_not_the_display_text() {
+        // Resting, untouched.
+        assert_eq!(order_report_status(10, 0, 10), OrderStatus::Accepted);
+        // Resting, partly done.
+        assert_eq!(order_report_status(10, 3, 7), OrderStatus::PartiallyFilled);
+        // Complete.
+        assert_eq!(order_report_status(10, 10, 0), OrderStatus::Filled);
+        // Nothing resting, nothing filled — canceled (or expired at the close, which
+        // the teardown treats identically).
+        assert_eq!(order_report_status(10, 0, 0), OrderStatus::Canceled);
+        // A partial that stopped resting: the remainder is gone, the order is closed.
+        assert_eq!(order_report_status(10, 4, 0), OrderStatus::Canceled);
+        // A zero-quantity row is never "Filled" on the strength of 0 >= 0.
+        assert_eq!(order_report_status(0, 0, 0), OrderStatus::Canceled);
+    }
+
+    #[test]
+    fn a_book_predicate_over_no_rows_matches_only_the_flat_expectation() {
+        compare_book(&[], &ExpectedBook::flat()).expect("no rows is the flat book");
+        compare_book(&[], &ExpectedBook::from_pairs([("005930", 1)]))
+            .expect_err("no rows cannot satisfy a book that expects a holding");
+    }
+
+    #[test]
+    fn a_symbol_split_across_rows_is_summed_not_read_as_a_mismatch() {
+        // t0424 splits one symbol by `jangb`; the book expects the TOTAL.
+        let rows = vec![
+            T0424OutBlock1 { expcode: "005930".into(), janqty: "4".into(), ..Default::default() },
+            T0424OutBlock1 { expcode: "005930".into(), janqty: "6".into(), ..Default::default() },
+        ];
+        compare_book(&rows, &ExpectedBook::from_pairs([("005930", 10)]))
+            .expect("4 + 6 is the 10 the book expects");
+        compare_book(&rows, &ExpectedBook::from_pairs([("005930", 6)]))
+            .expect_err("the larger tranche alone is not the holding");
     }
 
     #[test]
