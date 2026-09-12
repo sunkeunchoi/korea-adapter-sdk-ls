@@ -2882,6 +2882,7 @@ dependencies = [
  "nautilus-backtest",
  "nautilus-common",
  "nautilus-core",
+ "nautilus-execution",
  "nautilus-live",
  "nautilus-ls-calendar",
  "nautilus-model",

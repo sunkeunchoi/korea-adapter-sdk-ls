@@ -431,6 +431,52 @@ fn t0424_out_block1_single_object_deserializes_to_one_element_vec() {
     assert_eq!(resp.outblock1[0].janqty, "5");
 }
 
+/// The `cts_expcode` continuation echo round-trips: a NON-empty value in
+/// `t0424OutBlock` is the "more holdings follow" cursor, and
+/// [`T0424Request::with_cts_expcode`] puts it back on the next request's BODY (t0424
+/// is single-page dispatch, so the cursor never rides in the `tr_cont` headers).
+#[test]
+fn t0424_cts_expcode_cursor_round_trips_through_the_body() {
+    // Absent on the last page of a short read — the default is "no more pages".
+    let last_page: T0424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": 80030265 },
+        "t0424OutBlock1": []
+    }))
+    .expect("a body with no cursor must deserialize");
+    assert_eq!(
+        last_page.outblock.cts_expcode, "",
+        "an absent cursor reads as empty = last page, never as a phantom next page"
+    );
+
+    let truncated: T0424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": 80030265, "cts_expcode": "005930" },
+        "t0424OutBlock1": [{ "expcode": "005930", "janqty": 1 }]
+    }))
+    .expect("a truncated body must deserialize");
+    assert_eq!(truncated.outblock.cts_expcode, "005930", "the next-page cursor");
+
+    let req = T0424Request::new("1", "0", "0", "0")
+        .with_cts_expcode(truncated.outblock.cts_expcode.clone());
+    let body = serde_json::to_value(&req).expect("request serializes");
+    assert_eq!(
+        body["t0424InBlock"]["cts_expcode"], "005930",
+        "the cursor goes back out on the BODY, not a header"
+    );
+    // The gubun flags are untouched by the continuation — page 2 must query the
+    // same shape as page 1 or the two pages are not one enumeration.
+    assert_eq!(body["t0424InBlock"]["prcgb"], "1");
+    assert_eq!(body["t0424InBlock"]["chegb"], "0");
+    assert_eq!(body["t0424InBlock"]["dangb"], "0");
+    assert_eq!(body["t0424InBlock"]["charge"], "0");
+    assert!(
+        body["t0424InBlock"].get("account_no").is_none()
+            && body["t0424InBlock"].as_object().unwrap().len() == 5,
+        "the in-block stays the five documented fields — no account number"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // t0441 — 선물/옵션잔고평가(이동평균) (F/O balance valuation: position array + summary).
 // No numeric request slots; on a position-less account both blocks are empty/zero.

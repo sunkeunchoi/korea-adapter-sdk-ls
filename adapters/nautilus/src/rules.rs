@@ -40,6 +40,7 @@
 //! ticks are integers.
 
 use chrono::{NaiveDate, NaiveTime};
+use nautilus_model::enums::OrderSide;
 
 use crate::error::AdapterError;
 
@@ -282,6 +283,133 @@ pub fn round_down_to_tick(
     Ok(price - price.rem_euclid(tick))
 }
 
+/// Round `price` UP to the nearest valid tick for its band — the buy-side mirror of
+/// [`round_down_to_tick`].
+///
+/// The band is resolved at the ROUNDED-UP value, not at `price`, so a round-up that
+/// crosses a band boundary lands on the coarser band's grid rather than on the finer
+/// one it started in (every KRX boundary is itself a multiple of the higher band's
+/// tick, so one re-resolution is enough — asserted by
+/// `round_up_across_a_band_boundary_lands_on_the_higher_bands_grid`).
+///
+/// # Errors
+///
+/// Propagates [`tick_size`] errors.
+pub fn round_up_to_tick(
+    market: Market,
+    regime: TickRegime,
+    price: i64,
+) -> Result<i64, AdapterError> {
+    let tick = tick_size(market, regime, price)?;
+    let rem = price.rem_euclid(tick);
+    let up = if rem == 0 { price } else { price + (tick - rem) };
+    // Re-resolve at the result: crossing into a coarser band can leave `up` off the
+    // NEW band's grid, and an off-grid limit price is rejected by the exchange.
+    let tick_up = tick_size(market, regime, up)?;
+    let rem_up = up.rem_euclid(tick_up);
+    Ok(if rem_up == 0 { up } else { up + (tick_up - rem_up) })
+}
+
+/// A session's daily price limits (상한가 / 하한가), integer KRW.
+///
+/// Session-scoped, never an instrument constant (KTD7) — the values ride on the
+/// cached `Equity`'s `info` and are read out by
+/// [`crate::instruments::daily_price_band`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PriceBand {
+    /// 하한가 — the lowest price the exchange accepts this session.
+    pub lower: i64,
+    /// 상한가 — the highest price the exchange accepts this session.
+    pub upper: i64,
+}
+
+/// Price a **marketable limit** order for the closing single-price auction (KTD5, R16).
+///
+/// The daily strategy emits the same MARKET order live that it emits in the backtest —
+/// byte-identical strategy source is the whole point of the identity freeze — but the
+/// LS order surface (`CSPAT00601`) is limit-only. This is the translation: take the
+/// 15:20 decision-time price and step `k` ticks in the direction that CROSSES, so the
+/// order is guaranteed to participate in the 15:30 auction.
+///
+/// **`k` is fill insurance, not a price decision.** In a single-price auction every
+/// crossing limit executes at the one clearing price, so a buy limit 3 ticks above the
+/// last trade fills at the close, not at the limit. Widening `k` buys protection
+/// against the close moving away from 15:20; it does not make the fill worse.
+///
+/// - **Buy**: `last + k` ticks, rounded UP onto the grid (a rounded-DOWN buy could
+///   land below the clearing price and miss the auction).
+/// - **Sell**: `last - k` ticks, rounded DOWN onto the grid, for the mirror reason.
+/// - Both are then clamped into `band`, and snapped back INWARD so a band edge that is
+///   itself off-grid can never produce an off-grid order.
+///
+/// The tick step is resolved at `last` (the price the order is anchored to); the
+/// rounding helpers re-resolve at their own result, so a `k`-tick step that crosses a
+/// band boundary still lands on the grid.
+///
+/// # Errors
+///
+/// - [`AdapterError::Config`] if `side` is not a clean Buy/Sell (never defaulted — the
+///   same fail-closed rule the submit path applies), if `last` is not positive, if
+///   `k` is negative, or if `band` is inverted/non-positive.
+/// - Propagates [`tick_size`] errors.
+pub fn marketable_limit(
+    market: Market,
+    regime: TickRegime,
+    last: i64,
+    side: OrderSide,
+    k: i64,
+    band: PriceBand,
+) -> Result<i64, AdapterError> {
+    if last <= 0 {
+        return Err(AdapterError::Config(format!(
+            "marketable limit: last price must be positive, got {last} — refusing to price an \
+             order off a missing/garbage mark"
+        )));
+    }
+    if k < 0 {
+        return Err(AdapterError::Config(format!(
+            "marketable limit: tick offset k must be >= 0, got {k}"
+        )));
+    }
+    if band.lower <= 0 || band.upper < band.lower {
+        return Err(AdapterError::Config(format!(
+            "marketable limit: invalid daily price band [{}, {}]",
+            band.lower, band.upper
+        )));
+    }
+    let tick = tick_size(market, regime, last)?;
+    let stepped = match side {
+        OrderSide::Buy => last.saturating_add(k.saturating_mul(tick)),
+        OrderSide::Sell => last.saturating_sub(k.saturating_mul(tick)).max(1),
+        other => {
+            return Err(AdapterError::Config(format!(
+                "marketable limit: unsupported order side {other:?} (Buy/Sell only) — refusing \
+                 rather than defaulting a live side"
+            )))
+        }
+    };
+    let snapped = match side {
+        OrderSide::Buy => round_up_to_tick(market, regime, stepped)?,
+        _ => round_down_to_tick(market, regime, stepped)?,
+    };
+    let clamped = snapped.clamp(band.lower, band.upper);
+    // Snap INWARD after the clamp: KRX publishes on-grid limits, so this is the
+    // identity in practice, but an off-grid band would otherwise become an off-grid
+    // order the gateway rejects.
+    let priced = match side {
+        OrderSide::Buy => round_down_to_tick(market, regime, clamped)?,
+        _ => round_up_to_tick(market, regime, clamped)?,
+    };
+    if priced <= 0 {
+        return Err(AdapterError::Config(format!(
+            "marketable limit: priced to {priced} for last={last} k={k} band=[{}, {}] — refusing \
+             a non-positive limit",
+            band.lower, band.upper
+        )));
+    }
+    Ok(priced)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +510,151 @@ mod tests {
             round_down_to_tick(Market::Kospi, TickRegime::Post2023, 60_100).unwrap(),
             60_100
         );
+    }
+
+    #[test]
+    fn round_up_snaps_to_grid() {
+        // 60,123 KRW KOSPI post-2023 → tick 100 → snap UP to 60,200 (down was 60,100).
+        assert_eq!(
+            round_up_to_tick(Market::Kospi, TickRegime::Post2023, 60_123).unwrap(),
+            60_200
+        );
+        // Already on the grid stays put — round-up is not "always step".
+        assert_eq!(
+            round_up_to_tick(Market::Kospi, TickRegime::Post2023, 60_100).unwrap(),
+            60_100
+        );
+    }
+
+    #[test]
+    fn round_up_across_a_band_boundary_lands_on_the_higher_bands_grid() {
+        // 19,995 sits in the 10-tick band; rounding up crosses into the 50-tick band
+        // at 20,000. The result must be on the NEW band's grid, not the old one's.
+        let up = round_up_to_tick(Market::Kospi, TickRegime::Post2023, 19_995).unwrap();
+        assert_eq!(up, 20_000);
+        assert_eq!(up % tick_size(Market::Kospi, TickRegime::Post2023, up).unwrap(), 0);
+        // Pre-2023 KOSPI: 9,998 (tick 10) → 10,000, where the tick becomes 50.
+        let up = round_up_to_tick(Market::Kospi, TickRegime::Pre2023, 9_998).unwrap();
+        assert_eq!(up, 10_000);
+        assert_eq!(up % tick_size(Market::Kospi, TickRegime::Pre2023, up).unwrap(), 0);
+    }
+
+    #[test]
+    fn marketable_buy_steps_up_k_ticks_onto_the_grid() {
+        // 60,000 KOSPI post-2023 → tick 100. k=3 → 60,300, already on the grid.
+        let band = PriceBand { lower: 42_000, upper: 78_000 };
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_000, OrderSide::Buy, 3, band)
+                .unwrap(),
+            60_300
+        );
+        // An off-grid last price rounds UP after the step, never down (a rounded-down
+        // buy can sit below the auction's clearing price and miss the fill).
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_123, OrderSide::Buy, 3, band)
+                .unwrap(),
+            60_500
+        );
+    }
+
+    #[test]
+    fn marketable_sell_steps_down_k_ticks_onto_the_grid() {
+        let band = PriceBand { lower: 42_000, upper: 78_000 };
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_000, OrderSide::Sell, 3, band)
+                .unwrap(),
+            59_700
+        );
+        // 60,123 − 300 = 59,823 → rounded DOWN to 59,800.
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_123, OrderSide::Sell, 3, band)
+                .unwrap(),
+            59_800
+        );
+    }
+
+    #[test]
+    fn marketable_limit_clamps_to_the_daily_band() {
+        // A buy stepping past the 상한가 is clamped to it, not sent above it.
+        let band = PriceBand { lower: 42_000, upper: 60_200 };
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_000, OrderSide::Buy, 5, band)
+                .unwrap(),
+            60_200,
+            "a buy never prices above the 상한가"
+        );
+        // The mirror: a sell stepping below the 하한가 is clamped to it.
+        let band = PriceBand { lower: 59_900, upper: 78_000 };
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_000, OrderSide::Sell, 5, band)
+                .unwrap(),
+            59_900,
+            "a sell never prices below the 하한가"
+        );
+    }
+
+    #[test]
+    fn marketable_limit_k_zero_is_the_last_price_snapped() {
+        // k=0 is a legal (if unprotected) policy: the limit is just the mark on the
+        // grid, rounded in the crossing direction.
+        let band = PriceBand { lower: 42_000, upper: 78_000 };
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_123, OrderSide::Buy, 0, band)
+                .unwrap(),
+            60_200
+        );
+        assert_eq!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 60_123, OrderSide::Sell, 0, band)
+                .unwrap(),
+            60_100
+        );
+    }
+
+    #[test]
+    fn marketable_limit_refuses_garbage_inputs_rather_than_pricing_them() {
+        let band = PriceBand { lower: 42_000, upper: 78_000 };
+        // An ambiguous side is refused, never defaulted to a live sell.
+        assert!(marketable_limit(
+            Market::Kospi,
+            TickRegime::Post2023,
+            60_000,
+            OrderSide::NoOrderSide,
+            3,
+            band
+        )
+        .is_err());
+        // A missing/garbage mark (0 or negative) is refused.
+        assert!(
+            marketable_limit(Market::Kospi, TickRegime::Post2023, 0, OrderSide::Buy, 3, band)
+                .is_err()
+        );
+        // An inverted band is refused.
+        let inverted = PriceBand { lower: 78_000, upper: 42_000 };
+        assert!(marketable_limit(
+            Market::Kospi,
+            TickRegime::Post2023,
+            60_000,
+            OrderSide::Buy,
+            3,
+            inverted
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn marketable_limit_uses_the_kosdaq_ladder_when_the_market_says_so() {
+        // Pre-2023 KOSDAQ caps its tick at 100 above 50,000 while KOSPI steps to 500,
+        // so the same k=2 step prices differently. The market is a PARAMETER here for
+        // exactly this reason.
+        let band = PriceBand { lower: 84_000, upper: 156_000 };
+        let kosdaq =
+            marketable_limit(Market::Kosdaq, TickRegime::Pre2023, 120_000, OrderSide::Buy, 2, band)
+                .unwrap();
+        let kospi =
+            marketable_limit(Market::Kospi, TickRegime::Pre2023, 120_000, OrderSide::Buy, 2, band)
+                .unwrap();
+        assert_eq!(kosdaq, 120_200, "KOSDAQ tick 100 × 2");
+        assert_eq!(kospi, 121_000, "KOSPI tick 500 × 2");
     }
 
     #[test]
