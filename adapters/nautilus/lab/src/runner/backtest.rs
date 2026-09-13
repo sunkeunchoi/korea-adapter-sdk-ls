@@ -316,6 +316,9 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         universe_metadata_hash: metadata.as_ref().map(|(hash, _)| hash.clone()),
         dispatch: None,
         daily_params: None,
+        // A backtest predates the live-lane labels entirely (KTD2): absent, not `false`.
+        rehearsal: None,
+        paper_stage: None,
         created_utc: start.to_rfc3339(),
     };
 

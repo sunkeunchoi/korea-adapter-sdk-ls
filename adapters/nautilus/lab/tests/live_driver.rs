@@ -24,11 +24,13 @@ use nautilus_ls_lab::artifacts::{aborted_runs, DATA_QUALITY_FILE, MANIFEST_FILE,
 use nautilus_ls_lab::dispatch::chain::{DispatchChain, RecordKind, SafetyTripKind};
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::runner::live::{
-    run_live_session, LiveDriverConfig, LiveSessionContext, LiveSessionHandles,
-    LiveTeardownSession, SessionClock,
+    run_live_session, LiveDriverConfig, LiveManifestParts, LiveSessionContext, LiveSessionHandles,
+    LiveTeardownSession, SessionAuthority, SessionClock, SessionIdentity,
 };
 use nautilus_ls_lab::runner::pnl::MarkPolicy;
-use nautilus_ls_lab::runner::watchdog::{Heartbeats, TripCause, TripLatch, WatchdogLimits};
+use nautilus_ls_lab::runner::watchdog::{
+    ChainTripSink, Heartbeats, RehearsalLedger, TripCause, TripLatch, TripSink, WatchdogLimits,
+};
 use nautilus_ls_lab::strategy::orb::{EmissionGate, MarkFeed, SymbolMark};
 use nautilus_live::node::LiveNodeHandle;
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, TraderId};
@@ -146,6 +148,23 @@ async fn rig(server: &MockServer, heartbeat_at: i64) -> Rig {
     }
 }
 
+/// A trip sink whose every append fails — the supervisor-failure condition, stated at the
+/// seam rather than simulated by wedging a directory.
+struct FailingTripSink;
+
+impl TripSink for FailingTripSink {
+    fn record_trip(
+        &self,
+        _trip: SafetyTripKind,
+        _action: nautilus_ls_lab::dispatch::chain::TripAction,
+        _run_id: Option<&str>,
+        _detail: &str,
+        _now: chrono::DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("trip sink is wedged")
+    }
+}
+
 fn seed_chain(dir: &Path) {
     let chain = DispatchChain::open(dir).unwrap();
     chain
@@ -175,11 +194,13 @@ fn driver_cfg(keepalive: &Path) -> LiveDriverConfig {
     }
 }
 
-fn ctx(home: &Path) -> LiveSessionContext {
-    LiveSessionContext {
-        data_home: home.to_path_buf(),
+/// A LADDER session authority over `home`'s dispatch chain (U8) — a dispatch link plus a
+/// [`ChainTripSink`], which is what every pre-U8 driver test implicitly had.
+fn ladder_authority(home: &Path) -> SessionAuthority {
+    SessionAuthority {
         run_id: "20260725T010000Z-live-orb-v34".to_string(),
-        chain_rung: 1,
+        lane_hash: "cafef00d".to_string(),
+        trading_env: "paper".to_string(),
         dispatch: Some(DispatchLink {
             dispatch_id: "rec-1".into(),
             rung: 1,
@@ -187,11 +208,40 @@ fn ctx(home: &Path) -> LiveSessionContext {
             lane: "cafef00d".into(),
             trading_env: "paper".into(),
         }),
-        params: OrbParams::default(),
-        symbols: vec!["005930.XKRX".to_string()],
-        trading_date: "20260725".to_string(),
-        created_utc: "2026-07-25T01:00:00Z".to_string(),
+        trips: Arc::new(ChainTripSink::open(home, 1).unwrap()),
     }
+}
+
+fn ctx_for(home: &Path, authority: SessionAuthority) -> LiveSessionContext {
+    ctx_with(home, authority, SessionIdentity::Orb(OrbParams::default()))
+}
+
+fn ctx_with(
+    home: &Path,
+    authority: SessionAuthority,
+    identity: SessionIdentity,
+) -> LiveSessionContext {
+    let symbols = vec!["005930.XKRX".to_string()];
+    let manifest = identity
+        .live_manifest(LiveManifestParts {
+            authority: &authority,
+            symbols: &symbols,
+            trading_date: "20260725",
+            started_utc: Utc.with_ymd_and_hms(2026, 7, 25, 1, 0, 0).unwrap(),
+            paper_stage: false,
+        })
+        .unwrap();
+    LiveSessionContext {
+        data_home: home.to_path_buf(),
+        authority,
+        manifest,
+        symbols,
+        trading_date: "20260725".to_string(),
+    }
+}
+
+fn ctx(home: &Path) -> LiveSessionContext {
+    ctx_for(home, ladder_authority(home))
 }
 
 /// A fresh operator keepalive file (its mtime is the feeder).
@@ -592,18 +642,18 @@ async fn the_session_side_liveness_trip_shares_one_latch_with_the_watchdog() {
     mount_cancel_ok(&server).await;
 
     let chain = DispatchChain::open(r.home.path()).unwrap();
+    let sink = ChainTripSink::new(chain.clone(), 1);
     let latch = TripLatch::new();
 
     // The supervisor has been silent past the interval → the SESSION side tears down.
     let cause = session_liveness_tick(
         &r.handles.session,
-        &chain,
+        &sink,
         &latch,
         base,
         base - 10_000,
         limits().heartbeat_interval_secs,
         Some("run-1"),
-        1,
     )
     .await
     .unwrap();
@@ -619,7 +669,7 @@ async fn the_session_side_liveness_trip_shares_one_latch_with_the_watchdog() {
         realized_pnl_krw: 0.0,
         open_marked_pnl_krw: 0.0,
     };
-    let second = watchdog_tick(&r.handles.session, &chain, &latch, &obs, &limits(), Some("run-1"), 1)
+    let second = watchdog_tick(&r.handles.session, &sink, &latch, &obs, &limits(), Some("run-1"))
         .await
         .unwrap();
     assert_eq!(second, None, "the latch is already claimed — the watchdog does not re-tear-down");
@@ -839,10 +889,17 @@ fn the_envelope_refuses_to_arm_on_an_incomplete_pre_registration() {
 }
 
 /// A supervisor failure must never abandon a torn-down session. `execute_trip` runs the
-/// teardown BEFORE it surfaces a chain-append error, so propagating that error would leave
-/// a session that has already halted with **no run directory at all** — not even `.tmp-`
-/// residue for the de-escalation scan to classify. Here the watchdog cannot even open the
-/// chain (its dispatch dir is a regular file), and the session still runs and finalizes.
+/// teardown BEFORE it surfaces a trip-sink append error, so propagating that error would
+/// leave a session that has already halted with **no run directory at all** — not even
+/// `.tmp-` residue for the de-escalation scan to classify.
+///
+/// U8 expresses the failure at the [`TripSink`] seam rather than by wedging `<home>/dispatch`
+/// with a regular file. That trick worked only because every supervisor opened the chain for
+/// itself, which is precisely what the sink removed: the chain is now opened ONCE, by
+/// `MountAuthorization::session_authority`, so a wedged chain refuses the mount before a node
+/// exists instead of silently disarming the envelope mid-session. The invariant under test is
+/// unchanged and now driven directly: the append fails, the teardown still ran, the run still
+/// finalizes, and the operator is told.
 #[tokio::test]
 async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
     let server = MockServer::start().await;
@@ -857,7 +914,9 @@ async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
             Arc::clone(&ledger),
             OrderDispatchTasks::new(),
         ),
-        heartbeats: Heartbeats::new(base),
+        // Armed STALE, so the watchdog's first tick trips the dead-man and reaches the
+        // wedged sink — a healthy envelope never appends anything to fail.
+        heartbeats: Heartbeats::new(base - 10_000),
         handle: LiveNodeHandle::new(),
         sink: DecisionSink::new(),
         marks: MarkFeed::new(),
@@ -865,18 +924,18 @@ async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
     mount_t0425(&server, serde_json::json!([])).await;
     mount_t0424_flat(&server).await;
 
-    // Wedge the chain: `DispatchChain::open` create_dir_all's `<home>/dispatch`, which
-    // fails when a regular file already occupies that path.
     let home = tempdir().unwrap();
-    std::fs::write(home.path().join("dispatch"), b"not a directory").unwrap();
+    seed_chain(home.path());
     let ka = keepalive(home.path());
+    let mut authority = ladder_authority(home.path());
+    authority.trips = Arc::new(FailingTripSink);
 
     let outcome = run_live_session(
         handles.clone(),
         &driver_cfg(&ka),
-        &ctx(home.path()),
+        &ctx_for(home.path(), authority),
         frozen(base),
-        returns_immediately,
+        blocks_until_stopped,
     )
     .await
     .expect("a dead supervisor is not a reason to abandon the session");
@@ -887,6 +946,218 @@ async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
     assert!(
         dq.contains("watchdog supervisor failed"),
         "the operator is told the envelope was down: {dq}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// U8/KTD2, KTD3 — the rehearsal lane, driven through the real entry point.
+// ---------------------------------------------------------------------------
+
+/// A REHEARSAL session authority: no dispatch, and a [`RehearsalLedger`] for trips.
+fn rehearsal_authority(home: &Path) -> SessionAuthority {
+    SessionAuthority {
+        run_id: "20260914T060000Z-live-daily-ms-v1".to_string(),
+        lane_hash: "cafef00d".to_string(),
+        trading_env: "paper".to_string(),
+        dispatch: None,
+        trips: Arc::new(RehearsalLedger::new(home)),
+    }
+}
+
+/// The handle set over a mock gateway, in a home with **no** dispatch chain seeded — the
+/// shape a rehearsal machine actually has.
+async fn rehearsal_rig(server: &MockServer, heartbeat_at: i64) -> Rig {
+    mount_token(server).await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let ledger: Arc<Mutex<FillLedger>> = Arc::new(Mutex::new(FillLedger::new()));
+    let marks = MarkFeed::new();
+    let session = LiveTeardownSession::new(
+        EmissionGate::open(),
+        sdk,
+        Arc::clone(&ledger),
+        OrderDispatchTasks::new(),
+    );
+    Rig {
+        handles: LiveSessionHandles {
+            session,
+            heartbeats: Heartbeats::new(heartbeat_at),
+            handle: LiveNodeHandle::new(),
+            sink: DecisionSink::new(),
+            marks: marks.clone(),
+        },
+        home: tempdir().unwrap(),
+        ledger,
+        marks,
+    }
+}
+
+/// A rehearsal finalizes its run artifacts and stops there: no tracking sidecar, and no
+/// `dispatch/` anywhere on the home.
+///
+/// The sidecar is RUNG EVIDENCE — `clean_session_verdict` reads it — and a rehearsal's
+/// sessions count toward no rung's N (CONCEPTS.md). Writing one would put unauthorized
+/// sessions into the ladder's trailing-K window with nothing to distinguish them, which is
+/// the same class of silent miscount the strategy partition guards against. The
+/// `dispatch/` assertion is the other half: before U8 every supervisor opened the chain for
+/// itself, and `DispatchChain::open` creates the directory.
+#[tokio::test]
+async fn a_rehearsal_session_writes_its_artifacts_but_no_rung_evidence() {
+    use nautilus_ls_lab::dispatch::tracking::report_path;
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rehearsal_rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let c = ctx_for(r.home.path(), rehearsal_authority(r.home.path()));
+
+    let outcome =
+        run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), returns_immediately)
+            .await
+            .expect("the rehearsal finalizes");
+
+    // The run's OWN artifacts are written, exactly as for a ladder session.
+    assert!(outcome.run_dir.join(MANIFEST_FILE).exists());
+    assert!(outcome.run_dir.join(PERFORMANCE_FILE).exists());
+    assert!(outcome.run_dir.join(DATA_QUALITY_FILE).exists());
+
+    // The rung evidence is not.
+    assert!(
+        !report_path(r.home.path(), &c.manifest.run_id).exists(),
+        "a rehearsal writes no tracking sidecar"
+    );
+    assert!(
+        !r.home.path().join("dispatch").exists(),
+        "and never opens the ladder's authorization store"
+    );
+
+    // The manifest says so in its own terms (KTD2), and the data-quality report mirrors it.
+    let m: Manifest =
+        serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(MANIFEST_FILE)).unwrap())
+            .unwrap();
+    assert!(m.is_rehearsal());
+    assert!(m.dispatch.is_none());
+    let dq: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(dq["rehearsal"], serde_json::json!(true), "the label is mirrored: {dq}");
+    assert_eq!(dq["paper_stage"], serde_json::json!(false));
+}
+
+/// A dead-man trip inside a driven REHEARSAL session lands in `rehearsal/trips.jsonl` and
+/// nowhere else — the watchdog thread's own record path, exercised through
+/// `run_live_session` rather than at the tick seam.
+#[tokio::test]
+async fn a_rehearsal_dead_man_trip_is_recorded_only_in_the_rehearsal_ledger() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    // The runtime feeder is armed STALE, so the watchdog's first tick trips the dead-man.
+    let r = rehearsal_rig(&server, base - 10_000).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let c = ctx_for(r.home.path(), rehearsal_authority(r.home.path()));
+
+    let outcome =
+        run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), blocks_until_stopped)
+            .await
+            .expect("a trip still finalizes the run");
+
+    assert_eq!(outcome.trip, Some(TripCause::DeadManRuntime));
+    assert!(!r.handles.session.orders_enabled(), "the teardown halted");
+    assert!(!r.home.path().join("dispatch").exists(), "no chain was created to record it");
+
+    let rows = RehearsalLedger::new(r.home.path()).records().expect("the ledger is readable");
+    assert_eq!(rows.len(), 2, "the cause and the kill-switch engagement: {rows:?}");
+    assert_eq!(rows[0].trip, SafetyTripKind::Watchdog);
+    assert_eq!(rows[0].run_id.as_deref(), Some(c.manifest.run_id.as_str()));
+    assert_eq!(rows[1].trip, SafetyTripKind::KillSwitch);
+}
+
+/// A live DAILY session writes `observation.json` (U8): one session row, exit-attributed,
+/// with the risk capital the FILLS carried.
+///
+/// The daily lineage's verdict statistic is `Σrealized / Σrisk_capital`, so a session that
+/// wrote only `performance.json` would be unreadable by every judgment consumer. The write
+/// is fail-soft by design — a live session cannot be re-run, so a missing statistic is a
+/// data-quality line, never a reason to leave `.tmp-` residue.
+#[tokio::test]
+async fn a_live_daily_session_writes_its_observation_with_risk_from_the_fills() {
+    use nautilus_ls_lab::artifacts::OBSERVATION_FILE;
+    use nautilus_ls_lab::params_daily::DailyParams;
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rehearsal_rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+
+    // Yesterday's leg, inherited at the prior close, exited today at a loss — the day-2
+    // shape the whole seeding design exists for.
+    let legs = vec![nautilus_ls_lab::runner::pnl::BookLeg {
+        symbol: "005930".into(),
+        qty: 10,
+        prior_close: 60_000,
+        stop_price: Some(57_000),
+    }];
+    // Stamped at the PRIOR session (2026-07-24 KST), so the restored leg is not counted as
+    // an entry this session — `seed_book_legs` documents why the caller owns that stamp.
+    const PRIOR_NS: u64 = 1_784_872_800_000_000_000;
+    const TODAY_NS: u64 = 1_784_959_200_000_000_000;
+    assert_eq!(nautilus_ls_lab::runner::pnl::seed_book_legs(&r.ledger, &legs, PRIOR_NS), 1);
+    {
+        let mut g = r.ledger.lock().unwrap();
+        g.seed_fill(nautilus_ls::orders::ledger::LedgerFill {
+            symbol: "005930".into(),
+            side: nautilus_model::enums::OrderSide::Sell,
+            qty: 10,
+            price: 58_000,
+            price_approximated: false,
+            trade_id: nautilus_model::identifiers::TradeId::new("EXIT-1"),
+            observed_ns: TODAY_NS,
+        });
+    }
+    // The published stop is what the risk join reads.
+    r.marks.observe(
+        "005930",
+        SymbolMark { last_close: 58_000, last_bar_unix: base, stop_price: Some(57_000) },
+    );
+
+    let identity =
+        SessionIdentity::Daily { daily: DailyParams::frozen(), assembly: OrbParams::default() };
+    let c = ctx_with(r.home.path(), rehearsal_authority(r.home.path()), identity);
+    assert!(c.manifest.daily_params.is_some(), "the daily arm carries its params");
+
+    let outcome =
+        run_live_session(r.handles.clone(), &driver_cfg(&ka), &c, frozen(base), returns_immediately)
+            .await
+            .expect("the session finalizes");
+
+    let obs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(outcome.run_dir.join(OBSERVATION_FILE))
+            .expect("a live daily session writes observation.json"),
+    )
+    .unwrap();
+    assert_eq!(obs["run_id"], serde_json::json!(c.manifest.run_id));
+    let sessions = obs["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1, "one session row: {obs}");
+    assert_eq!(sessions[0]["closes"], serde_json::json!(1), "the exit is attributed here");
+    assert_eq!(
+        sessions[0]["entries"],
+        serde_json::json!(0),
+        "and the INHERITED leg is not counted as an entry this session"
+    );
+    // 10 filled shares × (60_000 − 57_000) per share, off the seeded basis.
+    assert_eq!(sessions[0]["risk_capital"], serde_json::json!(30_000.0));
+    // (58_000 − 60_000) × 10.
+    assert_eq!(sessions[0]["realized_pnl"], serde_json::json!(-20_000.0));
+    assert_eq!(obs["observed_net_ror"], serde_json::json!(-20_000.0 / 30_000.0));
+    assert_eq!(
+        obs["ranking_signal_is_placeholder"],
+        serde_json::json!(false),
+        "the frozen signal is judgeable"
     );
 }
 
@@ -917,7 +1188,7 @@ async fn a_finalized_session_writes_its_tracking_report_through_the_production_p
 
     // Nothing has written a report for this run id.
     assert!(
-        !report_path(r.home.path(), &c.run_id).exists(),
+        !report_path(r.home.path(), &c.manifest.run_id).exists(),
         "precondition: the sidecar does not exist before the session finalizes"
     );
 
@@ -927,10 +1198,10 @@ async fn a_finalized_session_writes_its_tracking_report_through_the_production_p
             .expect("the session finalizes");
 
     // The sidecar exists, and no test constructed it.
-    let report = read_report(r.home.path(), &c.run_id)
+    let report = read_report(r.home.path(), &c.manifest.run_id)
         .expect("the sidecar is readable")
         .expect("the finalize path produced a tracking report");
-    assert_eq!(report.run_id, c.run_id);
+    assert_eq!(report.run_id, c.manifest.run_id);
     assert_eq!(report.rung, 1, "the rung comes from the run's own DispatchLink");
 
     // The report is a SIDECAR: it lives outside the immutable run dir, so
@@ -968,7 +1239,7 @@ async fn the_finalize_time_twin_is_pending_rather_than_failed_or_fabricated() {
         .await
         .expect("the session finalizes");
 
-    let report = read_report(r.home.path(), &c.run_id).unwrap().unwrap();
+    let report = read_report(r.home.path(), &c.manifest.run_id).unwrap().unwrap();
     match &report.status {
         TwinStatus::TwinPending { reason } => {
             assert!(

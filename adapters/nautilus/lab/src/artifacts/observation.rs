@@ -353,6 +353,48 @@ impl RunObservation {
     }
 }
 
+/// Stage a LIVE daily session's `observation.json` (U8) — one session row, exit-attributed,
+/// with the risk capital the session's fills actually carried.
+///
+/// The shape is the multi-session builder's with `session_dates` of length one and no
+/// warmup: a live session has no warmup to declare, because the signal's lookback was
+/// consumed by the catalog before the session opened, not by leading in-range sessions.
+///
+/// Returns the data-quality line to record instead, rather than an error, because the
+/// caller is on the always-emit finalize path (R5). A live session that cannot produce the
+/// risk-normalized statistic still has to finalize: it touched a real account, and it
+/// cannot be re-run. The backtest path's R25 refusal is the opposite trade for the opposite
+/// reason — there, discarding and re-running costs nothing.
+pub(crate) fn write_session_observation(
+    writer: &crate::artifacts::RunWriter,
+    manifest: &Manifest,
+    performance: &PerformanceReport,
+    trading_date: &str,
+    daily: &crate::params_daily::DailyParams,
+) -> Result<(), String> {
+    // `trading_date` is written `YYYY-MM-DD` by the mount path and `YYYYMMDD` by the
+    // manifest's range; accept both rather than making the caller normalize a value it
+    // already has in hand.
+    let session_date = NaiveDate::parse_from_str(trading_date, "%Y-%m-%d")
+        .or_else(|_| NaiveDate::parse_from_str(trading_date, "%Y%m%d"))
+        .map_err(|e| format!("no observation written: unparseable trading date {trading_date:?} ({e})"))?;
+    let signal = daily.ranking_signal;
+    let observation = RunObservation::build(ObservationParts {
+        run_id: &manifest.run_id,
+        data_range: &manifest.data_range,
+        catalog_fingerprint: &manifest.catalog_fingerprint,
+        performance,
+        session_dates: &[session_date],
+        warmup_session_dates: &[],
+        ranking_signal: signal.name(),
+        ranking_signal_is_placeholder: signal.is_placeholder(),
+    })
+    .map_err(|e| format!("no observation written: {e}"))?;
+    writer
+        .write_observation(&observation)
+        .map_err(|e| format!("observation could not be staged: {e}"))
+}
+
 /// The KST calendar date of a UTC-nanosecond timestamp, via the adapter's single KST
 /// conversion — the same one session slicing and ingest agree on.
 fn kst_date_of_ns(ns: u64) -> NaiveDate {

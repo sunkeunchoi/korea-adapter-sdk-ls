@@ -23,6 +23,7 @@ use std::sync::Mutex;
 
 use nautilus_ls::orders::ledger::{FillLedger, LedgerFill};
 use nautilus_model::enums::OrderSide;
+use nautilus_model::identifiers::TradeId;
 
 use crate::artifacts::performance::{FillRecord, TradeRecord};
 use crate::strategy::orb::SymbolMark;
@@ -164,6 +165,139 @@ pub fn account_shared(ledger: &Mutex<FillLedger>) -> SessionPnl {
     account_fills(guard.fills())
 }
 
+/// One inherited overnight book leg, as the breaker must see it (U8, KTD13).
+///
+/// This is the accounting projection of a `rehearsal/book.json` leg, not the leg itself:
+/// the book is the broker-confirmed record with entry ordinals and `entered_under`
+/// (KTD11, U9's to read and write). What the breaker needs is three numbers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookLeg {
+    /// The bare shcode.
+    pub symbol: String,
+    /// Held quantity. Positive — the daily lineage is long-only.
+    pub qty: i64,
+    /// The PRIOR session's close, in integer KRW. Deliberately the day basis rather than
+    /// the leg's entry price: see [`seed_book_legs`].
+    pub prior_close: i64,
+    /// The leg's stop price, if the book carries one. Becomes the [`MarkPolicy`] floor for
+    /// this symbol when the mark feed is stale or absent, so a halted overnight holding is
+    /// marked at its stop rather than at a stale-favorable last price.
+    pub stop_price: Option<i64>,
+}
+
+/// Seed an inherited overnight book into a fresh session's fill ledger as synthetic fills
+/// (U8, KTD13) — the node-build step that lets the breaker see yesterday's exposure.
+///
+/// **Why the prior close and not the entry price.** Seeding at each leg's original cost
+/// basis would make [`mark_open_pnl`] report the position's *inception-to-date* P&L, and
+/// the breaker would then compare a multi-session drawdown against `session_max_loss_krw`
+/// — tripping a healthy session for losses it did not cause, and (worse, since the
+/// threshold is one-sided) masking a real one-day collapse inside a large paper profit.
+/// Seeding at the prior close makes every derived quantity a *session* quantity with no
+/// new arithmetic: the open mark becomes `(mark − prior close) × qty`, and a same-day exit
+/// books `(exit − prior close) × qty` as realized through the ordinary offsetting match.
+/// That is exactly KTD13's basis, obtained by feeding the tested accounting the right
+/// number rather than by adding a second P&L path beside it.
+///
+/// Without it, the failure is silent in both directions: the overnight position is invisible
+/// to the breaker, and a day-2 exit sell with no preceding buy is booked by
+/// [`account_fills`] as a **short** — a position the account does not hold, marked with the
+/// sign reversed.
+///
+/// **Stamp `observed_ns` at the PRIOR session, not at this one.** The stamp becomes the
+/// leg's `ts_opened` in [`session_trades`], and a run observation counts `entries` by
+/// opening date: a seed stamped today would report an inherited position as an entry the
+/// session never made. Exit attribution — the half the verdict statistic is computed from —
+/// is unaffected either way, which is exactly why the miscount would be quiet.
+///
+/// Returns the number of legs seeded. Zero-quantity legs are skipped (a t0424 zero-balance
+/// row reads as an open holding otherwise — see
+/// `docs/solutions/logic-errors/t0424-zero-balance-row-reads-as-open-holding.md`).
+pub fn seed_book_legs(ledger: &Mutex<FillLedger>, legs: &[BookLeg], observed_ns: u64) -> usize {
+    let mut guard = ledger.lock().unwrap_or_else(|e| e.into_inner());
+    let mut seeded = 0;
+    for leg in legs.iter().filter(|l| l.qty > 0) {
+        guard.seed_fill(LedgerFill {
+            symbol: leg.symbol.clone(),
+            side: OrderSide::Buy,
+            qty: leg.qty,
+            price: leg.prior_close,
+            // The prior close is not an execution price, and no artifact may present it as
+            // one. A rehearsal day that inherits a book therefore reports its seeded legs
+            // among `price_approximated_fills`, which is the true statement.
+            price_approximated: true,
+            // A scheme that cannot collide with an `execno` or a `POLL-…` synthetic.
+            trade_id: TradeId::new(&format!("SEED-{}-{observed_ns}", leg.symbol)),
+            observed_ns,
+        });
+        seeded += 1;
+    }
+    seeded
+}
+
+/// The [`MarkPolicy`] floors an inherited book contributes (U8, KTD13): symbol → stop
+/// price, for every leg whose book row carries one.
+///
+/// The feed-stale fallback in [`mark_price`] reads the stop off the strategy's published
+/// [`SymbolMark`], which a restored leg has none of until the strategy publishes one — and
+/// a symbol halted all session never gets there. These are the book's own stops, so an
+/// overnight holding that never prints is still marked at a bound rather than at the
+/// configured worst case.
+pub fn book_stop_floors(legs: &[BookLeg]) -> HashMap<String, i64> {
+    legs.iter()
+        .filter_map(|l| l.stop_price.map(|s| (l.symbol.clone(), s)))
+        .collect()
+}
+
+/// The breaker's session basis for a rehearsal (U8, KTD13): realized session P&L plus the
+/// conservatively-marked open position, with the inherited book's stops available as
+/// [`MarkPolicy`] floors for legs the strategy has not published a mark for.
+///
+/// The ladder path reaches the same two numbers through [`account_shared`] +
+/// [`mark_open_pnl`] with no floors, because every position it holds was opened this
+/// session and therefore has a published mark. This is that computation with the one
+/// input a restored leg needs.
+pub fn rehearsal_breaker_basis(
+    session: &SessionPnl,
+    marks: &HashMap<String, SymbolMark>,
+    floors: &HashMap<String, i64>,
+    now_unix: i64,
+    policy: &MarkPolicy,
+) -> (f64, f64) {
+    let marked = session
+        .open
+        .iter()
+        .map(|p| {
+            let published = marks.get(&p.symbol).copied();
+            let fresh = published
+                .is_some_and(|m| (now_unix - m.last_bar_unix) <= policy.max_mark_age_secs);
+            // KTD13 makes the book's stop a FALLBACK, not a co-bound: a fresh published
+            // mark stands on its own terms (its own stop still co-bounds it, as it always
+            // has). Folding the book's stop in beside a fresh close would mark every
+            // inherited leg at its stop for the whole session — the breaker would read a
+            // stop-loss-sized drawdown on a position that never moved.
+            let mark = if fresh {
+                published
+            } else {
+                floors
+                    .get(&p.symbol)
+                    .copied()
+                    .map(|stop| SymbolMark {
+                        last_close: published.map_or(0, |m| m.last_close),
+                        // An absent mark is stamped stale on purpose: `last_close: 0` must
+                        // never be reachable as a price, only the stop floor may be.
+                        last_bar_unix: published.map_or(i64::MIN / 2, |m| m.last_bar_unix),
+                        stop_price: published.and_then(|m| m.stop_price).or(Some(stop)),
+                    })
+                    .or(published)
+            };
+            let px = mark_price(p, mark, now_unix, policy);
+            (px - p.avg_cost) * p.qty as f64
+        })
+        .sum();
+    (session.realized_krw, marked)
+}
+
 /// The mark price for one open position at the **adverse edge** (KTD8(b)).
 ///
 /// Precedence, for a long (mirrored for a short):
@@ -267,6 +401,41 @@ pub fn session_trades(fills: &[LedgerFill]) -> Vec<TradeRecord> {
         }
     }
     trades
+}
+
+/// Join entry-fixed risk into a LIVE session's trades (U8, KTD13) so the session's
+/// `observation.json` carries the risk-normalized statistic rather than a bare P&L.
+///
+/// `risk_capital = filled_qty × (avg_px_open − stop)`, and `realized_r` follows for a
+/// closed trade. Two deliberate choices:
+///
+/// - **The filled quantity, not the intended one.** The backtest's join uses the quantity
+///   the strategy submitted, because in a backtest they are the same number. At a closing
+///   auction they are not: an order can come back short-filled, and sizing the denominator
+///   off the intent would report risk the account never actually carried — inflating
+///   `Σ risk_capital` and understating net RoR on exactly the sessions where execution went
+///   worst. [`session_trades`] already builds `quantity` from the fills.
+/// - **The stop off the published mark.** The daily lineage's stop is entry-fixed
+///   (`entry − k × ATR`), so reading it at finalize gives the entry-time value; it is not a
+///   trailing stop whose late value would differ. A symbol with no published stop, or a
+///   non-positive per-share risk, joins nothing — the same `(None, None)` the backtest's
+///   `join_entry_risk` returns for a degenerate risk, which routes the run to the legacy
+///   P&L path rather than minting a NaN from a zero denominator.
+///
+/// `marks` is keyed by bare shcode; [`TradeRecord::symbol`] carries the venue suffix, so
+/// the join strips it.
+pub fn join_live_risk(trades: &mut [TradeRecord], marks: &HashMap<String, SymbolMark>) {
+    for t in trades.iter_mut() {
+        let shcode = t.symbol.split('.').next().unwrap_or(t.symbol.as_str());
+        let Some(stop) = marks.get(shcode).and_then(|m| m.stop_price) else { continue };
+        let risk_per_share = t.avg_px_open - stop as f64;
+        if !(risk_per_share > 0.0) || !(t.quantity > 0.0) {
+            continue;
+        }
+        let risk_capital = t.quantity * risk_per_share;
+        t.risk_capital = Some(risk_capital);
+        t.realized_r = t.ts_closed.map(|_| t.realized_pnl / risk_capital);
+    }
 }
 
 /// Accumulator for one position lifecycle while [`session_trades`] walks a symbol.
@@ -547,5 +716,163 @@ mod tests {
         // 005930: (58_000 − 60_000) × 10 = −20_000. 000660: stale + no stop → 70_000 basis
         // mark → (70_000 − 100_000) × 5 = −150_000.
         assert_eq!(marked, -170_000.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // U8/KTD13 — the inherited overnight book.
+    // -----------------------------------------------------------------------
+
+    fn legs() -> Vec<BookLeg> {
+        vec![
+            // Bought long ago at some other price; yesterday it closed at 60_000.
+            BookLeg { symbol: "005930".into(), qty: 10, prior_close: 60_000, stop_price: Some(54_000) },
+            BookLeg { symbol: "000660".into(), qty: 5, prior_close: 100_000, stop_price: None },
+        ]
+    }
+
+    /// The breaker must score the DAY, not the position's whole life. Seeding at the prior
+    /// close is what makes `mark_open_pnl`'s existing arithmetic produce the session figure:
+    /// a −5% mark on both legs is −5% of yesterday's close × qty, and nothing about the
+    /// original entry price enters it.
+    #[test]
+    fn a_seeded_book_makes_the_breaker_see_only_todays_move_on_yesterdays_position() {
+        let ledger = Mutex::new(FillLedger::new());
+        assert_eq!(seed_book_legs(&ledger, &legs(), 1_000), 2);
+
+        let session = account_shared(&ledger);
+        assert_eq!(session.realized_krw, 0.0, "inheriting a book realizes nothing");
+        assert_eq!(session.open.len(), 2);
+        // The basis IS the prior close — that is the whole trick.
+        assert_eq!(session.open[0].avg_cost, 60_000.0);
+        assert_eq!(session.open[0].qty, 10);
+
+        // Both marked 5% below yesterday's close, fresh.
+        let marks: HashMap<String, SymbolMark> = [
+            ("005930".to_string(), SymbolMark { last_close: 57_000, last_bar_unix: 1_000, stop_price: None }),
+            ("000660".to_string(), SymbolMark { last_close: 95_000, last_bar_unix: 1_000, stop_price: None }),
+        ]
+        .into_iter()
+        .collect();
+        let (realized, marked) = rehearsal_breaker_basis(
+            &session,
+            &marks,
+            &book_stop_floors(&legs()),
+            1_000,
+            &MarkPolicy::default(),
+        );
+        assert_eq!(realized, 0.0);
+        // −3_000 × 10 + −5_000 × 5 = −55_000.
+        assert_eq!(marked, -55_000.0, "the day's move on the inherited legs, not their lifetime P&L");
+    }
+
+    /// A restored leg the strategy has published no mark for — a symbol halted all session
+    /// — is marked at the BOOK's stop, not at the configured worst case. Without the
+    /// floors, the same position falls back to `avg_cost × (1 − 0.30)`.
+    #[test]
+    fn a_book_stop_floors_an_unmarked_restored_leg() {
+        let ledger = Mutex::new(FillLedger::new());
+        seed_book_legs(&ledger, &legs(), 1_000);
+        let session = account_shared(&ledger);
+        let no_marks: HashMap<String, SymbolMark> = HashMap::new();
+
+        let (_, floored) = rehearsal_breaker_basis(
+            &session,
+            &no_marks,
+            &book_stop_floors(&legs()),
+            1_000,
+            &MarkPolicy::default(),
+        );
+        // 005930 has a book stop: (54_000 − 60_000) × 10 = −60_000.
+        // 000660 has none, so the worst case stands: (70_000 − 100_000) × 5 = −150_000.
+        assert_eq!(floored, -210_000.0);
+
+        let (_, unfloored) = rehearsal_breaker_basis(
+            &session,
+            &no_marks,
+            &HashMap::new(),
+            1_000,
+            &MarkPolicy::default(),
+        );
+        // Without the floor 005930 falls to the worst case too: (42_000 − 60_000) × 10.
+        assert_eq!(unfloored, -330_000.0, "the floor is what keeps the estimate from the band");
+    }
+
+    /// The failure seeding exists to prevent, pinned as the CURRENT behaviour of the
+    /// unseeded ledger: a day-2 exit with no preceding buy is booked as a SHORT. The sign
+    /// is reversed and the account is reported holding a position it does not have.
+    #[test]
+    fn without_seeding_a_day_two_exit_books_as_a_short_position() {
+        let unseeded = account_fills(&[fill("005930", OrderSide::Sell, 10, 57_000)]);
+        assert_eq!(unseeded.realized_krw, 0.0, "nothing to match against, so nothing realizes");
+        assert_eq!(unseeded.open.len(), 1);
+        assert_eq!(unseeded.open[0].qty, -10, "a SHORT the account never opened");
+
+        // Seeded, the same sell books the day's loss and leaves the account flat.
+        let ledger = Mutex::new(FillLedger::new());
+        seed_book_legs(&ledger, &legs()[..1], 1_000);
+        {
+            let mut g = ledger.lock().unwrap();
+            g.seed_fill(fill("005930", OrderSide::Sell, 10, 57_000));
+        }
+        let seeded = account_shared(&ledger);
+        assert_eq!(seeded.realized_krw, -30_000.0, "(57_000 − 60_000) × 10");
+        assert!(seeded.open.is_empty(), "and the leg is closed, not flipped short");
+    }
+
+    /// A zero-quantity book row is not an open holding — the t0424 zero-balance trap. It
+    /// must not seed a fill, or the session inherits a phantom position.
+    #[test]
+    fn a_zero_quantity_leg_seeds_nothing() {
+        let ledger = Mutex::new(FillLedger::new());
+        let rows = vec![BookLeg {
+            symbol: "005930".into(),
+            qty: 0,
+            prior_close: 60_000,
+            stop_price: Some(54_000),
+        }];
+        assert_eq!(seed_book_legs(&ledger, &rows, 1_000), 0);
+        assert!(account_shared(&ledger).open.is_empty());
+    }
+
+    /// A seeded fill is never presented as an exact execution price.
+    #[test]
+    fn seeded_fills_are_marked_approximated() {
+        let ledger = Mutex::new(FillLedger::new());
+        seed_book_legs(&ledger, &legs(), 1_000);
+        let g = ledger.lock().unwrap();
+        assert!(g.fills().iter().all(|f| f.price_approximated));
+        assert!(
+            g.fills().iter().all(|f| f.trade_id.to_string().starts_with("SEED-")),
+            "and carries a trade id that cannot collide with an execno or a POLL- synthetic"
+        );
+    }
+
+    /// The live risk join sizes the denominator off the FILLED quantity and the published
+    /// stop, and joins nothing where the stop is missing or the risk degenerate.
+    #[test]
+    fn the_live_risk_join_uses_the_filled_quantity_and_the_published_stop() {
+        let mut trades = session_trades(&[
+            fill("005930", OrderSide::Buy, 8, 60_000),
+            fill("005930", OrderSide::Sell, 8, 61_000),
+            // A second symbol with no published stop.
+            fill("000660", OrderSide::Buy, 5, 100_000),
+            fill("000660", OrderSide::Sell, 5, 99_000),
+        ]);
+        let marks: HashMap<String, SymbolMark> = [(
+            "005930".to_string(),
+            SymbolMark { last_close: 61_000, last_bar_unix: 1_000, stop_price: Some(57_000) },
+        )]
+        .into_iter()
+        .collect();
+        join_live_risk(&mut trades, &marks);
+
+        let joined = trades.iter().find(|t| t.symbol.starts_with("005930")).unwrap();
+        // 8 filled shares × (60_000 − 57_000) per share — the filled quantity, not an intent.
+        assert_eq!(joined.risk_capital, Some(24_000.0));
+        assert_eq!(joined.realized_r, Some(8_000.0 / 24_000.0));
+
+        let unjoined = trades.iter().find(|t| t.symbol.starts_with("000660")).unwrap();
+        assert_eq!(unjoined.risk_capital, None, "no stop published, so no risk is invented");
+        assert_eq!(unjoined.realized_r, None);
     }
 }

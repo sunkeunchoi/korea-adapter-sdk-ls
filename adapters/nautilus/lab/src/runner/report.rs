@@ -1011,6 +1011,21 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
             .ok_or_else(|| no_finalized_run_error(&cfg.data_home, "LS_REPORT_RUN"))?,
     };
 
+    // U8/KTD2 — a governance report REFUSES a paper rehearsal, with the reason stated. A
+    // rehearsal drives the head outside the ladder with no dispatch, and its sessions count
+    // toward no rung's N (CONCEPTS.md): its trades are driver evidence, never sample
+    // evidence. The default lookup already partitions rehearsals out, so this arm catches
+    // the case that matters — an operator naming one explicitly — and answers it rather
+    // than silently computing a power verdict from inadmissible sessions.
+    if manifest.is_rehearsal() {
+        anyhow::bail!(
+            "run {run_id} is a paper rehearsal — refused as no-evidence for a sample-sufficiency \
+             derivation: a rehearsal runs outside the ladder with no dispatch chain and its \
+             sessions count toward no rung's N, so its trades cannot enter this report's \
+             distribution. A rehearsal's own session rows come from `report rehearsal`"
+        );
+    }
+
     let (report, trades) = load_performance(&cfg.data_home, &run_id)?;
     let trade_records = report.trades.len();
 
@@ -2297,6 +2312,8 @@ mod tests {
             universe_metadata_hash: None,
             dispatch: None,
             daily_params: None,
+            rehearsal: None,
+            paper_stage: None,
             created_utc: "2026-07-10T00:00:00+00:00".to_string(),
         };
         std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())

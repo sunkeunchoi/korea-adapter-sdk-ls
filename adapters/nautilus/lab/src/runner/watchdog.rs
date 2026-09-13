@@ -25,15 +25,17 @@
 //! Offline-tested by driving the clock (scripted observations), never by sleeping — the
 //! live looping thread is thin glue over these pure/executable seams.
 
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::dispatch::chain::{DispatchChain, SafetyTripKind};
+use crate::dispatch::chain::{DispatchChain, RecordKind, SafetyTrip, SafetyTripKind, TripAction};
 use crate::dispatch::prereg::PreRegistration;
-use crate::runner::live::{record_safety_trip, run_teardown, LiveSession, TeardownReport};
+use crate::runner::live::{run_teardown, LiveSession, TeardownReport};
 
 /// Cancel/flat retry budgets for a watchdog-driven teardown (the live runner's shape).
 const WATCHDOG_CANCEL_ATTEMPTS: usize = 3;
@@ -82,6 +84,186 @@ impl TripCause {
                 "session-side mutual liveness: the watchdog supervisor went silent (dead thread)"
             }
         }
+    }
+}
+
+/// Where a claimed trip's durable record lands (U8, KTD3).
+///
+/// The ladder writes safety trips into the **dispatch chain** — which is also the store
+/// that authorizes a mount. A paper rehearsal runs outside the ladder with no dispatch at
+/// all (CONCEPTS.md), so routing its trips through the chain would have the rehearsal
+/// *create* `dispatch/` on a machine that has none, manufacturing an authorization store
+/// out of a safety record. The sink is therefore the seam: the watchdog thread and the
+/// session-side liveness loop hold an `Arc<dyn TripSink>` and neither knows which it has.
+///
+/// Implementations must be `Send + Sync` **without holding an open handle** — both are
+/// shared across the watchdog's own OS thread and the node runtime.
+pub trait TripSink: Send + Sync {
+    /// Append one safety-trip record. Free text is scrubbed by the implementation.
+    ///
+    /// # Errors
+    ///
+    /// An append failure. [`execute_trip`] runs the remediation *before* it surfaces this,
+    /// so an implementation must never assume its success gates the teardown.
+    fn record_trip(
+        &self,
+        trip: SafetyTripKind,
+        action: TripAction,
+        run_id: Option<&str>,
+        detail: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()>;
+}
+
+/// The ladder's trip sink: the dispatch chain at the authorized rung. The ONE writer of a
+/// chain safety-trip record — [`crate::runner::live::record_safety_trip`] delegates here,
+/// so the chain's most safety-sensitive append has a single implementation.
+#[derive(Debug, Clone)]
+pub struct ChainTripSink {
+    chain: DispatchChain,
+    rung: u8,
+}
+
+impl ChainTripSink {
+    /// Wrap an already-open chain at `rung`.
+    pub fn new(chain: DispatchChain, rung: u8) -> Self {
+        ChainTripSink { chain, rung }
+    }
+
+    /// Open the chain under `data_home` and wrap it at `rung`.
+    ///
+    /// # Errors
+    ///
+    /// A chain-open (directory creation) failure.
+    pub fn open(data_home: &Path, rung: u8) -> anyhow::Result<Self> {
+        Ok(ChainTripSink::new(DispatchChain::open(data_home)?, rung))
+    }
+
+    /// The wrapped chain.
+    pub fn chain(&self) -> &DispatchChain {
+        &self.chain
+    }
+}
+
+impl TripSink for ChainTripSink {
+    fn record_trip(
+        &self,
+        trip: SafetyTripKind,
+        action: TripAction,
+        run_id: Option<&str>,
+        detail: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        // `chain.append` scrubs the record's free-text payload at write time.
+        self.chain.append(
+            now,
+            self.rung,
+            self.rung,
+            None,
+            RecordKind::SafetyTrip(SafetyTrip {
+                trip,
+                action,
+                run_id: run_id.map(str::to_string),
+                detail: detail.to_string(),
+            }),
+        )?;
+        Ok(())
+    }
+}
+
+/// One row of a rehearsal's own trip ledger — the chain record's fields without the
+/// chain's hash linkage, rung, or authorization semantics, none of which a rehearsal has.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RehearsalTrip {
+    /// When the trip was recorded (RFC-3339 UTC).
+    pub at_utc: String,
+    /// Which safety mechanism fired.
+    pub trip: SafetyTripKind,
+    /// Whether this row engages or clears the mechanism. U13's mount gate reads the LAST
+    /// row: an `Engage` with no later `Clear` refuses the next mount.
+    pub action: TripAction,
+    /// The run the trip belongs to, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// The scrubbed-at-write detail line.
+    pub detail: String,
+}
+
+/// The rehearsal's trip sink: an append-only JSONL ledger at
+/// `<data_home>/rehearsal/trips.jsonl` (KTD3).
+///
+/// It stores only a `PathBuf` and **reopens the file on every append**, which is what keeps
+/// it `Send + Sync` with no lock: a retained `File` would make the sink non-`Sync` and force
+/// a `Mutex` into the one path that must still work while the session runtime is stalled.
+/// Appends are single `writeln!` calls of one line each.
+#[derive(Debug, Clone)]
+pub struct RehearsalLedger {
+    path: PathBuf,
+}
+
+impl RehearsalLedger {
+    /// The ledger under `<data_home>/rehearsal/trips.jsonl`.
+    pub fn new(data_home: &Path) -> Self {
+        RehearsalLedger { path: data_home.join("rehearsal").join("trips.jsonl") }
+    }
+
+    /// The ledger at an explicit path (tests, and U13's verbs).
+    pub fn at(path: PathBuf) -> Self {
+        RehearsalLedger { path }
+    }
+
+    /// The ledger file path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every recorded row, oldest first. An absent ledger is an empty history, not an
+    /// error — a rehearsal home that has never tripped has no file.
+    ///
+    /// # Errors
+    ///
+    /// A read failure, or an unparseable row: a ledger whose tail cannot be read must not
+    /// resolve to "no trip" (U13's gate fails closed on it).
+    pub fn records(&self) -> anyhow::Result<Vec<RehearsalTrip>> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let text = std::fs::read_to_string(&self.path)?;
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                serde_json::from_str::<RehearsalTrip>(l)
+                    .map_err(|e| anyhow::anyhow!("unreadable rehearsal trip row: {e}"))
+            })
+            .collect()
+    }
+}
+
+impl TripSink for RehearsalLedger {
+    fn record_trip(
+        &self,
+        trip: SafetyTripKind,
+        action: TripAction,
+        run_id: Option<&str>,
+        detail: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let row = RehearsalTrip {
+            at_utc: now.to_rfc3339(),
+            trip,
+            action,
+            run_id: run_id.map(str::to_string),
+            // The chain scrubs inside `append`; this sink has no such wrapper, so it
+            // scrubs here — the detail line is the one free-text carrier in the row.
+            detail: nautilus_ls::scrub::scrub_secrets(detail),
+        };
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file =
+            std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
+        writeln!(file, "{}", serde_json::to_string(&row)?)?;
+        Ok(())
     }
 }
 
@@ -193,31 +375,30 @@ impl TripLatch {
 ///
 /// # Errors
 ///
-/// A chain-append failure on either safety-trip record.
+/// A sink-append failure on either safety-trip record.
 pub async fn execute_trip<S: LiveSession>(
     session: &S,
-    chain: &DispatchChain,
+    trips: &dyn TripSink,
     cause: TripCause,
     run_id: Option<&str>,
     now: DateTime<Utc>,
-    chain_rung: u8,
 ) -> anyhow::Result<TeardownReport> {
     // 1. Persist the cause record before remediation (KTD4) — but a persistence failure must
-    //    NEVER gate the halt. The latch is already claimed, so if a chain-append error skipped
+    //    NEVER gate the halt. The latch is already claimed, so if a sink-append error skipped
     //    the teardown the trip would be swallowed with no retry (a fail-OPEN in a fail-closed
     //    system: the position stays live). So capture the result and surface it AFTER the
     //    teardown always runs.
-    let cause_append = record_safety_trip(chain, cause.safety_kind(), run_id, cause.detail(), now, chain_rung);
-    // 2. Fail-closed teardown ALWAYS (reuse; halt-last is inside) — never behind a chain write.
+    let cause_append =
+        trips.record_trip(cause.safety_kind(), TripAction::Engage, run_id, cause.detail(), now);
+    // 2. Fail-closed teardown ALWAYS (reuse; halt-last is inside) — never behind a sink write.
     let report = run_teardown(session, WATCHDOG_CANCEL_ATTEMPTS, WATCHDOG_FLAT_ATTEMPTS).await;
     // 3. Persist the kill-switch engagement the halt performed (KTD4).
-    let ks_append = record_safety_trip(
-        chain,
+    let ks_append = trips.record_trip(
         SafetyTripKind::KillSwitch,
+        TripAction::Engage,
         run_id,
         "kill switch engaged by watchdog teardown",
         now,
-        chain_rung,
     );
     // Remediation ran regardless; now surface any persistence failure to the caller.
     cause_append?;
@@ -233,17 +414,16 @@ pub async fn execute_trip<S: LiveSession>(
 ///
 /// # Errors
 ///
-/// Propagates an [`execute_trip`] chain-append failure.
+/// Propagates an [`execute_trip`] sink-append failure.
 pub async fn watchdog_tick<S: LiveSession>(
     session: &S,
-    chain: &DispatchChain,
+    trips: &dyn TripSink,
     latch: &TripLatch,
     obs: &WatchdogObservation,
     limits: &WatchdogLimits,
     run_id: Option<&str>,
-    chain_rung: u8,
 ) -> anyhow::Result<Option<TripCause>> {
-    Ok(watchdog_tick_reporting(session, chain, latch, obs, limits, run_id, chain_rung)
+    Ok(watchdog_tick_reporting(session, trips, latch, obs, limits, run_id)
         .await?
         .map(|(cause, _report)| cause))
 }
@@ -257,21 +437,20 @@ pub async fn watchdog_tick<S: LiveSession>(
 ///
 /// # Errors
 ///
-/// Propagates an [`execute_trip`] chain-append failure.
+/// Propagates an [`execute_trip`] sink-append failure.
 #[allow(clippy::too_many_arguments)]
 pub async fn watchdog_tick_reporting<S: LiveSession>(
     session: &S,
-    chain: &DispatchChain,
+    trips: &dyn TripSink,
     latch: &TripLatch,
     obs: &WatchdogObservation,
     limits: &WatchdogLimits,
     run_id: Option<&str>,
-    chain_rung: u8,
 ) -> anyhow::Result<Option<(TripCause, TeardownReport)>> {
     match evaluate_trip(obs, limits) {
         Some(cause) if latch.try_claim() => {
             let now = Utc.timestamp_opt(obs.now_unix, 0).single().unwrap_or_else(Utc::now);
-            let report = execute_trip(session, chain, cause, run_id, now, chain_rung).await?;
+            let report = execute_trip(session, trips, cause, run_id, now).await?;
             Ok(Some((cause, report)))
         }
         // A trip is present but was already claimed (a racing feeder / earlier tick) — the
@@ -290,20 +469,19 @@ pub async fn watchdog_tick_reporting<S: LiveSession>(
 ///
 /// # Errors
 ///
-/// Propagates an [`execute_trip`] chain-append failure.
+/// Propagates an [`execute_trip`] sink-append failure.
 #[allow(clippy::too_many_arguments)]
 pub async fn session_liveness_tick<S: LiveSession>(
     session: &S,
-    chain: &DispatchChain,
+    trips: &dyn TripSink,
     latch: &TripLatch,
     now_unix: i64,
     supervisor_touch_unix: i64,
     interval_secs: i64,
     run_id: Option<&str>,
-    chain_rung: u8,
 ) -> anyhow::Result<Option<TripCause>> {
     Ok(session_liveness_tick_reporting(
-        session, chain, latch, now_unix, supervisor_touch_unix, interval_secs, run_id, chain_rung,
+        session, trips, latch, now_unix, supervisor_touch_unix, interval_secs, run_id,
     )
     .await?
     .map(|(cause, _report)| cause))
@@ -316,22 +494,21 @@ pub async fn session_liveness_tick<S: LiveSession>(
 ///
 /// # Errors
 ///
-/// Propagates an [`execute_trip`] chain-append failure.
+/// Propagates an [`execute_trip`] sink-append failure.
 #[allow(clippy::too_many_arguments)]
 pub async fn session_liveness_tick_reporting<S: LiveSession>(
     session: &S,
-    chain: &DispatchChain,
+    trips: &dyn TripSink,
     latch: &TripLatch,
     now_unix: i64,
     supervisor_touch_unix: i64,
     interval_secs: i64,
     run_id: Option<&str>,
-    chain_rung: u8,
 ) -> anyhow::Result<Option<(TripCause, TeardownReport)>> {
     if supervisor_silent(now_unix, supervisor_touch_unix, interval_secs) && latch.try_claim() {
         let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
         let report =
-            execute_trip(session, chain, TripCause::SupervisorSilent, run_id, now, chain_rung).await?;
+            execute_trip(session, trips, TripCause::SupervisorSilent, run_id, now).await?;
         Ok(Some((TripCause::SupervisorSilent, report)))
     } else {
         Ok(None)
@@ -515,12 +692,13 @@ mod tests {
         use crate::dispatch::chain::RecordKind;
         let tmp = tempfile::TempDir::new().unwrap();
         let chain = seed_chain(tmp.path());
+        let sink = ChainTripSink::new(chain.clone(), 1);
         let session = SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() };
         let latch = TripLatch::new();
 
         let mut obs = healthy(1_752_600_100);
         obs.runtime_heartbeat_unix = 1_752_600_100 - 40; // stale runtime
-        let cause = watchdog_tick(&session, &chain, &latch, &obs, &limits(), Some("run-w"), 1)
+        let cause = watchdog_tick(&session, &sink, &latch, &obs, &limits(), Some("run-w"))
             .await
             .unwrap();
         assert_eq!(cause, Some(TripCause::DeadManRuntime));
@@ -542,6 +720,7 @@ mod tests {
     async fn racing_trips_tear_down_exactly_once() {
         let tmp = tempfile::TempDir::new().unwrap();
         let chain = seed_chain(tmp.path());
+        let sink = ChainTripSink::new(chain, 1);
         let session = SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() };
         let latch = TripLatch::new();
 
@@ -553,8 +732,8 @@ mod tests {
             realized_pnl_krw: -600_000.0,
             open_marked_pnl_krw: 0.0,
         };
-        let first = watchdog_tick(&session, &chain, &latch, &obs, &limits(), None, 1).await.unwrap();
-        let second = watchdog_tick(&session, &chain, &latch, &obs, &limits(), None, 1).await.unwrap();
+        let first = watchdog_tick(&session, &sink, &latch, &obs, &limits(), None).await.unwrap();
+        let second = watchdog_tick(&session, &sink, &latch, &obs, &limits(), None).await.unwrap();
         assert!(first.is_some(), "first tick handled the trip");
         assert_eq!(second, None, "second tick does not re-tear-down");
         assert_eq!(session.cancel_calls.load(Ordering::SeqCst), 1, "cancel attempted in exactly one teardown");
@@ -574,11 +753,10 @@ mod tests {
             let report = rt
                 .block_on(execute_trip(
                     &session,
-                    &chain,
+                    &ChainTripSink::new(chain.clone(), 1),
                     TripCause::DeadManRuntime,
                     Some("run-w"),
                     Utc.timestamp_opt(1_752_600_100, 0).unwrap(),
-                    1,
                 ))
                 .unwrap();
             assert!(!report.hard_failed(), "teardown completed on the watchdog runtime");
@@ -593,10 +771,11 @@ mod tests {
         // side run the teardown, so a dead watchdog thread never degrades to attended-only.
         let tmp = tempfile::TempDir::new().unwrap();
         let chain = seed_chain(tmp.path());
+        let sink = ChainTripSink::new(chain.clone(), 1);
         let session = SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() };
         let latch = TripLatch::new();
         let cause = session_liveness_tick(
-            &session, &chain, &latch, 1_752_600_100, 1_752_600_100 - 40, 30, Some("run-w"), 1,
+            &session, &sink, &latch, 1_752_600_100, 1_752_600_100 - 40, 30, Some("run-w"),
         )
         .await
         .unwrap();
@@ -608,7 +787,7 @@ mod tests {
         let latch2 = TripLatch::new();
         let none = session_liveness_tick(
             &SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() },
-            &chain, &latch2, 1_752_600_100, 1_752_600_100 - 5, 30, Some("run-w"), 1,
+            &sink, &latch2, 1_752_600_100, 1_752_600_100 - 5, 30, Some("run-w"),
         )
         .await
         .unwrap();
