@@ -504,6 +504,27 @@ impl FillLedger {
         &self.fills
     }
 
+    /// Push a fill that did NOT come from the gateway into the journal (lab paper
+    /// rehearsal, KTD13).
+    ///
+    /// A session that inherits an overnight book starts with real exposure and no fills:
+    /// [`FillLedger`] is per-process, so the prior session's legs are simply absent. The
+    /// consequences are both silent — the max-loss breaker sees no open position to mark,
+    /// and a day-2 exit sell books as a *short* against an empty book (there is no
+    /// preceding buy to match it to). Seeding the legs as synthetic fills at the prior
+    /// session's close is what makes both come out right, and makes the resulting P&L the
+    /// *session's*, which is what the breaker's threshold is denominated in.
+    ///
+    /// Deliberately separate from [`Self::apply`] and deliberately narrow: it takes a
+    /// fully-formed [`LedgerFill`] and touches nothing else — no order chain entry, no
+    /// watermark, no emission. A seeded fill therefore cannot dedup against, satisfy, or
+    /// otherwise interfere with a real observation for the same symbol; it exists only in
+    /// the accounting journal. Seeds carry `price_approximated: true`, because the prior
+    /// close is not an execution price and no artifact may present it as one.
+    pub fn seed_fill(&mut self, fill: LedgerFill) {
+        self.fills.push(fill);
+    }
+
     /// Apply one fill observation, returning the executions to emit (KTD1). The
     /// heart of the exactly-once seam.
     pub fn apply(&mut self, obs: FillObservation) -> ApplyOutcome {

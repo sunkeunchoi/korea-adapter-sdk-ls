@@ -93,15 +93,83 @@ pub struct Manifest {
     /// claim daily terms) and refuses a daily-identified manifest that carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_params: Option<DailyParams>,
+    /// Whether this run was a **paper rehearsal** (U8, KTD2) — the daily lineage's head
+    /// driven outside the ladder with no dispatch chain, whose sessions count toward no
+    /// rung's N (CONCEPTS.md).
+    ///
+    /// The tri-state is the contract, and every consumer reads it the same way:
+    ///
+    /// | value | meaning |
+    /// |---|---|
+    /// | `None` | a pre-U8 / backtest-era manifest — read as **non**-rehearsal |
+    /// | `Some(true)` | the only rehearsal value; governance reports refuse it |
+    /// | `Some(false)` | a live run that is explicitly not a rehearsal |
+    ///
+    /// `None` is deliberately not `false`: the distinction between "this run predates the
+    /// label" and "this run was labelled not-a-rehearsal" is what keeps a later audit from
+    /// reading a backtest-era artifact as a positive live claim. Read it through
+    /// [`Manifest::is_rehearsal`] rather than matching the option at each site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rehearsal: Option<bool>,
+    /// Whether this session ran under the post-judgment **paper stage** (U8, KTD2) — the
+    /// label a session carries only after a U6 holdout CLEAR certifies the head. Same
+    /// tri-state reading as [`Self::rehearsal`]: `None` predates the label.
+    ///
+    /// Separate from `rehearsal` rather than a single enum because the two are answers to
+    /// independent questions — "was this driven outside the ladder?" and "had the head been
+    /// judged when it ran?" — and a driver defect found after the judgment would otherwise
+    /// have to be paid for twice (KTD2's rejected alternative).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_stage: Option<bool>,
     /// The instant the run started (UTC, RFC3339-like stamp).
     pub created_utc: String,
 }
 
+/// Where a daily run sits in the registry (U8, KTD2/KTD3) — the half of a daily manifest
+/// that a **live** session supplies and a backtest never does.
+///
+/// It is one struct with a [`Default`] rather than four more fields on
+/// [`DailyManifestParts`] for a specific reason: the default IS the backtest shape, so the
+/// research path keeps writing byte-identical manifests, and every field that could
+/// misrepresent a run as ladder-authorized or judged has to be named to be set.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DailyRunLabel {
+    /// Backtest or live paper session.
+    pub source: RunSource,
+    /// The run id to record. `None` derives it from `started_utc` + the strategy
+    /// discriminator, which is right for a backtest. A **live** session passes `Some`: its
+    /// run id was fixed and durably recorded before the session started (the ladder's
+    /// consumption marker, R14(f)), so re-deriving it here would produce a manifest whose
+    /// id no record points at.
+    pub run_id: Option<String>,
+    /// The dispatch↔run linkage (KTD3). `None` for a backtest and for a paper rehearsal,
+    /// which has no dispatch at all and must never create one.
+    pub dispatch: Option<DispatchLink>,
+    /// [`Manifest::rehearsal`] — `None` on a backtest.
+    pub rehearsal: Option<bool>,
+    /// [`Manifest::paper_stage`] — `None` on a backtest.
+    pub paper_stage: Option<bool>,
+}
+
+impl Default for DailyRunLabel {
+    /// The research-backtest shape: the labels a daily backtest has always written, so
+    /// `..Default::default()` at an existing call site changes no byte of its output.
+    fn default() -> Self {
+        DailyRunLabel {
+            source: RunSource::Backtest,
+            run_id: None,
+            dispatch: None,
+            rehearsal: None,
+            paper_stage: None,
+        }
+    }
+}
+
 /// The inputs [`Manifest::new_daily`] cannot derive for itself. A struct rather than a
-/// dozen positional arguments, and it deliberately has **no** `strategy_id`,
-/// `strategy_code_hash`, `run_id` or `source` field: those are the four values a daily
-/// run must not be able to get wrong (KTD14), so the constructor derives every one of
-/// them.
+/// dozen positional arguments, and it deliberately has **no** `strategy_id` or
+/// `strategy_code_hash` field: those are values a daily run must not be able to get wrong
+/// (KTD14), so the constructor derives them. `source` and `run_id` are derived too unless
+/// [`DailyRunLabel`] names them — which only a live session does.
 #[derive(Debug, Clone)]
 pub struct DailyManifestParts<'a> {
     /// The daily parameter set. Validated by the constructor; the source of the
@@ -130,6 +198,9 @@ pub struct DailyManifestParts<'a> {
     pub checkpoint_hash: Option<String>,
     /// The universe-metadata artifact hash for a metadata-driven run.
     pub universe_metadata_hash: Option<String>,
+    /// Where this run sits in the registry. [`DailyRunLabel::default`] is the backtest
+    /// shape; a live session (U8) names its source, run id, dispatch, and KTD2 labels.
+    pub label: DailyRunLabel,
 }
 
 impl Manifest {
@@ -146,8 +217,12 @@ impl Manifest {
     /// - `run_id` is built from the same discriminator, so the id and the field agree.
     /// - `strategy_code_hash` is [`daily_strategy_code_hash`] of the daily source — the
     ///   *sibling* of [`strategy_code_hash`], which stays untouched (KTD5).
-    /// - `source` is [`RunSource::Backtest`]: this path has no live runner.
-    /// - `dispatch` is `None`: a research backtest is not ladder-authorized.
+    /// - `source`, `run_id`, `dispatch`, and the KTD2 labels come from
+    ///   [`DailyManifestParts::label`], whose default is the research-backtest shape:
+    ///   `RunSource::Backtest`, a derived run id, no dispatch, no labels. U8 widened this
+    ///   to `RunSource::Live` so a paper rehearsal writes its manifest here too — the same
+    ///   constructor, hence the same identity derivation, rather than a second live-only
+    ///   builder that could drift on the discriminator.
     ///
     /// # Errors
     ///
@@ -158,14 +233,17 @@ impl Manifest {
         // The run-construction gate: a parameter set off a frozen term never reaches the
         // engine, and never reaches the registry.
         parts.daily.validate()?;
+        let label = parts.label;
         let manifest = Manifest {
-            run_id: run_id(
-                parts.started_utc,
-                RunSource::Backtest,
-                &parts.daily.strategy_id,
-                parts.daily.strategy_version,
-            ),
-            source: RunSource::Backtest,
+            run_id: label.run_id.unwrap_or_else(|| {
+                run_id(
+                    parts.started_utc,
+                    label.source,
+                    &parts.daily.strategy_id,
+                    parts.daily.strategy_version,
+                )
+            }),
+            source: label.source,
             strategy_id: parts.daily.strategy_id.clone(),
             strategy_version: parts.daily.strategy_version,
             params: parts.assembly_params,
@@ -176,12 +254,22 @@ impl Manifest {
             lab_src_fingerprint: parts.lab_src_fingerprint,
             checkpoint_hash: parts.checkpoint_hash,
             universe_metadata_hash: parts.universe_metadata_hash,
-            dispatch: None,
+            dispatch: label.dispatch,
             daily_params: Some(parts.daily),
+            rehearsal: label.rehearsal,
+            paper_stage: label.paper_stage,
             created_utc: parts.started_utc.to_rfc3339(),
         };
         manifest.validate_strategy_identity()?;
         Ok(manifest)
+    }
+
+    /// Whether this run was a paper rehearsal (KTD2). The one reading of
+    /// [`Self::rehearsal`]'s tri-state: `None` — a backtest-era manifest that predates the
+    /// label — is **not** a rehearsal, so an absent field can never be mistaken for a
+    /// positive claim, in either direction.
+    pub fn is_rehearsal(&self) -> bool {
+        self.rehearsal == Some(true)
     }
 
     /// Check that this manifest's strategy identity and its carried parameter sets

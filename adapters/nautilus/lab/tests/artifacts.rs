@@ -48,6 +48,8 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2024-01-05T09:00:00Z".into(),
     }
 }

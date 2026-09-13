@@ -112,6 +112,16 @@ pub struct DataQualityReport {
     /// `None` for a backtest or a pre-hard-stop artifact — absent, not `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hard_stopped: Option<bool>,
+    /// Whether this run was a paper rehearsal (U8, KTD2) — mirrored from the run's
+    /// manifest so a reader holding only the data-quality report can tell, with the same
+    /// tri-state reading: `None` predates the label and is **not** a rehearsal. The
+    /// manifest remains the authority; this is the copy the artifact scans read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rehearsal: Option<bool>,
+    /// Whether this run carried the post-judgment paper-stage label (U8, KTD2). Same
+    /// tri-state reading as [`Self::rehearsal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_stage: Option<bool>,
     /// The resolved universe symbol list used (its hash rides on the manifest; the
     /// composition lives here so the agent can compare runs, R7/KTD8).
     pub universe_snapshot: Vec<String>,
@@ -140,9 +150,19 @@ impl DataQualityReport {
             teardown_retries: None,
             dedup_hits: None,
             hard_stopped: None,
+            rehearsal: None,
+            paper_stage: None,
             universe_snapshot,
             tier_composition: None,
             observations: Vec::new(),
         }
+    }
+
+    /// Stamp the run's KTD2 labels onto the report, mirroring its manifest. Called on the
+    /// live path only: a backtest leaves both absent.
+    pub fn with_run_labels(mut self, rehearsal: Option<bool>, paper_stage: Option<bool>) -> Self {
+        self.rehearsal = rehearsal;
+        self.paper_stage = paper_stage;
+        self
     }
 }

@@ -355,6 +355,8 @@ mod tests {
             universe_metadata_hash: None,
             dispatch: None,
             daily_params: None,
+            rehearsal: None,
+            paper_stage: None,
             created_utc: "2026-07-03T00:00:00Z".to_string(),
         };
         let performance = PerformanceReport::assemble(

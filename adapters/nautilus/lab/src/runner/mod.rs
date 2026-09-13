@@ -1,5 +1,6 @@
 //! Backtest + live-paper runners.
 
+pub mod authority;
 pub mod backtest;
 pub mod backtest_daily;
 pub mod diagnose;

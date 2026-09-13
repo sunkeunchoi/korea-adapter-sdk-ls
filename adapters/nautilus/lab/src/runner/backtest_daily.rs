@@ -761,6 +761,8 @@ fn finalize_daily_run(p: FinalizeDaily<'_>) -> anyhow::Result<DailyRunResult> {
         lab_src_fingerprint: Some(crate::fingerprint::EMBEDDED.to_string()),
         checkpoint_hash: crate::runner::backtest::checkpoint_hash(p.catalog_path),
         universe_metadata_hash: None,
+        // The research-backtest shape: no live source, no dispatch, no KTD2 labels.
+        label: crate::artifacts::manifest::DailyRunLabel::default(),
     }) {
         Ok(manifest) => manifest,
         Err(error) => {

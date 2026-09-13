@@ -422,6 +422,8 @@ fn report_mfe_through_the_bin_prints_the_distribution() {
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2026-07-10T00:00:00+00:00".to_string(),
     };
     std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -691,6 +693,8 @@ fn orb_manifest() -> Manifest {
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2026-01-01T00:00:00+00:00".to_string(),
     }
 }
@@ -707,6 +711,7 @@ fn daily_parts(daily: nautilus_ls_lab::params_daily::DailyParams) -> DailyManife
         lab_src_fingerprint: Some("cafebabe".repeat(8)),
         checkpoint_hash: None,
         universe_metadata_hash: None,
+        label: nautilus_ls_lab::artifacts::manifest::DailyRunLabel::default(),
     }
 }
 
@@ -2780,6 +2785,8 @@ mod report_tiers {
             universe_metadata_hash: Some(hash),
             dispatch: None,
             daily_params: None,
+            rehearsal: None,
+            paper_stage: None,
             created_utc: "2026-06-30T07:00:00Z".to_string(),
         };
         std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -2996,6 +3003,8 @@ mod report_sample {
             universe_metadata_hash: None,
             dispatch: None,
             daily_params: None,
+            rehearsal: None,
+            paper_stage: None,
             created_utc: "2026-06-01T00:00:00+00:00".to_string(),
         };
         std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -3258,6 +3267,36 @@ mod report_sample {
         assert!(msg.contains("realized_r"), "names the field: {msg}");
         assert!(msg.contains("PRE-FIELD vintage"), "names the vintage: {msg}");
         assert!(!msg.contains("empty series"), "not the downstream empty-series error: {msg}");
+    }
+
+    /// Covers AE5 (U8/KTD2). A paper rehearsal is refused as evidence, by name.
+    ///
+    /// The default lookup already partitions rehearsals out, so this arm answers the case
+    /// that actually reaches a human: an operator naming one explicitly. Computing a power
+    /// verdict from it would put sessions that count toward no rung's N into a
+    /// sample-sufficiency denominator, and the verdict would look exactly like a real one.
+    #[tokio::test]
+    async fn a_paper_rehearsal_run_is_refused_as_no_evidence() {
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        // Relabel the staged run as a rehearsal — every other field, including the trades
+        // the report would otherwise happily consume, is untouched.
+        let path = dir.path().join("runs").join(&run_id).join(MANIFEST_FILE);
+        let mut manifest: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        manifest.rehearsal = Some(true);
+        std::fs::write(&path, serde_json::to_string(&manifest).unwrap()).unwrap();
+
+        let err = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no-evidence"), "the refusal names the class: {msg}");
+        assert!(msg.contains("paper rehearsal"), "and what the run is: {msg}");
+        assert!(msg.contains("no rung"), "and why it cannot count: {msg}");
+
+        // The control: the same run without the label reports normally, so the refusal is
+        // the label's doing and not a broken fixture.
+        manifest.rehearsal = None;
+        std::fs::write(&path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        report_sample(&cfg(dir.path(), Some(&run_id))).await.expect("an unlabelled run reports");
     }
 
     #[tokio::test]

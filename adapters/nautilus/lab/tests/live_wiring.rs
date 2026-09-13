@@ -166,6 +166,8 @@ async fn scripted_fill_flows_into_a_live_run() {
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2024-01-05T06:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();
@@ -371,6 +373,8 @@ fn mounted_run_manifest_carries_the_dispatch_link() {
         universe_metadata_hash: None,
         dispatch: Some(auth.dispatch_link()),
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2026-07-16T01:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();
@@ -442,6 +446,8 @@ fn stage_finalized_head(data: &std::path::Path, run_id: &str, params: &OrbParams
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: "2026-07-24T01:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();

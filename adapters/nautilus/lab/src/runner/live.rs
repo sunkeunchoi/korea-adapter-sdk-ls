@@ -271,6 +271,10 @@ pub fn finalize_session(
 /// `AtomicBool`, so a fresh dispatch process would otherwise always read it disengaged
 /// and the R1 kill-switch check would be a tautology; the persisted record is what the
 /// gate reads.
+///
+/// Thin over [`ChainTripSink`] (U8/KTD3), which is now the one writer of a chain
+/// safety-trip record: the watchdog reaches the same append through the `TripSink` seam, so
+/// the chain and rehearsal lanes cannot drift on what a trip record contains.
 pub fn record_safety_trip(
     chain: &DispatchChain,
     kind: SafetyTripKind,
@@ -279,19 +283,13 @@ pub fn record_safety_trip(
     now: chrono::DateTime<Utc>,
     chain_rung: u8,
 ) -> anyhow::Result<()> {
-    chain.append(
+    crate::runner::watchdog::ChainTripSink::new(chain.clone(), chain_rung).record_trip(
+        kind,
+        TripAction::Engage,
+        run_id,
+        detail,
         now,
-        chain_rung,
-        chain_rung,
-        None,
-        RecordKind::SafetyTrip(SafetyTrip {
-            trip: kind,
-            action: TripAction::Engage,
-            run_id: run_id.map(str::to_string),
-            detail: detail.to_string(),
-        }),
-    )?;
-    Ok(())
+    )
 }
 
 /// Clear a persisted kill-switch trip — an explicit, nonce-gated operator action
@@ -1360,6 +1358,7 @@ impl MountAuthorization {
     }
 }
 
+
 /// Authorize and prepare a live mount behind a green dispatch (U6). In strict order:
 ///
 /// 1. the operator nonce gate (fresh nonce, no-TTY loud refusal) — mounting a live session
@@ -1628,12 +1627,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::artifacts::manifest::Manifest;
+// U8's session authority + manifest identity live in a sibling module (see its header) and
+// are re-exported here, so every existing `runner::live::…` path and U9's call sites read
+// them from the driver they belong to.
+pub use crate::runner::authority::{LiveManifestParts, SessionAuthority, SessionIdentity};
+use crate::runner::authority::mount_verdict;
 use crate::runner::pnl::{self, MarkPolicy};
 use crate::runner::watchdog::{
     operator_keepalive_unix, session_liveness_tick_reporting, watchdog_tick_reporting,
-    TripCause, TripLatch, WatchdogLimits, WatchdogObservation,
+    TripCause, TripLatch, TripSink, WatchdogLimits, WatchdogObservation,
 };
-use crate::strategy::orb::MarkFeed;
+// Through `strategy::hooks`, not `strategy::orb` (U8): the mark feed is a SHARED live hook,
+// and the daily path now reaches it too. Importing it from ORB's module would say the
+// driver's breaker input belongs to one strategy, which is the reading `hooks` exists to
+// correct — the implementation stays where it is so ORB's identity-bearing source does not
+// move (KTD5).
+use crate::strategy::hooks::MarkFeed;
 
 /// An injectable wall clock (unix seconds) — tests drive it rather than sleeping.
 pub type SessionClock = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -1674,27 +1684,23 @@ pub struct LiveDriverConfig {
     pub starting_balance: f64,
 }
 
+
 /// The identity + artifact context a driven session finalizes under.
 #[derive(Debug, Clone)]
 pub struct LiveSessionContext {
-    /// The data home (registry + chain live here).
+    /// The data home (registry lives here; the chain does too on a ladder session).
     pub data_home: PathBuf,
-    /// The run id the consumption marker already recorded (R14(f)).
-    pub run_id: String,
-    /// The chain-authorized rung safety-trip records are appended at.
-    pub chain_rung: u8,
-    /// The dispatch↔run linkage threaded into the manifest (KTD3).
-    pub dispatch: Option<DispatchLink>,
-    /// The governed params the session traded.
-    pub params: OrbParams,
-    /// The traded universe (instrument-id strings), for the manifest's universe hash.
+    /// Who authorized this session, and where its trips are recorded (KTD3).
+    pub authority: SessionAuthority,
+    /// The run manifest, built at mount time by [`SessionIdentity::live_manifest`] and
+    /// written verbatim at finalize. Pre-made because the finalize path may not fail.
+    pub manifest: Manifest,
+    /// The traded universe (instrument-id strings).
     pub symbols: Vec<String>,
     /// The KST trading date the run covers (`YYYYMMDD`).
     pub trading_date: String,
-    /// The manifest's `created_utc` stamp (RFC-3339). Supplied rather than read from the
-    /// clock so a driven session's artifacts are reproducible in tests.
-    pub created_utc: String,
 }
+
 
 /// What a driven session finalized as.
 #[derive(Debug, Clone)]
@@ -1788,13 +1794,12 @@ struct WatchdogArming {
     stop_request: StopRequest,
     stop: Arc<AtomicBool>,
     clock: SessionClock,
-    data_home: PathBuf,
+    trips: Arc<dyn TripSink>,
     keepalive_path: PathBuf,
     limits: WatchdogLimits,
     mark_policy: MarkPolicy,
     tick: Duration,
     run_id: String,
-    chain_rung: u8,
 }
 
 /// Spin the watchdog on its own OS thread + current-thread runtime (ladder KTD10). On a
@@ -1807,9 +1812,9 @@ fn spawn_watchdog(
 ) -> std::thread::JoinHandle<anyhow::Result<Option<(TripCause, TeardownReport)>>> {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        // The chain is a directory handle; opening it on this thread keeps the watchdog
-        // independent of anything the session runtime owns.
-        let chain = DispatchChain::open(&arming.data_home)?;
+        // The sink is `Send + Sync` and holds no open handle, so the watchdog stays
+        // independent of anything the session runtime owns — and, for a rehearsal, opens
+        // no dispatch store.
         rt.block_on(async move {
             loop {
                 if arming.stop.load(Ordering::SeqCst) {
@@ -1828,12 +1833,11 @@ fn spawn_watchdog(
                 );
                 let tripped = watchdog_tick_reporting(
                     &arming.session,
-                    &chain,
+                    arming.trips.as_ref(),
                     &arming.latch,
                     &obs,
                     &arming.limits,
                     Some(arming.run_id.as_str()),
-                    arming.chain_rung,
                 )
                 .await;
                 match tripped {
@@ -1846,9 +1850,14 @@ fn spawn_watchdog(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        // A chain-append failure must never silently disarm the envelope:
+                        // A sink-append failure must never silently disarm the envelope:
                         // the teardown inside `execute_trip` always runs first, so the
-                        // remediation happened. Surface and stop watching.
+                        // remediation happened. Unblock `node.run` BEFORE surfacing the
+                        // error — this arm is only reachable after a claimed trip, so the
+                        // account is already halted, and returning without the stop would
+                        // leave a halted node running to its session timer with the latch
+                        // claimed and no supervisor left watching it.
+                        arming.stop_request.request(&arming.node_handle);
                         return Err(e);
                     }
                 }
@@ -1904,13 +1913,12 @@ where
         stop_request: stop_request.clone(),
         stop: Arc::clone(&watchdog_stop),
         clock: Arc::clone(&clock),
-        data_home: ctx.data_home.clone(),
+        trips: Arc::clone(&ctx.authority.trips),
         keepalive_path: cfg.keepalive_path.clone(),
         limits: cfg.limits,
         mark_policy: cfg.mark_policy,
         tick: cfg.watchdog_tick,
-        run_id: ctx.run_id.clone(),
-        chain_rung: ctx.chain_rung,
+        run_id: ctx.authority.run_id.clone(),
     });
 
     // (3b) Mutual liveness on the SESSION side: a dead watchdog thread must never
@@ -1923,11 +1931,10 @@ where
         stop_request.clone(),
         Arc::clone(&clock),
         Arc::clone(&watchdog_stop),
-        ctx.data_home.clone(),
+        Arc::clone(&ctx.authority.trips),
         cfg.limits.heartbeat_interval_secs,
         cfg.watchdog_tick,
-        ctx.run_id.clone(),
-        ctx.chain_rung,
+        ctx.authority.run_id.clone(),
     ));
 
     // (2) The session timer — `node.run` has none of its own.
@@ -2018,6 +2025,7 @@ where
         run_result,
         supervisor_error,
         hard_stop,
+        &marks,
     )?;
 
     // A node that ignored its stop request NEVER reads as a clean session, even when the
@@ -2073,13 +2081,11 @@ async fn session_liveness_loop(
     stop_request: StopRequest,
     clock: SessionClock,
     stop: Arc<AtomicBool>,
-    data_home: PathBuf,
+    trips: Arc<dyn TripSink>,
     interval_secs: i64,
     tick: Duration,
     run_id: String,
-    chain_rung: u8,
 ) -> Option<(TripCause, TeardownReport)> {
-    let chain = DispatchChain::open(&data_home).ok()?;
     loop {
         if stop.load(Ordering::SeqCst) {
             return None;
@@ -2092,13 +2098,12 @@ async fn session_liveness_loop(
         }
         let tripped = session_liveness_tick_reporting(
             &session,
-            &chain,
+            trips.as_ref(),
             &latch,
             clock(),
             heartbeats.supervisor_unix(),
             interval_secs,
             Some(run_id.as_str()),
-            chain_rung,
         )
         .await;
         if let Ok(Some(trip)) = tripped {
@@ -2108,9 +2113,14 @@ async fn session_liveness_loop(
     }
 }
 
-/// Stage the run's manifest (with the dispatch link), the performance assembled from the
-/// **shared** fill ledger, and the drained decisions, then finalize (abnormally when the
-/// teardown hard-failed).
+/// Stage the run's PRE-BUILT manifest, the performance assembled from the **shared** fill
+/// ledger, and the drained decisions, then finalize (abnormally when the teardown
+/// hard-failed).
+///
+/// The manifest arrives built (`ctx.manifest`, from [`SessionIdentity::live_manifest`])
+/// rather than being assembled here, because assembling a DAILY manifest validates the
+/// frozen terms and can refuse — and nothing fallible may enter this function ahead of
+/// `finalize_session`'s always-emit tail (R5).
 #[allow(clippy::too_many_arguments)]
 fn stage_and_finalize(
     session: &LiveTeardownSession,
@@ -2121,43 +2131,56 @@ fn stage_and_finalize(
     run_result: anyhow::Result<()>,
     supervisor_error: Option<String>,
     hard_stopped: bool,
+    marks: &MarkFeed,
 ) -> anyhow::Result<PathBuf> {
-    use crate::artifacts::manifest::{universe_hash, DataRange, Manifest};
     use crate::artifacts::performance::PerformanceReport;
 
-    let writer = RunWriter::new(&ctx.data_home, &ctx.run_id)?;
+    let run_id = &ctx.manifest.run_id;
+    let writer = RunWriter::new(&ctx.data_home, run_id)?;
     let ledger = session.ledger();
     let dedup_hits = session.dedup_hits();
-    let (trades, approximated) = {
+    let (mut trades, approximated) = {
         let guard = ledger.lock().unwrap_or_else(|e| e.into_inner());
         let fills = guard.fills();
         let approximated = fills.iter().filter(|f| f.price_approximated).count() as u64;
         (pnl::session_trades(fills), approximated)
     };
-    writer.write_performance(&PerformanceReport::assemble(trades, cfg.starting_balance))?;
+    // The DAILY lane alone joins risk (U8): the lineage's verdict statistic is
+    // `Σrealized/Σrisk_capital`, and an observation cannot be written without it. The ORB
+    // lane is deliberately untouched — its live artifacts have always carried no risk join,
+    // and moving that would re-baseline the ladder's own evidence in a unit about labels.
+    let daily_params = ctx.manifest.daily_params.clone();
+    if daily_params.is_some() {
+        pnl::join_live_risk(&mut trades, &marks.snapshot());
+    }
+    let performance = PerformanceReport::assemble(trades, cfg.starting_balance);
+    writer.write_performance(&performance)?;
 
-    let manifest = Manifest {
-        run_id: ctx.run_id.clone(),
-        source: RunSource::Live,
-        strategy_id: ctx.params.strategy_id.clone(),
-        strategy_version: ctx.params.strategy_version,
-        params: ctx.params.clone(),
-        data_range: DataRange { start: ctx.trading_date.clone(), end: ctx.trading_date.clone() },
-        catalog_fingerprint: String::new(),
-        universe_hash: universe_hash(&ctx.symbols),
-        strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
-        lab_src_fingerprint: None,
-        checkpoint_hash: None,
-        universe_metadata_hash: None,
-        dispatch: ctx.dispatch.clone(),
-        daily_params: None,
-        created_utc: ctx.created_utc.clone(),
-    };
-    writer.write_manifest(&manifest)?;
+    writer.write_manifest(&ctx.manifest)?;
     writer.write_decisions(&sink.snapshot())?;
 
-    let mut dq = DataQualityReport::backtest(ctx.symbols.clone(), Vec::new());
+    // Mirror the run's KTD2 labels onto the data-quality report so the artifact scans can
+    // exclude a rehearsal without opening its manifest (the manifest stays the authority).
+    let mut dq = DataQualityReport::backtest(ctx.symbols.clone(), Vec::new())
+        .with_run_labels(ctx.manifest.rehearsal, ctx.manifest.paper_stage);
     dq.price_approximated_fills = approximated;
+    // A live DAILY session writes `observation.json` too (U8): one session row, exit
+    // attribution, risk capital from the filled quantity. FAIL-SOFT, unlike the backtest's
+    // R25 refusal — a backtest with no return-on-risk is a run worth discarding and
+    // re-running, whereas this run has already touched a real account. Refusing to finalize
+    // it, or `?`-ing here, would trade an artifact for `.tmp-` residue on a session that
+    // cannot be re-run.
+    if let Some(daily) = daily_params.as_ref() {
+        if let Err(note) = crate::artifacts::observation::write_session_observation(
+            &writer,
+            &ctx.manifest,
+            &performance,
+            &ctx.trading_date,
+            daily,
+        ) {
+            dq.observations.push(note);
+        }
+    }
     if let Err(e) = run_result {
         // The node's own run error is a data-quality observation, not a reason to skip
         // finalize: the teardown already ran and the artifacts must stay scannable.
@@ -2197,7 +2220,17 @@ fn stage_and_finalize(
     // a limit event — a self-inflicted de-escalation).
     let run_dir = finalize_session(writer, dq, report, dedup_hits)?;
 
-    // U8/R12 — the ONLY production caller of `produce_report`.
+    // The LADDER-ONLY tail (U8/KTD2). Everything above is written for every live session;
+    // everything here is rung evidence, so it runs only for a session that actually holds a
+    // dispatch. A rehearsal's sessions count toward no rung's N (CONCEPTS.md), and a
+    // tracking sidecar is exactly the artifact a reducer would count — writing one for a
+    // rehearsal would put unauthorized sessions into the ladder's trailing-K window by
+    // accident, which is the same class of silent miscount the strategy partition guards.
+    let Some(dispatch) = ctx.authority.dispatch.as_ref() else {
+        return Ok(run_dir);
+    };
+
+    // R12 — the ONLY production caller of `produce_report`.
     // `clean_session_verdict` requires a produced twin at rung >= 2, so removing
     // this call makes rung 2 unreachable by construction: the gate would read a
     // sidecar nothing writes.
@@ -2209,20 +2242,14 @@ fn stage_and_finalize(
     // reason: the sidecar lives outside the immutable run dir and is idempotent
     // per run id, so a write failure is re-runnable and must never cost the
     // operator the session's artifacts.
-    let tracking_rung = ctx.dispatch.as_ref().map_or(ctx.chain_rung, |d| d.rung);
     let catalog_has_range =
         session_range_in_catalog(&ctx.data_home.join("catalog"), &ctx.trading_date, &ctx.symbols);
-    let tracking = crate::dispatch::tracking::produce_report(
-        &run_dir,
-        &ctx.run_id,
-        tracking_rung,
-        catalog_has_range,
-    );
+    let tracking =
+        crate::dispatch::tracking::produce_report(&run_dir, run_id, dispatch.rung, catalog_has_range);
     if let Err(e) = crate::dispatch::tracking::write_report(&ctx.data_home, &tracking) {
         eprintln!(
-            "live: warning — the tracking report for {} could not be written ({}); the run's \
+            "live: warning — the tracking report for {run_id} could not be written ({}); the run's \
              own artifacts are finalized and the report is re-runnable per run id",
-            ctx.run_id,
             nautilus_ls::scrub::scrub_secrets(&e.to_string())
         );
     }
@@ -2294,7 +2321,7 @@ const MOUNT_PRECHECK_FAILED: u8 = 71;
 /// must reconcile the account before the next dispatch. A persisted kill switch needs
 /// clearing only when a watchdog/breaker trip is also recorded; the driver's own teardown
 /// engages the switch in-process and appends no chain record.
-const MOUNT_ABNORMAL: u8 = 72;
+pub(crate) const MOUNT_ABNORMAL: u8 = 72;
 
 /// One symbol of the resolved live-mount universe. The operator materializes the dispatch
 /// lane's daily/t8407 read into `LS_MOUNT_UNIVERSE_FILE` (a JSON array of these); `SelectedSymbol`
@@ -2553,15 +2580,24 @@ fn run_mount() -> anyhow::Result<ExitCode> {
     let PreparedMount { mount, driver, params, symbols, lane_hash, .. } = prepared;
     let LiveMount { mut node, handles } = mount;
     let session_probe = handles.session.clone();
+    let authority = auth.session_authority(&data_home)?;
+    let identity = SessionIdentity::Orb(params);
+    let manifest = identity
+        .live_manifest(LiveManifestParts {
+            authority: &authority,
+            symbols: &symbols,
+            trading_date: &today,
+            started_utc: now,
+            // The ladder's ORB lane is not the daily lineage's paper stage (KTD2).
+            paper_stage: false,
+        })
+        .map_err(|e| anyhow::anyhow!("mount refused: {e}"))?;
     let ctx = LiveSessionContext {
         data_home: data_home.clone(),
-        run_id: auth.run_id.clone(),
-        chain_rung: auth.chain_rung,
-        dispatch: Some(auth.dispatch_link()),
-        params,
+        authority,
+        manifest,
         symbols,
         trading_date: today.clone(),
-        created_utc: now.to_rfc3339(),
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let outcome = runtime.block_on(run_live_session(
@@ -2595,51 +2631,11 @@ fn run_mount() -> anyhow::Result<ExitCode> {
         outcome.report.flat_confirmed,
         outcome.trip
     );
-    let (code, messages) = mount_verdict(&outcome);
+    let (code, messages) = mount_verdict(&outcome, ctx.authority.is_rehearsal());
     for m in messages {
         eprintln!("{m}");
     }
     Ok(ExitCode::from(code))
-}
-
-/// The `--mount` exit code and the operator messages for a finalized session — extracted as
-/// a PURE function so the matrix is testable offline. Reaching it end-to-end would require
-/// driving a real `node.run`, which the gate forbids.
-///
-/// The two abnormalities are INDEPENDENT and both are reported: a hard-stopped node whose
-/// teardown also failed to confirm flat is the worst combination there is, and an early
-/// return on either one would hide the other. Ordering puts the not-flat message last so it
-/// is the line left on the operator's screen.
-fn mount_verdict(outcome: &LiveSessionOutcome) -> (u8, Vec<&'static str>) {
-    let mut messages = Vec::new();
-    if outcome.hard_stopped {
-        // A DIFFERENT abnormality from a failed flat-confirmation: the teardown may well
-        // have confirmed flat. What failed is the node — it did not return from `run`
-        // within the grace after being asked to stop, so the driver abandoned it.
-        messages.push(
-            "mount ABNORMAL (HARD STOP): `node.run` did not return within \
-             LS_MOUNT_STOP_GRACE_SECS of the stop request, so the driver abandoned the node and \
-             tore down without it. The run IS finalized and scannable — its data_quality carries \
-             `hard_stopped` (a typed limit event: the ladder de-escalates and the readiness \
-             window reds on it) plus the teardown's own flat verdict. Reconcile the account \
-             before the next dispatch. The kill switch was engaged in-process only; a \
-             --clear-killswitch is needed only if a watchdog trip is also recorded. \
-             See lab/RUNBOOK-rung1.md.",
-        );
-    }
-    if outcome.report.hard_failed() {
-        messages.push(
-            "mount ABNORMAL: the teardown could not positively confirm a flat account — the kill \
-             switch is engaged. Reconcile the account. If a watchdog/breaker trip is recorded \
-             above, its chain record reds the next --dispatch until you clear it with \
-             `lab-live --clear-killswitch` (nonce-gated). See lab/RUNBOOK-rung1.md.",
-        );
-    }
-    if outcome.abnormal {
-        (MOUNT_ABNORMAL, messages)
-    } else {
-        (0, messages)
-    }
 }
 
 /// Everything resolved and built before the green dispatch is consumed (U5). Producing
@@ -3425,47 +3421,6 @@ mod tests {
         assert!(fired.is_err(), "the backstop must stay disarmed until someone asks for a stop");
     }
 
-    fn outcome_fixture(hard_stopped: bool, flat_confirmed: bool) -> LiveSessionOutcome {
-        let report =
-            TeardownReport { cancel_attempts: 1, canceled: true, flat_confirmed };
-        LiveSessionOutcome {
-            report,
-            trip: None,
-            run_dir: PathBuf::from("/runs/x"),
-            abnormal: report.hard_failed() || hard_stopped,
-            hard_stopped,
-        }
-    }
-
-    /// The two ABNORMAL causes are INDEPENDENT, and the worst case is both at once. An
-    /// early return on either would hide the other from the operator — this pins that both
-    /// are reported, and that the exit contract stays `0`/`72` with no third code.
-    #[test]
-    fn the_mount_verdict_reports_both_abnormal_causes_and_never_mints_an_exit_code() {
-        let (code, msgs) = mount_verdict(&outcome_fixture(false, true));
-        assert_eq!(code, 0, "a clean session exits 0");
-        assert!(msgs.is_empty(), "and says nothing alarming");
-
-        let (code, msgs) = mount_verdict(&outcome_fixture(true, true));
-        assert_eq!(code, MOUNT_ABNORMAL, "a hard-stop with a CONFIRMED-flat teardown is still 72");
-        assert_eq!(msgs.len(), 1);
-        assert!(msgs[0].contains("HARD STOP"));
-
-        let (code, msgs) = mount_verdict(&outcome_fixture(false, false));
-        assert_eq!(code, MOUNT_ABNORMAL);
-        assert_eq!(msgs.len(), 1);
-        assert!(msgs[0].contains("could not positively confirm a flat account"));
-
-        // The combination that matters: neither cause may shadow the other.
-        let (code, msgs) = mount_verdict(&outcome_fixture(true, false));
-        assert_eq!(code, MOUNT_ABNORMAL);
-        assert_eq!(msgs.len(), 2, "both causes are reported: {msgs:?}");
-        assert!(msgs[0].contains("HARD STOP"));
-        assert!(
-            msgs[1].contains("could not positively confirm a flat account"),
-            "the not-flat line is LAST — it is the one left on the operator's screen"
-        );
-    }
 
     /// A fake session recording the teardown call order + simulating still-resting /
     /// not-flat conditions. `cancel_fail_first` fails that many attempts before the

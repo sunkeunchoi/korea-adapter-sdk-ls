@@ -142,10 +142,26 @@ pub fn latest_finalized_run(data_home: &Path) -> anyhow::Result<Option<(String, 
     latest_finalized_run_for(data_home, crate::params::STRATEGY_ID)
 }
 
-/// The newest finalized run of `strategy_id`, or `None` when the registry holds none.
+/// The newest finalized **non-rehearsal** run of `strategy_id`, or `None` when the
+/// registry holds none.
 ///
 /// Reads **every** manifest newest-first rather than only the newest run, because the
 /// newest run may now belong to the other strategy.
+///
+/// # Paper rehearsals are excluded here too (U8, KTD2)
+///
+/// A rehearsal drives the daily lineage's head outside the ladder with no dispatch chain,
+/// and its sessions count toward no rung's N (CONCEPTS.md). Its manifest nonetheless lands
+/// in the same `<data>/runs` tree with the same `strategy_id`, so without this filter the
+/// newest rehearsal would become "the current daily run" for every consumer that resolves
+/// through here — the same silent head-reversion the strategy partition above exists to
+/// prevent, one step further in: a research verdict would then be computed from a session
+/// that was never meant to be evidence.
+///
+/// The filter reads [`Manifest::is_rehearsal`], so a manifest with **no** `rehearsal` field
+/// — every artifact written before U8 — resolves exactly as it did before. Like the
+/// strategy partition, this is a partition and not a deletion: a rehearsal run stays
+/// reachable by explicit run id, which is how U12's `report rehearsal` reaches it.
 ///
 /// # The newest manifest is read strictly; only older ones are skipped
 ///
@@ -176,15 +192,17 @@ pub fn latest_finalized_run_for(
     let Some((newest, older)) = ordered.split_last() else {
         return Ok(None);
     };
+    // The newest run is still read STRICTLY (see above) — a rehearsal newest simply is not
+    // a match, exactly as another strategy's newest is not.
     let newest_manifest = read_manifest(data_home, newest)?;
-    if newest_manifest.strategy_id == strategy_id {
+    if newest_manifest.strategy_id == strategy_id && !newest_manifest.is_rehearsal() {
         return Ok(Some((newest.clone(), newest_manifest)));
     }
     Ok(older
         .iter()
         .rev()
         .filter_map(|rid| read_manifest(data_home, rid).ok().map(|m| (rid.clone(), m)))
-        .find(|(_rid, m)| m.strategy_id == strategy_id))
+        .find(|(_rid, m)| m.strategy_id == strategy_id && !m.is_rehearsal()))
 }
 
 /// The refusal a command raises when [`latest_finalized_run`] resolved nothing — paired
@@ -2477,6 +2495,8 @@ mod tests {
             universe_metadata_hash: None,
             dispatch: None,
             daily_params: None,
+            rehearsal: None,
+            paper_stage: None,
             created_utc: started.to_rfc3339(),
         }
     }
@@ -2497,6 +2517,7 @@ mod tests {
             lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: None,
+            label: crate::artifacts::manifest::DailyRunLabel::default(),
         })
         .unwrap()
     }

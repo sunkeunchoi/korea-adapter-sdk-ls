@@ -462,7 +462,7 @@ fn pinned_orb_summary() -> Vec<(String, f64)> {
 // ---------------------------------------------------------------------------
 
 use nautilus_ls_lab::artifacts::manifest::{
-    range_fingerprint, universe_hash, DailyManifestParts, DataRange,
+    range_fingerprint, universe_hash, DailyManifestParts, DailyRunLabel, DataRange,
 };
 use nautilus_ls_lab::artifacts::{list_runs, run_id, RunSource, RunWriter};
 use nautilus_ls_lab::params_daily::DAILY_STRATEGY_ID;
@@ -497,6 +497,8 @@ fn stage_orb_run(data: &Path, hour: u32, version: u32) -> String {
         universe_metadata_hash: None,
         dispatch: None,
         daily_params: None,
+        rehearsal: None,
+        paper_stage: None,
         created_utc: started.to_rfc3339(),
     };
     let w = RunWriter::new(data, &id).unwrap();
@@ -521,6 +523,7 @@ fn stage_daily_run(data: &Path, hour: u32) -> String {
         lab_src_fingerprint: None,
         checkpoint_hash: None,
         universe_metadata_hash: None,
+        label: DailyRunLabel::default(),
     })
     .unwrap();
     let id = m.run_id.clone();
@@ -528,6 +531,109 @@ fn stage_daily_run(data: &Path, hour: u32) -> String {
     w.write_manifest(&m).unwrap();
     w.finalize().unwrap();
     id
+}
+
+/// A daily **paper rehearsal** manifest, staged into `data` (U8, KTD2). Built through the
+/// same `Manifest::new_daily` the backtest path uses — a live session must not get a second
+/// constructor, or the discriminator it derives could drift from the backtest's.
+fn stage_daily_rehearsal_run(data: &Path, hour: u32) -> String {
+    let started = Utc.with_ymd_and_hms(2024, 1, 5, hour, 0, 0).unwrap();
+    let run_id = format!("{}-live-{DAILY_STRATEGY_ID}-v1", started.format("%Y%m%dT%H%M%SZ"));
+    let m = Manifest::new_daily(DailyManifestParts {
+        daily: DailyParams::frozen(),
+        assembly_params: OrbParams::default(),
+        daily_source: nautilus_ls_lab::strategy::DAILY_SOURCE,
+        started_utc: started,
+        data_range: DataRange { start: "20240105".into(), end: "20240105".into() },
+        catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
+        universe_hash: universe_hash(&["005930.XKRX".to_string()]),
+        lab_src_fingerprint: None,
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+        label: DailyRunLabel {
+            source: RunSource::Live,
+            run_id: Some(run_id.clone()),
+            // The defining fact: a rehearsal has no dispatch (CONCEPTS.md).
+            dispatch: None,
+            rehearsal: Some(true),
+            paper_stage: Some(false),
+        },
+    })
+    .expect("a live rehearsal manifest is a valid daily manifest");
+    let w = RunWriter::new(data, &run_id).unwrap();
+    w.write_manifest(&m).unwrap();
+    w.finalize().unwrap();
+    run_id
+}
+
+/// U8/KTD2. A live rehearsal manifest is a well-formed daily manifest — the labels are
+/// additive, not a second shape — and the run id it records is the one the session was
+/// authorized under rather than a freshly derived backtest id.
+#[test]
+fn a_live_rehearsal_manifest_validates_as_a_daily_manifest() {
+    let dir = tempdir().unwrap();
+    let rid = stage_daily_rehearsal_run(dir.path(), 17);
+    let m = manifest_of(dir.path(), &rid);
+
+    m.validate_strategy_identity().expect("identity and params agree");
+    assert_eq!(m.source, RunSource::Live);
+    assert_eq!(m.run_id, rid, "the authorized run id is recorded, not a re-derived one");
+    assert!(m.dispatch.is_none(), "a rehearsal is not ladder-authorized");
+    assert!(m.is_rehearsal());
+    assert_eq!(m.paper_stage, Some(false), "pre-judgment, so not the paper stage yet");
+    assert_eq!(m.strategy_id, DAILY_STRATEGY_ID);
+}
+
+/// U8/KTD2. The rehearsal partition, beside the strategy partition: the newest daily run
+/// being a rehearsal must not make it "the current daily run".
+///
+/// Without this, a research verdict computed after a rehearsal session would be computed
+/// from sessions that were never meant to be evidence — the same silent head-reversion the
+/// strategy partition prevents, one step further in.
+#[test]
+fn a_newer_rehearsal_run_is_not_the_current_daily_run() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let backtest = stage_daily_run(data, 9);
+    let rehearsal = stage_daily_rehearsal_run(data, 17);
+
+    assert_eq!(list_runs(data).len(), 2);
+    let (resolved, m) = latest_finalized_run_for(data, DAILY_STRATEGY_ID)
+        .unwrap()
+        .expect("a non-rehearsal daily run resolves");
+    assert_eq!(resolved, backtest, "the newer rehearsal did not displace the daily head");
+    assert!(!m.is_rehearsal());
+
+    // A partition, not a deletion — the rehearsal is still there, reachable by name, which
+    // is how U12's `report rehearsal` gets to it.
+    assert!(list_runs(data).contains(&rehearsal));
+    assert!(manifest_of(data, &rehearsal).is_rehearsal());
+
+    // And the ORB lookup is untouched by either.
+    assert!(latest_finalized_run(data).unwrap().is_none(), "no ORB run was staged");
+}
+
+/// The tri-state's load-bearing half: a manifest written before U8 carries no `rehearsal`
+/// field at all, and MUST still resolve. An `Option` read as "absent means rehearsal" — or
+/// a non-optional `bool` defaulting either way — would have made every committed artifact
+/// either invisible or a false positive.
+#[test]
+fn a_manifest_with_no_rehearsal_field_resolves_as_a_normal_run() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let backtest = stage_daily_run(data, 9);
+
+    // The committed shape: `rehearsal` is absent from the JSON, not `false`.
+    let text =
+        std::fs::read_to_string(data.join("runs").join(&backtest).join(MANIFEST_FILE)).unwrap();
+    assert!(!text.contains("rehearsal"), "the field is skipped when absent: {text}");
+    assert!(!text.contains("paper_stage"));
+
+    let (resolved, m) =
+        latest_finalized_run_for(data, DAILY_STRATEGY_ID).unwrap().expect("it resolves");
+    assert_eq!(resolved, backtest);
+    assert_eq!(m.rehearsal, None);
+    assert!(!m.is_rehearsal(), "absent is NOT a rehearsal");
 }
 
 /// The core partition: a daily run finalized AFTER the newest ORB run is not what "the
