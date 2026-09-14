@@ -28,6 +28,9 @@ use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::orders::ledger::FillLedger;
 use nautilus_ls_lab::artifacts::data_quality::RehearsalDivergenceKind;
 use nautilus_ls_lab::runner::backtest_daily::{DailySessionSignals, OpenPositionBook};
+use nautilus_ls_lab::runner::live::recovery::{
+    adopt_book_on, adoption_ledger_path, clear_standing_trips,
+};
 use nautilus_ls_lab::runner::live::rehearsal::{
     preflight_offline, probe_book, standing_trip, RehearsalEnvelope, RehearsalInputs,
 };
@@ -1311,4 +1314,606 @@ fn session_ordinals_count_proven_sessions_from_the_fixed_epoch() {
     let (count, last) = session_ordinal(&view, day(PREVIOUS_SESSION)).unwrap();
     assert!(count > 3_000, "sixteen years of sessions: {count}");
     assert!(last.is_some(), "and a last proven session to stamp the book with");
+}
+
+// ---------------------------------------------------------------------------
+// 4. Recovery (U13): the trip gate's release and the book reconciliation verb
+// ---------------------------------------------------------------------------
+
+fn bin_lab_live(home: &Path, args: &[&str], extra: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"));
+    cmd.args(args)
+        .env("LS_DATA_HOME", home)
+        .env("LS_TRADING_ENV", "paper")
+        .env("LS_DISPATCH_NOW_UNIX", MOUNT_UNIX.to_string())
+        .env("LS_REHEARSAL_STUB_CLOCK", "1")
+        .env_remove("LS_DISPATCH_NONCE")
+        .env_remove("LS_REHEARSAL_UNIVERSE_FILE")
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+/// Both recovery verbs rewrite state the next mount trusts, so both sit behind the same
+/// attendance gate as the mount itself: a no-TTY shell with no nonce is exit 77 and writes
+/// NOTHING — not a Clear row, not a book, not an adoption row.
+#[test]
+fn bin_both_recovery_verbs_refuse_unattended_with_the_attendance_code() {
+    use nautilus_ls_lab::dispatch::chain::{SafetyTripKind, TripAction};
+    let home = tempdir().unwrap();
+    let ledger = RehearsalLedger::new(home.path());
+    ledger
+        .record_trip(
+            SafetyTripKind::Breaker,
+            TripAction::Engage,
+            Some("r1"),
+            "the breaker fired",
+            Utc.timestamp_opt(MOUNT_UNIX, 0).unwrap(),
+        )
+        .unwrap();
+
+    let out = bin_lab_live(home.path(), &["--rehearsal-clear-trip", "--why", "reconciled"], &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(77), "clear-trip unattended is exit 77: {stderr}");
+    assert_eq!(ledger.records().unwrap().len(), 1, "no Clear row was written");
+    assert!(standing_trip(&ledger).unwrap().is_some(), "the trip still stands");
+
+    let out = bin_lab_live(home.path(), &["--rehearsal-book", "adopt", "--why", "x"], &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(77), "adopt unattended is exit 77: {stderr}");
+    assert!(!RehearsalBook::path(home.path()).exists(), "no book was written");
+    assert!(!adoption_ledger_path(home.path()).exists(), "no adoption row was written");
+}
+
+/// AE10, both halves: a standing Engage refuses the mount, and the operator's Clear — one per
+/// still-engaged mechanism, carrying the scrubbed why — releases it so the same preflight
+/// passes. A clear with no why, or with nothing standing, refuses and writes nothing.
+#[test]
+fn clearing_every_standing_trip_releases_the_mount_gate() {
+    use nautilus_ls_lab::dispatch::chain::{SafetyTripKind, TripAction};
+    let home = tempdir().unwrap();
+    let inputs = inputs_for(&home);
+    let ledger = RehearsalLedger::new(home.path());
+    let at = Utc.timestamp_opt(MOUNT_UNIX, 0).unwrap();
+
+    let err = clear_standing_trips(&ledger, "nothing to clear", at).unwrap_err().to_string();
+    assert!(err.contains("no standing trip"), "{err}");
+    assert!(ledger.records().unwrap().is_empty(), "a refused clear writes nothing");
+
+    ledger
+        .record_trip(SafetyTripKind::Breaker, TripAction::Engage, Some("r1"), "breaker", at)
+        .unwrap();
+    ledger
+        .record_trip(SafetyTripKind::Watchdog, TripAction::Engage, Some("r1"), "dead man", at)
+        .unwrap();
+    assert!(preflight_offline(&inputs, MOUNT_UNIX).is_err(), "the standing trips refuse");
+
+    let err = clear_standing_trips(&ledger, "   ", at).unwrap_err().to_string();
+    assert!(err.contains("--why"), "{err}");
+    assert_eq!(ledger.records().unwrap().len(), 2, "an empty why writes nothing");
+
+    let cleared = clear_standing_trips(&ledger, "reconciled at the broker", at).unwrap();
+    assert_eq!(cleared.len(), 2, "one Clear per still-engaged mechanism");
+    let rows = ledger.records().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert!(rows[2..].iter().all(|r| r.action == TripAction::Clear));
+    assert!(rows[2..].iter().all(|r| r.detail.contains("reconciled at the broker")));
+    assert!(standing_trip(&ledger).unwrap().is_none());
+    preflight_offline(&inputs, MOUNT_UNIX).expect("after the Clear the gate passes");
+}
+
+/// A t0425 stub whose FIRST read reports resting orders and every later read is empty — the
+/// account a successful cancel leaves behind.
+async fn mount_t0425_resting_once(server: &MockServer, rows: serde_json::Value) {
+    Mock::given(method("POST"))
+        .and(path(ACCNO_PATH))
+        .and(header("tr_cd", "t0425"))
+        .respond_with(ok_json(serde_json::json!({
+            "rsp_cd": "00000",
+            "t0425OutBlock": { "tqty": "0", "tcheqty": "0", "tordrem": "0", "cts_ordno": "" },
+            "t0425OutBlock1": rows
+        })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+fn resting_order(ordno: &str, shcode: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ordno": ordno, "expcode": shcode, "medosu": "매수", "qty": "3",
+        "price": "50000", "cheqty": "0", "ordrem": "3", "status": "접수",
+        "orgordno": "", "ordtime": "1520"
+    })
+}
+
+fn write_universe(home: &Path, rows: Vec<DailyUniverseRow>) -> std::path::PathBuf {
+    let file = nautilus_ls_lab::runner::mount_universe::DailyUniverseFile {
+        session_date: SESSION_DATE.to_string(),
+        ranking_signal: "momentum12x1".to_string(),
+        ranking_signal_is_placeholder: false,
+        warmup_bars: 13,
+        universe_metadata_hash: "test".to_string(),
+        rows,
+    };
+    let p = home.join("universe.json");
+    std::fs::write(&p, serde_json::to_string(&file).unwrap()).unwrap();
+    p
+}
+
+/// 15:50 KST on the mount's session date — after the closing auction, so t0424's `price` is
+/// today's close and the adoption verb will run. `MOUNT_UNIX` (15:00 KST) sits inside the
+/// refused session window.
+const AFTER_CLOSE_UNIX: i64 = MOUNT_UNIX + 50 * 60;
+
+/// A t0424 holding row that also carries the `price` (현재가) the adoption re-bases every
+/// leg's `prior_close` on.
+fn priced_holding(shcode: &str, qty: i64, price: i64) -> serde_json::Value {
+    let mut row = holding_row(shcode, qty);
+    row["price"] = price.to_string().into();
+    row
+}
+
+/// A cancel endpoint that must NEVER be hit — wiremock verifies `.expect(0)` when the server
+/// drops, so a refusal that canceled anyway fails the test.
+async fn mount_cancel_never(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/stock/order"))
+        .and(header("tr_cd", "CSPAT00801"))
+        .respond_with(ok_json(serde_json::json!({
+            "rsp_cd": "00463", "rsp_msg": "OK",
+            "CSPAT00801OutBlock1": {}, "CSPAT00801OutBlock2": { "OrdNo": "9001" }
+        })))
+        .expect(0)
+        .mount(server)
+        .await;
+}
+
+fn adoption_rows(home: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(adoption_ledger_path(home))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// The whole reconciliation, in its safety order: cancel the resting orders and CONFIRM the
+/// book of orders is empty, only then read t0424 and rewrite the book. Known legs keep their
+/// entry-fixed facts with the broker's quantity; a leg the broker no longer holds is dropped
+/// against the why; an unknown holding is admitted against the operator's why with today's
+/// date and an ATR-derived stop. Every leg's prior_close is re-based on t0424's close. Every
+/// difference is a row, and the next mount's probe passes.
+#[tokio::test]
+async fn adopt_cancels_first_then_rewrites_the_book_from_the_account() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_resting_once(
+        &server,
+        serde_json::json!([resting_order("7001", "035720"), resting_order("7002", "005930")]),
+    )
+    .await;
+    mount_t0425_empty(&server).await;
+    mount_cancel_ok(&server).await;
+    let mut admitted = priced_holding("035720", 3, 50_500);
+    admitted["pamt"] = "50000".into();
+    mount_t0424(
+        &server,
+        serde_json::json!([priced_holding("005930", 12, 62_000), admitted]),
+        "150000000",
+    )
+    .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+
+    let home = tempdir().unwrap();
+    let previous = book_with(vec![leg("005930", 10), leg("000660", 5)], PREVIOUS_SESSION);
+    previous.write(home.path()).unwrap();
+    let mut row = universe_rows(&["035720"]).remove(0);
+    row.prior_close = 51_000;
+    row.prior_atr1 = 1_200.0;
+    let universe = write_universe(home.path(), vec![row]);
+    let at = Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap();
+
+    let outcome = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        Some(&universe),
+        Some("a late auction fill the teardown missed"),
+        &|_| Ok(true),
+        at,
+    )
+    .await
+    .expect("the adoption lands");
+    assert_eq!(outcome.canceled, 2, "both resting orders were canceled first");
+
+    let book = RehearsalBook::load(home.path()).unwrap();
+    assert_eq!(book.session_date, SESSION_DATE);
+    book.validate_fields().expect("the adopted book is restorable");
+    let by: HashMap<&str, &RehearsalBookLeg> =
+        book.legs.iter().map(|l| (l.shcode.as_str(), l)).collect();
+    assert_eq!(by.len(), 2, "000660 is gone: the broker no longer holds it");
+
+    let kept = by["005930"];
+    assert_eq!(kept.quantity, 12, "the broker's quantity wins");
+    assert_eq!(kept.stop_price, 57_000.0, "the entry-fixed stop carries forward");
+    assert_eq!(kept.entry_date, "2026-08-14", "and so does the entry date");
+    assert_eq!(kept.entered_under, previous.legs[0].entered_under);
+    assert_eq!(kept.prior_close, 62_000, "but the day basis is re-based on t0424's close, not carried");
+
+    let new = by["035720"];
+    assert_eq!(new.quantity, 3);
+    assert_eq!(new.entry_price, 50_000.0, "entry is the broker's average price");
+    assert_eq!(new.stop_price, 50_000.0 - 1.5 * 1_200.0, "entry - 1.5 x ATR(1)");
+    assert_eq!(new.prior_close, 50_500, "t0424's close, not the universe row's");
+    assert_eq!(new.entry_date, SESSION_DATE, "admitted at today's session");
+
+    let rows = adoption_rows(home.path());
+    let kinds: Vec<&str> = rows.iter().map(|r| r["kind"].as_str().unwrap()).collect();
+    assert!(kinds.contains(&"admitted"), "{kinds:?}");
+    assert!(kinds.contains(&"dropped"), "{kinds:?}");
+    assert!(kinds.contains(&"quantity_changed"), "{kinds:?}");
+    assert!(kinds.contains(&"adopted"), "one summary row carries the why: {kinds:?}");
+    assert!(!kinds.contains(&"aborted"), "a landed adoption carries no aborted row: {kinds:?}");
+    assert_eq!(book.run_id, rows[0]["adoption_id"].as_str().unwrap());
+    assert!(rows
+        .iter()
+        .any(|r| r["detail"].as_str().unwrap().contains("a late auction fill")));
+
+    // The next mount's probe accepts the adopted book against the same account.
+    probe_book(&sdk, book, 100_000_000).await.expect("the adopted book probes clean");
+}
+
+/// The ORDER is the safety property: a cancel that cannot be confirmed — t0425 still reports
+/// a resting order afterwards — refuses and writes NOTHING. Rewriting the book over a moving
+/// account would record a state the next fill invalidates.
+#[tokio::test]
+async fn adopt_refuses_and_writes_nothing_when_the_cancel_is_not_confirmed() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    // Every t0425 read reports the order still resting, whatever the cancel said.
+    Mock::given(method("POST"))
+        .and(path(ACCNO_PATH))
+        .and(header("tr_cd", "t0425"))
+        .respond_with(ok_json(serde_json::json!({
+            "rsp_cd": "00000",
+            "t0425OutBlock": { "tqty": "0", "tcheqty": "0", "tordrem": "0", "cts_ordno": "" },
+            "t0425OutBlock1": [resting_order("7001", "005930")]
+        })))
+        .mount(&server)
+        .await;
+    mount_cancel_ok(&server).await;
+    mount_t0424(&server, serde_json::json!([priced_holding("005930", 12, 62_000)]), "150000000").await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+
+    let home = tempdir().unwrap();
+    let previous = book_with(vec![leg("005930", 10)], PREVIOUS_SESSION);
+    previous.write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        None,
+        Some("why"),
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("not confirmed"), "{err}");
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists(), "no adoption row");
+}
+
+/// A holding the old book has never seen is admitted only against an operator why, and only
+/// when the universe can supply the ATR its stop is derived from. Either missing refuses with
+/// the book untouched.
+#[tokio::test]
+async fn adopt_refuses_an_unknown_holding_without_a_why_or_an_atr() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([priced_holding("005930", 10, 62_000), priced_holding("035720", 3, 50_500)]),
+        "150000000",
+    )
+    .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    book_with(vec![leg("005930", 10)], PREVIOUS_SESSION).write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+    let at = Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        None,
+        None,
+        &|_| Ok(true),
+        at,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("035720"), "it names the unknown holding: {err}");
+    assert!(err.contains("--why"), "{err}");
+
+    let universe = write_universe(home.path(), universe_rows(&["000660"]));
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        Some(&universe),
+        Some("admit it"),
+        &|_| Ok(true),
+        at,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("035720") && err.contains("ATR"), "{err}");
+
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists());
+}
+
+/// A book that exists and cannot be read is replaced only against a why — and then every
+/// holding is re-admitted from the universe with a derived stop, and the ledger says the
+/// previous book was unreadable.
+#[tokio::test]
+async fn adopt_readmits_every_holding_over_an_unreadable_book_with_a_why() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([priced_holding("005930", 10, 62_000), priced_holding("035720", 3, 50_500)]),
+        "150000000",
+    )
+    .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    let universe = write_universe(home.path(), universe_rows(&["005930", "035720"]));
+
+    let outcome = adopt_book_on(
+        &sdk,
+        home.path(),
+        Err(anyhow::anyhow!("unreadable")),
+        Some(&universe),
+        Some("the book file was corrupted"),
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .expect("the adoption lands");
+
+    let book = RehearsalBook::load(home.path()).unwrap();
+    book.validate_fields().expect("the adopted book is restorable");
+    assert_eq!(book.legs.len(), 2, "every holding was admitted");
+    assert!(book.legs.iter().all(|l| l.entry_date == SESSION_DATE), "all dated today");
+    assert!(book.legs.iter().all(|l| l.entered_under == book.run_id));
+    assert_eq!(outcome.book, book, "the outcome is the book on disk");
+    let rows = adoption_rows(home.path());
+    let kinds: Vec<&str> = rows.iter().map(|r| r["kind"].as_str().unwrap()).collect();
+    assert!(kinds.contains(&"previous_book_unreadable"), "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| **k == "admitted").count(), 2, "{kinds:?}");
+}
+
+/// Without a why, an unreadable book refuses BEFORE the cancel pass: nothing is canceled and
+/// nothing is written.
+#[tokio::test]
+async fn adopt_refuses_an_unreadable_book_without_a_why_before_canceling() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_resting_once(&server, serde_json::json!([resting_order("7001", "005930")])).await;
+    mount_t0425_empty(&server).await;
+    mount_cancel_never(&server).await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        Err(anyhow::anyhow!("unreadable")),
+        None,
+        None,
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--why") && err.contains("Nothing was canceled"), "{err}");
+    assert!(!RehearsalBook::path(home.path()).exists(), "no book was written");
+    assert!(!adoption_ledger_path(home.path()).exists(), "no adoption row");
+}
+
+/// A leg the book carries that the broker no longer reports — which is also exactly what an
+/// empty or truncated t0424 read looks like — is dropped only against a why: its entry, stop
+/// and entry date exist nowhere else.
+#[tokio::test]
+async fn adopt_refuses_a_dropped_leg_without_a_why() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(&server, serde_json::json!([priced_holding("005930", 10, 62_000)]), "150000000").await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    book_with(vec![leg("005930", 10), leg("000660", 5)], PREVIOUS_SESSION).write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        None,
+        None,
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("000660") && err.contains("--why"), "{err}");
+    assert!(!err.contains("005930"), "only the dropped leg is named: {err}");
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists());
+}
+
+/// Inside the continuous session t0424's price is a live trade, not a close, and every leg's
+/// prior_close is re-based on it — so the verb refuses at 15:00 KST before canceling anything.
+#[tokio::test]
+async fn adopt_refuses_inside_the_session_window_before_canceling() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_resting_once(&server, serde_json::json!([resting_order("7001", "005930")])).await;
+    mount_t0425_empty(&server).await;
+    mount_cancel_never(&server).await;
+    mount_t0424(&server, serde_json::json!([priced_holding("005930", 10, 62_000)]), "150000000").await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    book_with(vec![leg("005930", 10)], PREVIOUS_SESSION).write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        None,
+        Some("why"),
+        &|_| Ok(true),
+        Utc.timestamp_opt(MOUNT_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("15:00 KST") && err.contains("session window"), "{err}");
+    assert!(err.contains("Nothing was canceled"), "{err}");
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists());
+}
+
+/// An admitted leg is dated today, so on a day the calendar cannot place a session on the
+/// admission refuses — asking about today's KST session date — and writes nothing. Re-running
+/// on the same day would stamp the same unusable date again.
+#[tokio::test]
+async fn adopt_refuses_an_admission_on_a_non_session_day() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([priced_holding("005930", 10, 62_000), priced_holding("035720", 3, 50_500)]),
+        "150000000",
+    )
+    .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    book_with(vec![leg("005930", 10)], PREVIOUS_SESSION).write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+    let universe = write_universe(home.path(), universe_rows(&["035720"]));
+    let asked: std::cell::RefCell<Vec<NaiveDate>> = std::cell::RefCell::new(Vec::new());
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        Some(&universe),
+        Some("admit it"),
+        &|d| {
+            asked.borrow_mut().push(d);
+            Ok(false)
+        },
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("not a trading session") && err.contains("035720"), "{err}");
+    assert_eq!(*asked.borrow(), vec![day(SESSION_DATE)], "it asks about today's KST session date");
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists());
+}
+
+/// Rows are appended before the book is written; when the write then fails, the adoption
+/// appends an `aborted` row for the same id so the ledger does not claim a change that never
+/// landed, and the error says the book was not rewritten.
+#[tokio::test]
+async fn adopt_marks_its_rows_aborted_when_the_book_write_fails() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(&server, serde_json::json!([priced_holding("005930", 10, 62_000)]), "150000000").await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    // A non-empty directory where the book goes: the write's rename cannot replace it.
+    let book_path = RehearsalBook::path(home.path());
+    std::fs::create_dir_all(&book_path).unwrap();
+    std::fs::write(book_path.join("occupied"), b"x").unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        Ok(book_with(vec![leg("005930", 10)], PREVIOUS_SESSION)),
+        None,
+        None,
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("not rewritten"), "{err}");
+    assert!(book_path.is_dir(), "the obstruction is still there: nothing landed");
+
+    let rows = adoption_rows(home.path());
+    let last = rows.last().expect("the adoption's rows were appended");
+    assert_eq!(last["kind"], "aborted", "{rows:?}");
+    assert!(rows.iter().any(|r| r["kind"] == "adopted"), "{rows:?}");
+    assert!(
+        rows.iter().all(|r| r["adoption_id"] == last["adoption_id"]),
+        "the aborted row marks the same adoption: {rows:?}"
+    );
+}
+
+/// An admission's stop needs the universe file's ATR(1): with no universe path the verb
+/// refuses and names the env var that supplies it.
+#[tokio::test]
+async fn adopt_refuses_an_admission_without_a_universe_file() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    mount_t0425_empty(&server).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([priced_holding("005930", 10, 62_000), priced_holding("035720", 3, 50_500)]),
+        "150000000",
+    )
+    .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let home = tempdir().unwrap();
+    book_with(vec![leg("005930", 10)], PREVIOUS_SESSION).write(home.path()).unwrap();
+    let before = std::fs::read(RehearsalBook::path(home.path())).unwrap();
+
+    let err = adopt_book_on(
+        &sdk,
+        home.path(),
+        RehearsalBook::load(home.path()),
+        None,
+        Some("admit it"),
+        &|_| Ok(true),
+        Utc.timestamp_opt(AFTER_CLOSE_UNIX, 0).unwrap(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("LS_REHEARSAL_UNIVERSE_FILE") && err.contains("035720"), "{err}");
+    assert_eq!(std::fs::read(RehearsalBook::path(home.path())).unwrap(), before, "book untouched");
+    assert!(!adoption_ledger_path(home.path()).exists());
 }

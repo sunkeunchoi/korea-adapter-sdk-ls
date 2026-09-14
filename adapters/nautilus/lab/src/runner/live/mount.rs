@@ -1663,7 +1663,7 @@ fn env_now_unix() -> i64 {
 
 /// The operator gate from the environment (nonce + no-TTY detection + clock). The bin can never
 /// suppress the no-TTY refusal — `detect_unattended_marker` is not env-overridable.
-fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
+pub(crate) fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
     OperatorGate {
         unattended_marker: detect_unattended_marker(),
         nonce: std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty()),

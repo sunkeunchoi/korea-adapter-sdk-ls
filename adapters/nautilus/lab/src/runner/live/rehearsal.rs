@@ -5,8 +5,8 @@
 //! and no rung evidence is produced. What replaces the ladder's peek/consume is:
 //!
 //! 1. the trip gate — a standing `Engage` in `rehearsal/trips.jsonl` refuses the mount
-//!    (U13 owns the verb that clears it; the gate itself has to exist here, because the
-//!    session it refuses is this one);
+//!    (`--rehearsal-clear-trip` in [`super::recovery`] clears it; the gate itself lives
+//!    here, because the session it refuses is this one);
 //! 2. a `mount_cutoff_kst` check — mounting after the cutoff would start a session that
 //!    cannot establish the marks the marketable-limit policy refuses to price without;
 //! 3. a pre-build probe of [`verify_book_on`] + the D+2 deposit + the `book.json` fields.
@@ -279,6 +279,16 @@ pub fn kst_instant(date: NaiveDate, time: NaiveTime) -> anyhow::Result<i64> {
 ///
 /// A ledger read/parse failure.
 pub fn standing_trip(ledger: &RehearsalLedger) -> anyhow::Result<Option<RehearsalTrip>> {
+    Ok(standing_trips(ledger)?.into_iter().next())
+}
+
+/// Every still-engaged mechanism, in ledger order — what [`standing_trip`] reports the first
+/// of, and what `--rehearsal-clear-trip` writes one `Clear` for each of (U13).
+///
+/// # Errors
+///
+/// A ledger read/parse failure.
+pub fn standing_trips(ledger: &RehearsalLedger) -> anyhow::Result<Vec<RehearsalTrip>> {
     let rows = ledger.records()?;
     let mut standing: Vec<RehearsalTrip> = Vec::new();
     for row in rows {
@@ -288,7 +298,7 @@ pub fn standing_trip(ledger: &RehearsalLedger) -> anyhow::Result<Option<Rehearsa
             standing.push(row);
         }
     }
-    Ok(standing.into_iter().next())
+    Ok(standing)
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +349,8 @@ pub async fn probe_book(
              rehearsal/book.json. No node was built and no order was sent. Repair the book \
              against the account before re-mounting: the broker's holdings are authoritative for \
              membership and quantity, and rehearsal/book.json is the only record of each leg's \
-             stop, entry date and label. (`lab-live --rehearsal-book adopt` will do this; that \
-             verb is a later unit and does not exist yet.)"
+             stop, entry date and label: `lab-live --rehearsal-book adopt` cancels the resting \
+             orders and rewrites the book from the account (nonce-gated)."
         )
     })?;
     let deposit_krw = read_d2_deposit_on(sdk)
@@ -392,7 +402,6 @@ pub fn rehearsal_inputs_from_env(stop_before_orders: bool) -> anyhow::Result<Reh
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("{key} is required ({what}; ABSOLUTE path)"))
     };
-    let lane_name = std::env::var("LS_LANE").unwrap_or_else(|_| "domestic".to_string());
     Ok(RehearsalInputs {
         data_home: required("LS_DATA_HOME", "the rehearsal data home")?,
         envelope_path: required(
@@ -408,11 +417,30 @@ pub fn rehearsal_inputs_from_env(stop_before_orders: bool) -> anyhow::Result<Reh
             "LS_REHEARSAL_UNIVERSE_FILE",
             "the `lab-mount-universe --daily` output for this session",
         )?,
-        lane_env_path: std::env::var("LS_DISPATCH_LANE_ENV")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(format!(".env.{lane_name}"))),
+        lane_env_path: lane_env_path_from_env(),
         stop_before_orders,
     })
+}
+
+/// The credential lane env file: `LS_DISPATCH_LANE_ENV`, else `.env.<LS_LANE>` (domestic).
+#[must_use]
+pub fn lane_env_path_from_env() -> PathBuf {
+    let lane_name = std::env::var("LS_LANE").unwrap_or_else(|_| "domestic".to_string());
+    std::env::var("LS_DISPATCH_LANE_ENV")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(format!(".env.{lane_name}")))
+}
+
+/// The wall clock this lane's gates read: `LS_DISPATCH_NOW_UNIX` ONLY when
+/// `LS_REHEARSAL_STUB_CLOCK=1` also arms the seam (see [`run_rehearsal`]).
+#[must_use]
+pub fn rehearsal_now_unix() -> i64 {
+    let stub_clock = std::env::var("LS_REHEARSAL_STUB_CLOCK").as_deref() == Ok("1");
+    std::env::var("LS_DISPATCH_NOW_UNIX")
+        .ok()
+        .filter(|_| stub_clock)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| Utc::now().timestamp())
 }
 
 /// `lab-live --rehearse-daily` (U9) — run one attended rehearsal session.
@@ -449,12 +477,7 @@ pub fn run_rehearsal(stop_before_orders: bool) -> anyhow::Result<ExitCode> {
     // overriding the clock an act rather than an accident, and the day loop runs on the system
     // clock either way, so an override that reached only the prechecks would put the gate and
     // the session on different days.
-    let stub_clock = std::env::var("LS_REHEARSAL_STUB_CLOCK").as_deref() == Ok("1");
-    let now_unix: i64 = std::env::var("LS_DISPATCH_NOW_UNIX")
-        .ok()
-        .filter(|_| stub_clock)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| Utc::now().timestamp());
+    let now_unix = rehearsal_now_unix();
     let nonce = std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty());
 
     // 2. Operator attendance/nonce gate — a rehearsal places real paper orders against an

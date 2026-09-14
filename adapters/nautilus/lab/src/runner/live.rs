@@ -12,6 +12,7 @@
 //! the aborted-run marker.
 
 pub mod mount;
+pub mod recovery;
 pub mod rehearsal;
 pub mod shared;
 
@@ -19,6 +20,7 @@ pub mod shared;
 // `lab/tests/` reads its items as `runner::live::…`. The split is pure motion, so the
 // paths stay: the glob re-exports keep each item exactly as visible as it was.
 pub use mount::*;
+pub use recovery::*;
 pub use rehearsal::*;
 pub use shared::*;
 
@@ -110,6 +112,10 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
         Some("--rehearse-daily") => rehearsal::run_rehearsal(
             std::env::args().any(|a| a == "--stop-before-orders"),
         ),
+        // U13. The rehearsal home's two recovery verbs — never the ladder's --clear-killswitch,
+        // which writes to a dispatch chain a rehearsal home does not have.
+        Some("--rehearsal-clear-trip") => recovery::run_clear_trip_cli(),
+        Some("--rehearsal-book") => recovery::run_book_cli(),
         Some("--head") => run_head_diagnostic(),
         Some("--escalate") => run_escalate_cli(),
         Some("--reregister") => run_reregister_cli(),
