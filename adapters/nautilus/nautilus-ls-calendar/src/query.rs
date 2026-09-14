@@ -274,6 +274,69 @@ impl<'c> AsOfView<'c> {
         Ok(SessionSearch::None)
     }
 
+    /// How many PROVEN Trading Sessions `range` contains, and which was the last.
+    ///
+    /// Proven only: an `Unknown` day is not a session until it is proven one, so counting it
+    /// would move every ordinal derived from this the moment the calendar resolved it. A
+    /// consumer that numbers sessions across days (a multi-session hold measured in session
+    /// ordinals) needs that stability more than it needs an optimistic count.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryError::OutOfRange`] when the range leaves the materialized window.
+    pub fn session_count(
+        &self,
+        range: &DateRange,
+    ) -> Result<(usize, Option<NaiveDate>), QueryError> {
+        let sessions = self.sessions_in(range)?;
+        let last = sessions.last().copied();
+        Ok((sessions.len(), last))
+    }
+
+    /// Every PROVEN Trading Session in `range`, ascending.
+    ///
+    /// The ordered form of [`Self::session_count`], for a consumer that numbers sessions
+    /// rather than counting them — a multi-session hold whose window end is "sixteen
+    /// sessions after this one" needs the dates, not the total.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryError::OutOfRange`] when the range leaves the materialized window.
+    pub fn sessions_in(&self, range: &DateRange) -> Result<Vec<NaiveDate>, QueryError> {
+        Ok(self
+            .rows_in_range(range)?
+            .into_iter()
+            .filter(|row| row.status == DayStatus::TradingSession)
+            .map(|row| row.date)
+            .collect())
+    }
+
+    /// Every day in `range` that is NOT positively proven `Closed`, ascending — the days on
+    /// which a session may still turn out to have happened.
+    ///
+    /// The counterpart to [`Self::sessions_in`], and the only honest way to ask a FORWARD
+    /// question. A Trading Session is proven only retrospectively (a positive witness), so no
+    /// future date is ever a proven session and [`Self::sessions_in`] is empty past today by
+    /// construction. A consumer that needs a forward window — "which days might this position
+    /// still be held through?" — must therefore ask which days are not proven shut, and treat
+    /// `Unknown` as a candidate rather than as an absence.
+    ///
+    /// Proof preservation runs the other way here, and deliberately: `sessions_in` excludes
+    /// `Unknown` so an ordinal cannot move, and this INCLUDES it so a forward window cannot be
+    /// short. Each errs toward the answer that fails closed for its own caller.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryError::OutOfRange`] when the range leaves the materialized window.
+    pub fn candidate_sessions_in(&self, range: &DateRange) -> Result<Vec<NaiveDate>, QueryError> {
+        Ok(self
+            .rows_in_range(range)?
+            .into_iter()
+            .filter(|row| row.status != DayStatus::Closed)
+            .map(|row| row.date)
+            .collect())
+    }
+
     /// Resolve a row's id refs into a [`DayFact`]. Reference integrity is a load invariant
     /// (no dangling refs), so every id resolves; a defensively-dropped id would only ever
     /// under-report, never fabricate.

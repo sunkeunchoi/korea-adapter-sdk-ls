@@ -1448,7 +1448,11 @@ fn build_engine(
 /// R10: take the top `target_m` of the ranked list **from those not already held**.
 /// The already-held exclusion runs first — a held symbol is `Excluded`, and the
 /// remaining ranked symbols past `target_m` are `Passed`.
-fn resolve_take(
+///
+/// Shared with the rehearsal runner (U9) rather than re-derived there: the take IS the
+/// strategy's entry rule, and two implementations of it would be two strategies whose
+/// backtest and live results are not comparable.
+pub(crate) fn resolve_take(
     ranked: &[String],
     held: &BTreeSet<InstrumentId>,
     by_symbol: &HashMap<String, InstrumentId>,

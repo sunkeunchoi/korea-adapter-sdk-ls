@@ -26,6 +26,7 @@ use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::runner::live::{
     run_live_session, LiveDriverConfig, LiveManifestParts, LiveSessionContext, LiveSessionHandles,
     LiveTeardownSession, SessionAuthority, SessionClock, SessionIdentity,
+    SessionObservations,
 };
 use nautilus_ls_lab::runner::pnl::MarkPolicy;
 use nautilus_ls_lab::runner::watchdog::{
@@ -191,6 +192,10 @@ fn driver_cfg(keepalive: &Path) -> LiveDriverConfig {
         cancel_attempts: 1,
         flat_attempts: 1,
         starting_balance: 10_000_000.0,
+        // U9's field. Empty here for the same reason it is empty on a real ladder mount:
+        // every position a ladder session holds was opened by it, so every one has a
+        // published mark and no book stop needs to stand in for one.
+        book_stop_floors: std::collections::HashMap::new(),
     }
 }
 
@@ -237,6 +242,8 @@ fn ctx_with(
         manifest,
         symbols,
         trading_date: "20260725".to_string(),
+        // U9's field. The ladder's runner records none of the rehearsal row types.
+        observations: SessionObservations::new(),
     }
 }
 

@@ -1144,3 +1144,41 @@ fn u6_builder_stamps_id_and_source_id_for_u14() {
         DayStatus::TradingSession
     );
 }
+
+/// U9: the ordered session accessor a consumer that NUMBERS sessions reads.
+///
+/// Proof preservation carries through unchanged — an `Unknown` day is not a session until it
+/// is proven one. That matters more here than for a presence query: a consumer numbering
+/// sessions uses the index as a durable ordinal, so counting an `Unknown` optimistically
+/// would silently renumber every later session the moment the calendar resolved it, and a
+/// multi-session hold measured as a difference of two ordinals would change length without
+/// anything about the position changing.
+#[test]
+fn sessions_in_returns_only_proven_sessions_in_order() {
+    let cal = queryable_calendar();
+    let v = view(&cal);
+    let whole = DateRange::inclusive(d(2010, 1, 1), d(2010, 1, 10)).unwrap();
+
+    assert_eq!(
+        v.sessions_in(&whole).unwrap(),
+        vec![d(2010, 1, 4), d(2010, 1, 5), d(2010, 1, 10)],
+        "ascending, and the 01-03 / 01-07 Unknowns are not sessions"
+    );
+    assert_eq!(
+        v.session_count(&whole).unwrap(),
+        (3, Some(d(2010, 1, 10))),
+        "the count and the last session agree with the ordered form"
+    );
+
+    // An empty span is a proven zero, not an error — the same reading `presence` gives it.
+    assert_eq!(v.sessions_in(&DateRange::empty()).unwrap(), Vec::<NaiveDate>::new());
+    assert_eq!(v.session_count(&DateRange::empty()).unwrap(), (0, None));
+
+    // And a span leaving the materialized window is a typed refusal, never a short read:
+    // a truncated session list would hand a consumer a silently wrong ordinal.
+    let past_end = DateRange::inclusive(d(2010, 1, 1), d(2010, 1, 30)).unwrap();
+    assert!(matches!(
+        v.sessions_in(&past_end),
+        Err(QueryError::OutOfRange { .. })
+    ));
+}

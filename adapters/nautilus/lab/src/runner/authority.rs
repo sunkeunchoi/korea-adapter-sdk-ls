@@ -47,6 +47,45 @@ impl MountAuthorization {
     }
 }
 
+/// The [`SessionAuthority`] a REHEARSAL session runs under (U9, KTD3) — the sibling
+/// [`MountAuthorization::session_authority`] names, and the reason that conversion lives
+/// here.
+///
+/// The two lanes differ in **exactly two values**: `dispatch` is `None`, and the sink is a
+/// [`RehearsalLedger`](crate::runner::watchdog::RehearsalLedger) rather than a
+/// [`ChainTripSink`](crate::runner::watchdog::ChainTripSink). Everything downstream —
+/// `is_rehearsal()`, the KTD2 manifest label, `stage_and_finalize`'s ladder-only tail, the
+/// `mount_verdict` arm — reads off those two, so this constructor is the single place a
+/// rehearsal's lane identity is decided.
+///
+/// Unlike the ladder's, this is INFALLIBLE: the ladder's opens a `DispatchChain` (which
+/// creates `dispatch/` as a side effect), and not doing that is the whole point — a
+/// rehearsal home never grows the ladder's authorization store. The ledger is a path, and
+/// it is created on first append, not here.
+///
+/// The `run_id` is minted by the caller rather than derived here, because a rehearsal has
+/// no consumption marker to have recorded one already — [`run_rehearsal`] mints it at mount
+/// time from the same [`crate::artifacts::run_id`] the ladder uses, so both lanes' run
+/// directories are named identically.
+///
+/// [`run_rehearsal`]: crate::runner::live::rehearsal::run_rehearsal
+#[must_use]
+pub fn authorize_rehearsal(
+    data_home: &std::path::Path,
+    run_id: String,
+    lane_hash: String,
+    trading_env: String,
+) -> SessionAuthority {
+    SessionAuthority {
+        run_id,
+        lane_hash,
+        trading_env,
+        // The two fields that ARE the lane.
+        dispatch: None,
+        trips: Arc::new(crate::runner::watchdog::RehearsalLedger::new(data_home)),
+    }
+}
+
 /// The authority ONE live session runs under (U8, KTD3) — everything the driver, the
 /// watchdog, and the finalize path need to know about who authorized this session, with no
 /// reference to the ladder's dispatch store.

@@ -393,26 +393,7 @@ pub async fn check_flat_start_on(sdk: &LsSdk) -> AdapterResult<()> {
 ///
 /// [`AdapterError::Config`] naming the missing, extra and differing symbols.
 fn compare_book(rows: &[T0424OutBlock1], expected: &ExpectedBook) -> AdapterResult<()> {
-    let mut reported: BTreeMap<String, i64> = BTreeMap::new();
-    let mut unparseable: Vec<String> = Vec::new();
-    for row in rows {
-        let symbol = row.expcode.trim().to_string();
-        match row.janqty.trim().parse::<i64>() {
-            Ok(qty) if qty > 0 => {
-                *reported.entry(symbol).or_insert(0) += qty;
-            }
-            Ok(_) => {} // janqty <= 0 — listed but not held.
-            Err(_) => unparseable.push(format!("{symbol} janqty={:?}", row.janqty.trim())),
-        }
-    }
-    if !unparseable.is_empty() {
-        return Err(AdapterError::Config(format!(
-            "book gate: {} holding row(s) carry an unparseable balance ({}) — a garbage balance \
-             is never read as \"0 = not held\"; refusing (fail-closed)",
-            unparseable.len(),
-            unparseable.join(", ")
-        )));
-    }
+    let mut reported = held_quantities(rows)?;
 
     let mut missing: Vec<String> = Vec::new();
     let mut differing: Vec<String> = Vec::new();
@@ -474,8 +455,62 @@ fn compare_book(rows: &[T0424OutBlock1], expected: &ExpectedBook) -> AdapterResu
 ///
 /// [`AdapterError::Config`] with the offending symbols/orders named.
 pub async fn verify_book_on(sdk: &LsSdk, expected: &ExpectedBook) -> AdapterResult<()> {
+    verify_book_capturing(sdk, expected).await.map(|_| ())
+}
+
+/// The held quantity per symbol, summed across `jangb` tranches (U9).
+///
+/// Fails CLOSED on an unparseable `janqty`, because every caller uses this to decide what
+/// the account holds: a garbage balance read as "0 = not held" would drop a real position
+/// from a book comparison AND from the snapshot the next session inherits.
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] naming the offending rows.
+pub fn held_quantities(rows: &[T0424OutBlock1]) -> AdapterResult<BTreeMap<String, i64>> {
+    let mut reported: BTreeMap<String, i64> = BTreeMap::new();
+    let mut unparseable: Vec<String> = Vec::new();
+    for row in rows {
+        let symbol = row.expcode.trim().to_string();
+        match row.janqty.trim().parse::<i64>() {
+            Ok(qty) if qty > 0 => {
+                *reported.entry(symbol).or_insert(0) += qty;
+            }
+            Ok(_) => {} // janqty <= 0 — listed but not held.
+            Err(_) => unparseable.push(format!("{symbol} janqty={:?}", row.janqty.trim())),
+        }
+    }
+    if !unparseable.is_empty() {
+        return Err(AdapterError::Config(format!(
+            "book gate: {} holding row(s) carry an unparseable balance ({}) — a garbage balance \
+             is never read as \"0 = not held\"; refusing (fail-closed)",
+            unparseable.len(),
+            unparseable.join(", ")
+        )));
+    }
+    Ok(reported)
+}
+
+/// [`verify_book_on`] that also hands back WHAT it saw (U9, KTD11).
+///
+/// The rehearsal's teardown needs both halves of one read: the verdict (does the account
+/// match what this session intended to end holding?) and the snapshot (`rehearsal/book.json`
+/// is written from the broker's view, not from the ledger's). Doing that with two calls
+/// would read t0424 twice and let the two reads disagree — the snapshot could then record a
+/// book the verdict never approved, which is precisely the state the next session's
+/// pre-mount probe exists to refuse.
+///
+/// # Errors
+///
+/// Whatever [`verify_book_on`] refuses on.
+pub async fn verify_book_capturing(
+    sdk: &LsSdk,
+    expected: &ExpectedBook,
+) -> AdapterResult<BTreeMap<String, i64>> {
     check_stranded_orders_on(sdk).await?;
-    compare_book(&collect_holdings_on(sdk).await?, expected)
+    let rows = collect_holdings_on(sdk).await?;
+    compare_book(&rows, expected)?;
+    held_quantities(&rows)
 }
 
 /// The composed flat check over a bare SDK handle (t0425 resting orders, then t0424

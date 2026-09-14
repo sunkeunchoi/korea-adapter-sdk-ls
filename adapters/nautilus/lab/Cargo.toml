@@ -36,6 +36,7 @@ name = "lab-research"
 path = "src/bin/lab-research.rs"
 
 [dependencies]
+async-trait = "0.1"
 # The adapter, consumed by path — the lab reuses its ingest/catalog, execution lane,
 # rules, scrub, and locks. The adapter ships NO strategy; the lab is where strategy
 # code lives (KTD1).

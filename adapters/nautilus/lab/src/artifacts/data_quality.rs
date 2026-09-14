@@ -130,9 +130,69 @@ pub struct DataQualityReport {
     /// `None` for a legacy run; absent from prior artifacts (`serde(default)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier_composition: Option<Vec<TierCompositionEntry>>,
+    /// Held symbols that received no bar on a rehearsal session (U9, KTD12). A TYPED row
+    /// rather than an observation line, because the backtest's policy for the same
+    /// condition is to ABORT (`HeldSymbolMissingBar`) while live keeps the holding — so the
+    /// comparison report has to be able to count the divergence, not grep for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_symbol_gaps: Vec<HeldSymbolGap>,
+    /// Measured backtest-vs-live divergences from a rehearsal session (U9, KTD4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rehearsal_divergences: Vec<RehearsalDivergence>,
     /// Free-form observations (scrubbed at write time — the one free-text carrier).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observations: Vec<String>,
+}
+
+/// One held symbol that produced no usable bar this session (U9, KTD12).
+///
+/// The holding is KEPT: a trading halt is not evidence the position should be exited, and
+/// the stop/expiry judgment is deferred to the next valid bar. Recording it typed is what
+/// lets the comparison report separate "the live run held through a halt" from "the live
+/// run and the backtest disagreed about a price".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeldSymbolGap {
+    /// The instrument id the gap is for.
+    pub instrument_id: String,
+    /// The KST session date (`YYYY-MM-DD`).
+    pub session_date: String,
+    /// Why no bar was usable (an empty t8407 row, an unparseable price, …).
+    pub reason: String,
+}
+
+/// What kind of backtest-vs-live divergence a rehearsal row records (U9, KTD4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RehearsalDivergenceKind {
+    /// The decision was taken on the 15:20 bar but filled at the 15:30 closing price —
+    /// one of the two divergences KTD4 bounds the mechanism to, and it is measured on
+    /// EVERY order, not only the ones that moved.
+    DecisionVsClose,
+    /// An entry order that did not fill in the closing auction. The backtest's frozen
+    /// mechanism always fills at the close, so an unfilled entry is a live-only outcome —
+    /// and the leg that does open carries the FILLED quantity, not the intended one.
+    ///
+    /// The residue those orders leave is deliberately not a fourth variant: the fail-closed
+    /// teardown cancels it and records the fact in `teardown_retries` + the run's ABNORMAL
+    /// verdict, so a row here would restate a typed field that already exists.
+    UnfilledEntry,
+}
+
+/// One measured divergence between the frozen mechanism and what the rehearsal did (U9).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RehearsalDivergence {
+    /// Which divergence class this row is.
+    pub kind: RehearsalDivergenceKind,
+    /// The instrument id it concerns.
+    pub instrument_id: String,
+    /// The 15:20 decision price in integer KRW, when the row has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_price: Option<i64>,
+    /// The realized/closing price in integer KRW, when the row has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realized_price: Option<i64>,
+    /// The human-readable specifics (scrubbed at write time with the rest of the report).
+    pub detail: String,
 }
 
 impl DataQualityReport {
@@ -154,6 +214,8 @@ impl DataQualityReport {
             paper_stage: None,
             universe_snapshot,
             tier_composition: None,
+            held_symbol_gaps: Vec::new(),
+            rehearsal_divergences: Vec::new(),
             observations: Vec::new(),
         }
     }
