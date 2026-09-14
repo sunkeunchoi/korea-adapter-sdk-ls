@@ -116,10 +116,16 @@ dst_count="$(find "$staging/catalog" -type f | wc -l | tr -d ' ')"
 [[ "$src_count" == "$dst_count" ]] \
   || fail "the clone holds $dst_count catalog file(s) but the source has $src_count to copy"
 
-# Re-checked here, because `mv` onto a directory that appeared meanwhile would nest the clone
-# INSIDE it rather than refusing.
+# The re-check is for the MESSAGE; `os.rename` is what makes the publish safe. `mv` onto a directory
+# that appeared between the check and the move nests the clone INSIDE it and still exits 0 — so two
+# bootstraps racing would leave one rehearsal home containing another, both looking healthy. POSIX
+# rename refuses a non-empty destination outright (ENOTEMPTY) and cannot nest, which closes the window
+# the check alone leaves open.
 [[ -e "$DEST_HOME" || -L "$DEST_HOME" ]] && fail "$DEST_HOME appeared while the clone was being built"
-mv "$staging" "$DEST_HOME" || fail "could not publish $staging as $DEST_HOME"
+python3 -c '
+import os, sys
+os.rename(sys.argv[1], sys.argv[2])' "$staging" "$DEST_HOME" \
+  || fail "could not publish $staging as $DEST_HOME"
 trap - EXIT
 say "rehearsal home ready: $DEST_HOME ($dst_count catalog files)"
 say "next: LS_SM_PROFILE=daily-rehearsal ./session-morning.sh --dry-run"

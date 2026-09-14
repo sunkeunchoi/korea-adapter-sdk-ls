@@ -583,9 +583,35 @@ fi
 # (ensure_catalog_writable), but only at step [7] — after the witness probe, the fetch, and a calendar
 # ACTIVATION have already been spent against a run that can never advance. Both marker locations the
 # Rust guard reads are checked, so a misplaced marker protects here exactly as it does there.
-for marker in "$DATA_HOME/$FROZEN_MARKER" "$CATALOG/$FROZEN_MARKER"; do
+#
+# A LINK IS THE HOLE BOTH MARKER CHECKS LEAVE. `LS_SM_DATA_HOME` accepts any absolute home, and both
+# this loop and the Rust guard compare LOGICAL paths — so a home whose `catalog/` is a symlink into
+# the judgment catalog carries no marker on any path either of them looks at, while the accumulate
+# writes through the link into the frozen bars. The leaf is refused outright and the marker is looked
+# for on the catalog's REAL path as well. Only the LEAF is tested for -L, never an ancestor: macOS
+# resolves TMPDIR under /var -> /private/var, so refusing on any symlinked ancestor would refuse every
+# run from a temp tree (the harness's own fixture repos among them).
+# The deeper fix — canonicalizing inside nautilus_ls::ingest::ensure_catalog_writable, which has the
+# same logical-path blind spot — belongs to the Rust guard and is recorded as follow-up, not done here.
+for leaf in "$DATA_HOME" "$CATALOG"; do
+  if [[ -L "$leaf" ]]; then
+    echo "error: $leaf is a symlink. A linked data home or catalog defeats the FROZEN-marker" >&2
+    echo "       refusal below AND the ingest's own write guard — both compare logical paths, so" >&2
+    echo "       an accumulate would write through the link into whatever it points at. Point" >&2
+    echo "       LS_SM_DATA_HOME at a real directory." >&2
+    exit 64
+  fi
+done
+real_catalog="$(python3 -c '
+import os, sys
+real = os.path.realpath(sys.argv[1])
+print(real); print(os.path.dirname(real))' "$CATALOG" 2>/dev/null)"
+real_catalog_paths=()
+while IFS= read -r line; do [[ -n "$line" ]] && real_catalog_paths+=("$line/$FROZEN_MARKER"); done <<<"$real_catalog"
+for marker in "$DATA_HOME/$FROZEN_MARKER" "$CATALOG/$FROZEN_MARKER" \
+              ${real_catalog_paths[@]+"${real_catalog_paths[@]}"}; do
   if [[ -e "$marker" ]]; then
-    echo "error: $marker exists — $DATA_HOME is a FROZEN judgment home and its catalog must never" >&2
+    echo "error: $marker exists — the catalog $DATA_HOME resolves to is FROZEN and must never" >&2
     echo "       advance. Point LS_SM_DATA_HOME at the rehearsal clone (rehearsal-bootstrap.sh" >&2
     echo "       makes one) instead. Removing the marker is a governed act, never a fix for this." >&2
     exit 64
@@ -1099,12 +1125,28 @@ advanced_at_start="$(count_advanced)"
 [[ "$advanced_at_start" == "-1" ]] && die "could not read $CKPT to establish the ingest baseline"
 say "already at or past $session_compact: $advanced_at_start/$N_SYMS"
 # The daily profile's [11] warning distinguishes a basis shift THIS ingest detected from one already
-# on record, so the marks are read before the ingest can add any.
+# on record, so both records are read before the ingest can add to either.
+#
+# TWO RECORDS, because a completed heal leaves NOTHING in the first one. `shifted` holds marks that are
+# still PENDING: ls-ingest marks a shift, heals it inside the same accumulate, and on success calls
+# clear_shifted and appends a RebaseEvent — so by the time [11] runs, this morning's split or dividend
+# on a held leg is visible only in `rebase_events`. (An INCOMPLETE heal never advances the watermark,
+# so step [7]'s partial-ingest refusal fires long before [11].) Reading only `shifted` therefore misses
+# exactly the case the warning exists for. `rebase_events` is a bounded list whose oldest entries are
+# evicted, so the before-state is captured as a SET of identifying tuples rather than a count: an
+# eviction removes an old tuple and can never manufacture a new one.
 shifted_before="{}"
+rebase_before="[]"
 if [[ "$profile" == "daily-rehearsal" ]]; then
-  shifted_before="$(python3 -c "
+  read -r shifted_before rebase_before <<<"$(python3 -c "
 import json,sys
-print(json.dumps(json.load(open(sys.argv[1])).get('shifted') or {}))" "$CKPT" 2>/dev/null)" \
+c = json.load(open(sys.argv[1]))
+events = [[e.get('instrument'), e.get('bar_type'), e.get('detected'), e.get('healed')]
+          for e in (c.get('rebase_events') or [])]
+print(json.dumps(c.get('shifted') or {}, separators=(',', ':')),
+      json.dumps(events, separators=(',', ':')))" "$CKPT" 2>/dev/null)" \
+    || die "could not read the adjustment-basis marks from $CKPT before the ingest"
+  [[ -n "$shifted_before" && -n "$rebase_before" ]] \
     || die "could not read the adjustment-basis marks from $CKPT before the ingest"
 fi
 
@@ -1296,11 +1338,21 @@ $day_json"
   # Every check reports its own row, and every failing row is reported before the verdict — an
   # operator fixing the first NO-GO should not discover the second on the re-run.
   python3 - "$OUT_UNIVERSE" "$mount_date" "$CKPT" "$BOOK" "$previous_proven" "$shifted_before" \
-            "$BOOK_VERSION" "$SESSION_ORDINAL_EPOCH" <<'PY'
+            "$BOOK_VERSION" "$SESSION_ORDINAL_EPOCH" "$rebase_before" <<'PY'
 import json, os, sys
 (universe_path, mount_date, ckpt_path, book_path, previous, shifted_before_json,
- book_version, epoch) = sys.argv[1:9]
+ book_version, epoch, rebase_before_json) = sys.argv[1:10]
 nogo, warn = [], []
+
+
+def _is_date(value):
+    try:
+        import datetime
+        datetime.date.fromisoformat(str(value).strip())
+        return True
+    except (TypeError, ValueError):
+        return False
+
 
 try:
     universe = json.load(open(universe_path))
@@ -1321,6 +1373,8 @@ try:
     checkpoint = json.load(open(ckpt_path))
     daily = sorted(v for k, v in checkpoint["watermarks"].items() if k.endswith("|1-DAY"))
     shifted_now = checkpoint.get("shifted") or {}
+    rebase_now = [[e.get("instrument"), e.get("bar_type"), e.get("detected"), e.get("healed")]
+                  for e in (checkpoint.get("rebase_events") or [])]
     if not daily:
         nogo.append("the checkpoint holds no daily watermark")
     elif daily[0] < compact_previous:
@@ -1330,7 +1384,7 @@ try:
     else:
         print(f"  watermarks: all {len(daily)} daily at or past {previous}")
 except Exception as exc:
-    shifted_now = {}
+    shifted_now, rebase_now = {}, []
     nogo.append(f"could not read {ckpt_path} ({exc})")
 
 # The book, judged the way RehearsalBook::load + assert_fresh judge it: an absent file is a flat
@@ -1357,19 +1411,81 @@ else:
             nogo.append(f"book is stamped {stamp}, BEFORE the previous proven session {previous} — "
                         f"a session's teardown did not write it; repair it against the account")
         else:
-            print(f"  book: stamped {stamp} (previous proven session {previous}), {len(legs)} held leg(s)")
+            # Every field the broker cannot confirm, checked the way RehearsalBook::validate_fields
+            # checks it (lab/src/runner/live_daily/book.rs). A leg missing one of these refuses the
+            # MOUNT, so a GO here that the runner then rejects would send the operator to the gateway
+            # at 15:15 to discover it. The stop must sit below the entry because the entry-fixed risk
+            # per share IS entry - stop.
+            bad, seen = [], set()
+            for leg in legs:
+                shcode = str(leg.get("shcode", "")).strip()
+                qty, entry = leg.get("quantity"), leg.get("entry_price")
+                stop, prior = leg.get("stop_price"), leg.get("prior_close")
+                entered_under = str(leg.get("entered_under", "")).strip()
+                order_id = str(leg.get("opening_order_id", "")).strip()
+                try:
+                    entry_ok = float(entry) > 0
+                    stop_ok = float(stop) > 0
+                    below = float(stop) < float(entry)
+                except (TypeError, ValueError):
+                    entry_ok = stop_ok = below = False
+                if len(shcode) != 6 or not shcode.isdigit():
+                    why = "shcode is not six digits"
+                elif shcode in seen:
+                    why = "duplicate leg for this symbol"
+                elif not isinstance(qty, int) or isinstance(qty, bool) or qty <= 0:
+                    why = f"quantity {qty!r} is not a positive whole number"
+                elif not entry_ok:
+                    why = f"entry_price {entry!r} is not a positive number"
+                elif not stop_ok:
+                    why = f"stop_price {stop!r} is not a positive number"
+                elif not below:
+                    why = f"stop_price {stop!r} is not below entry_price {entry!r}"
+                elif not isinstance(prior, int) or isinstance(prior, bool) or prior <= 0:
+                    why = f"prior_close {prior!r} is not positive"
+                elif not _is_date(leg.get("entry_date")):
+                    why = f"entry_date {leg.get('entry_date')!r} is not a YYYY-MM-DD date"
+                elif not entered_under:
+                    why = "entered_under is empty"
+                elif not order_id:
+                    why = "opening_order_id is empty"
+                else:
+                    why = None
+                seen.add(shcode)
+                if why:
+                    bad.append(f"{shcode or '<no shcode>'}: {why}")
+            if bad:
+                nogo.append(f"book carries {len(bad)} unusable leg(s) the runner would refuse — "
+                            + "; ".join(bad))
+            else:
+                print(f"  book: stamped {stamp} (previous proven session {previous}), {len(legs)} held leg(s)")
     except Exception as exc:
         nogo.append(f"book {book_path} does not parse ({exc})")
 
 # R22's shape, as a WARNING only: the strategy refuses a NEW entry into a shifted symbol itself, but
 # a leg already held across a shift has a stop and a prior close on the old basis.
+#
+# BOTH RECORDS, for the reason step [7] captures both: a shift this morning's accumulate detected AND
+# healed has already been cleared out of `shifted` and survives only as a rebase event, while a mark
+# still sitting in `shifted` is one no heal has completed. Reading only the first would silence the
+# warning in exactly the case it was written for.
 shifted_before = json.loads(shifted_before_json)
+rebase_before = {tuple(e) for e in json.loads(rebase_before_json)}
 for leg in legs:
-    key = f"{str(leg.get('shcode', '')).strip()}.XKRX|1-DAY"
-    if key in shifted_now:
-        when = "NEW this run" if key not in shifted_before else "already on record"
-        warn.append(f"held {leg.get('shcode')} (entered {leg.get('entry_date')}) is marked "
-                    f"adjustment-basis shifted, detected {shifted_now[key]} ({when})")
+    shcode = str(leg.get("shcode", "")).strip()
+    key = f"{shcode}.XKRX|1-DAY"
+    entered = leg.get("entry_date")
+    healed = [e for e in rebase_now
+              if e[0] == f"{shcode}.XKRX" and e[1] == "1-DAY" and tuple(e) not in rebase_before]
+    if healed:
+        detected, when_healed = healed[-1][2], healed[-1][3]
+        warn.append(f"held {shcode} (entered {entered}) was RE-BASED this run — "
+                    f"shift detected {detected}, healed {when_healed}; its stop and prior close "
+                    f"are still on the old basis")
+    elif key in shifted_now:
+        when = "NEW this run" if key not in shifted_before else "already on record, heal pending"
+        warn.append(f"held {shcode} (entered {entered}) is marked adjustment-basis shifted, "
+                    f"detected {shifted_now[key]} ({when})")
 
 for w in warn:
     print(f"  WARNING: {w}")
