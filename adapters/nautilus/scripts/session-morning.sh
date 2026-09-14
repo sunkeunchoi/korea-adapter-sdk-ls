@@ -27,6 +27,23 @@
 # fields. Those are operator-only, nonce-gated, and TTY-gated by design. This script stops
 # at a GO/NO-GO report and hands the operator a checklist.
 #
+# TWO PROFILES (plan 2026-09-08-1215 U11, R25). `LS_SM_PROFILE` picks which head the morning
+# prepares; the chain's shape — calendar [1]-[6], accumulate [7], gates [8]-[9] — is shared.
+#   orb              (default) the ORB head. Byte-for-byte the chain as it was before profiles
+#                    existed: home data/turn4-fresh, the 09:05/09:10 clocks, and [10] resolving a
+#                    mount universe from the live t8407 open, which is why it waits for 09:00.
+#   daily-rehearsal  the daily-resolution rehearsal. Home data/rehearsal-daily (made once by
+#                    rehearsal-bootstrap.sh), accumulating every daily symbol in its checkpoint,
+#                    the 15:00/15:10 clocks (the decision is the 15:20 close-auction bar and the
+#                    mount cutoff is 15:15), [10] swapped for the OFFLINE `lab-mount-universe
+#                    --daily`, and three more conditions at [11]: every daily watermark has reached
+#                    the previous PROVEN trading session, `rehearsal/book.json` parses and is not
+#                    stamped before that session (a Monday reads Friday's book), and any held
+#                    symbol whose adjustment basis shifted is reported as a WARNING row.
+# Neither profile runs `lab-live`; `--dry-run` asserts that structurally. Both refuse a data home
+# carrying the judgment catalog's FROZEN-20260812 marker before any traffic (exit 64): the frozen
+# home must never be advanced, and the ingest would refuse only after the calendar work was spent.
+#
 # Usage:
 #   ./session-morning.sh --dry-run              # print the resolved sequence, zero traffic
 #   ./session-morning.sh --self-test            # exercise the pace check, zero traffic
@@ -35,14 +52,16 @@
 #   ./session-morning.sh --stop-before-activate # stop after the diff for a manual review
 #
 # Env (all optional — every default is resolved below and printed by --dry-run):
+#   LS_SM_PROFILE       orb | daily-rehearsal                        (default orb)
+#   LS_SM_DATA_HOME     ABSOLUTE data home  (default data/turn4-fresh; daily: data/rehearsal-daily)
 #   LS_SM_SESSION_DATE  session to ingest, the PREVIOUS session      (default 2026-07-29)
 #   LS_SM_MOUNT_DATE    session to resolve a universe FOR, today     (default 2026-07-30)
-#   LS_SM_INGEST_BY     ingest-completion target HH:MM local         (default 09:05)
-#   LS_SM_UNIVERSE_BY   universe-in-hand target HH:MM local          (default 09:10)
+#   LS_SM_INGEST_BY     ingest-completion target HH:MM local         (default 09:05; daily 15:00)
+#   LS_SM_UNIVERSE_BY   universe-in-hand target HH:MM local          (default 09:10; daily 15:10)
 #   LS_SM_NOW           override "now" as HH:MM — pace testing ONLY  (default: real clock)
 #   LS_SM_POLL_SECS     ingest progress poll interval, 1..30 seconds (default 30)
 #   LS_SM_OPERATOR      operator id written into the calendar approval (default sunkeunchoi)
-#   LS_SM_LOOKBACK      ingest coverage floor YYYYMMDD               (default 20260518)
+#   LS_SM_LOOKBACK      ingest coverage floor YYYYMMDD     (default 20260518; daily 20160801)
 #   LS_SM_ALLOW_STALE_BINARIES  0|1 — proceed on DELIBERATELY PINNED binaries (default 0).
 #                       Allowed on a real run and announced in the transcript. Bypasses the
 #                       preflight mtime axis ONLY; a missing registered guard is never bypassable.
@@ -73,7 +92,30 @@ R="$(cd -- "$script_dir/../../.." && pwd)"          # the ONE repo-root variable
 NAUT="$R/adapters/nautilus"
 BIN="$NAUT/target/debug"
 STATE="$NAUT/state"
-DATA_HOME="$R/data/turn4-fresh"
+
+# The profile decides the defaults below and nothing else about the paths. An unknown profile or a
+# relative LS_SM_DATA_HOME is refused rather than defaulted: a typo that silently fell back to the
+# ORB home would accumulate into the wrong catalog, and a relative home would resolve against
+# whatever the caller's CWD happens to be — the defect --state-root exists to keep out of step [3].
+profile="${LS_SM_PROFILE:-orb}"
+case "$profile" in
+  orb)
+    default_data_home="$R/data/turn4-fresh"
+    default_ingest_by="09:05"; default_universe_by="09:10"; default_lookback="20260518" ;;
+  daily-rehearsal)
+    default_data_home="$R/data/rehearsal-daily"
+    # 15:00 / 15:10: the daily decision is the 15:20 close-auction bar and the rehearsal mount
+    # cutoff is 15:15 (lab/config/rehearsal-envelope.json), so the universe must be in hand by 15:10.
+    # The lookback is the daily catalog's own floor; it only governs a symbol the checkpoint has
+    # never seen, and every symbol this chain passes is read FROM the checkpoint.
+    default_ingest_by="15:00"; default_universe_by="15:10"; default_lookback="20160801" ;;
+  *) echo "error: LS_SM_PROFILE must be 'orb' or 'daily-rehearsal' (got '$profile')." >&2; exit 64 ;;
+esac
+DATA_HOME="${LS_SM_DATA_HOME:-$default_data_home}"
+if [[ "$DATA_HOME" != /* ]]; then
+  echo "error: LS_SM_DATA_HOME must be an ABSOLUTE path (got '$DATA_HOME')." >&2
+  exit 64
+fi
 CATALOG="$DATA_HOME/catalog"
 CKPT="$CATALOG/ingest-checkpoint.json"
 SNAPSHOT="$STATE/krx.calendar.json"
@@ -86,11 +128,23 @@ session_date="${LS_SM_SESSION_DATE:-2026-07-29}"      # ingest THIS session
 mount_date="${LS_SM_MOUNT_DATE:-2026-07-30}"          # resolve a universe FOR this one
 session_compact="${session_date//-/}"
 mount_compact="${mount_date//-/}"
-ingest_by="${LS_SM_INGEST_BY:-09:05}"
-universe_by="${LS_SM_UNIVERSE_BY:-09:10}"
-lookback="${LS_SM_LOOKBACK:-20260518}"
+ingest_by="${LS_SM_INGEST_BY:-$default_ingest_by}"
+universe_by="${LS_SM_UNIVERSE_BY:-$default_universe_by}"
+lookback="${LS_SM_LOOKBACK:-$default_lookback}"
 operator="${LS_SM_OPERATOR:-sunkeunchoi}"
-OUT_UNIVERSE="$DATA_HOME/mount-universe-$mount_compact.json"
+if [[ "$profile" == "daily-rehearsal" ]]; then
+  REHEARSAL_DIR="$DATA_HOME/rehearsal"
+  BOOK="$REHEARSAL_DIR/book.json"
+  OUT_UNIVERSE="$REHEARSAL_DIR/daily-universe-$mount_compact.json"
+else
+  OUT_UNIVERSE="$DATA_HOME/mount-universe-$mount_compact.json"
+fi
+# The judgment catalog's marker (nautilus_ls::ingest::FROZEN_CATALOG_MARKER) and the book schema the
+# rehearsal runner restores (BOOK_VERSION / SESSION_ORDINAL_EPOCH in lab/src/runner/live_daily.rs).
+# session-morning.test.sh asserts all three against those Rust sources.
+FROZEN_MARKER="FROZEN-20260812"
+BOOK_VERSION=2
+SESSION_ORDINAL_EPOCH="2010-01-04"
 APPROVAL="$STATE/refresh-$(date +%Y%m%d).approval.json"   # keyed on RUN date, not through-date
 INPUTS="$STATE/refresh-$(date +%Y%m%d).calendar-inputs.json"
 # FETCH_CKPT is defined AFTER the window derivation below — its name is keyed on the
@@ -525,6 +579,26 @@ if [[ -n "${LS_SM_NOW:-}" ]] && (( ! dry_run && ! self_test )); then
   echo "       Unset it, or pass --dry-run / --self-test." >&2
   exit 64
 fi
+# THE FROZEN JUDGMENT HOME, refused before any traffic. ls-ingest refuses it too
+# (ensure_catalog_writable), but only at step [7] — after the witness probe, the fetch, and a calendar
+# ACTIVATION have already been spent against a run that can never advance. Both marker locations the
+# Rust guard reads are checked, so a misplaced marker protects here exactly as it does there.
+for marker in "$DATA_HOME/$FROZEN_MARKER" "$CATALOG/$FROZEN_MARKER"; do
+  if [[ -e "$marker" ]]; then
+    echo "error: $marker exists — $DATA_HOME is a FROZEN judgment home and its catalog must never" >&2
+    echo "       advance. Point LS_SM_DATA_HOME at the rehearsal clone (rehearsal-bootstrap.sh" >&2
+    echo "       makes one) instead. Removing the marker is a governed act, never a fix for this." >&2
+    exit 64
+  fi
+done
+# A daily-rehearsal home is one rehearsal-bootstrap.sh made: it carries rehearsal/. Without it this is
+# some other home — most likely an ORB minute home — and [11] would have no book to judge.
+if [[ "$profile" == "daily-rehearsal" && ! -d "$REHEARSAL_DIR" ]]; then
+  echo "error: $DATA_HOME has no rehearsal/ directory, so it is not a bootstrapped rehearsal home." >&2
+  echo "       Create one with adapters/nautilus/scripts/rehearsal-bootstrap.sh." >&2
+  exit 64
+fi
+[[ "$profile" == "daily-rehearsal" ]] && say "profile daily-rehearsal — data home $DATA_HOME"
 # TWO CLASSES, discriminated by LOCATION rather than by a second hand-maintained list.
 # Seven of these twelve paths are compiled artifacts under $BIN and five are state or config
 # the chain reads; only the former can be STALE, so only the former carry the freshness axes
@@ -712,6 +786,27 @@ if (( dry_run )); then
 
 [11] CATCH-UP COMPLETE report, then STOP with exit 41 (a success: catalog advanced,
      no universe in hand, nothing left to retry)."
+  elif [[ "$profile" == "daily-rehearsal" ]]; then
+    pace_line="stand down (kill the ingest, clear the lock, exit 40) as soon as the projected
+           finish passes $ingest_by — the universe must be in hand before the 15:15 mount cutoff."
+    gate_line="[8] pace gate  (ingest by $ingest_by, universe by $universe_by, decision bar 15:20)
+    stand down with minutes-remaining rather than resolve a universe that lands too late"
+    tail_line="[10] resolve the DAILY rehearsal universe  (OFFLINE: ranks and ATR come from the prior
+     daily bars in the catalog, so there is no open to wait for and no 09:00 guard)
+    env: LS_DATA_HOME=$DATA_HOME
+         LS_MOUNT_UNIVERSE_DATE=$mount_date
+         LS_MOUNT_UNIVERSE_METADATA=$UNIVERSE_METADATA
+    $BIN/lab-mount-universe --daily --out $OUT_UNIVERSE
+
+[11] GO/NO-GO report, then STOP. lab-live --rehearse-daily is the operator's.
+     previous proven session = the latest day before $mount_date that
+       $BIN/calendar-status --as-of <now UTC RFC3339> --snapshot $SNAPSHOT --day <d> --json
+       reads as trading_session
+     NO-GO unless: the universe file is for $mount_date
+                   every daily watermark >= the previous proven session
+                   $BOOK parses (version $BOOK_VERSION, epoch $SESSION_ORDINAL_EPOCH)
+                     and is not stamped BEFORE the previous proven session
+     WARNING row:  a held symbol whose adjustment basis is marked shifted"
   else
     pace_line="stand down (kill the ingest, clear the lock, exit 40) as soon as the projected
            finish passes $ingest_by — a universe that lands late takes ZERO trades."
@@ -1003,6 +1098,15 @@ start_epoch="$(date +%s)"
 advanced_at_start="$(count_advanced)"
 [[ "$advanced_at_start" == "-1" ]] && die "could not read $CKPT to establish the ingest baseline"
 say "already at or past $session_compact: $advanced_at_start/$N_SYMS"
+# The daily profile's [11] warning distinguishes a basis shift THIS ingest detected from one already
+# on record, so the marks are read before the ingest can add any.
+shifted_before="{}"
+if [[ "$profile" == "daily-rehearsal" ]]; then
+  shifted_before="$(python3 -c "
+import json,sys
+print(json.dumps(json.load(open(sys.argv[1])).get('shifted') or {}))" "$CKPT" 2>/dev/null)" \
+    || die "could not read the adjustment-basis marks from $CKPT before the ingest"
+fi
 
 ( LS_TRADING_ENV=paper \
   LS_INGEST_LANE_FILE="$LANE_ENV" \
@@ -1135,6 +1239,156 @@ Exit 41 says exactly that: a complete catch-up, NOT a stand-down (40) and NOT a 
 is no universe file to mount, and there is nothing left to retry.
 CATCHUP
   exit 41
+fi
+
+# ======================================================== daily-rehearsal [10] and [11]
+# The daily profile leaves the chain here and never reaches the ORB [10] below. What it swaps in is
+# OFFLINE: lab-mount-universe --daily ranks from the prior daily bars already in the catalog, so there
+# is no open to fetch, no lane env to pass, and none of the ORB path's pre-auction t8407 hazard that
+# the 09:00 guard exists for.
+if [[ "$profile" == "daily-rehearsal" ]]; then
+  step "[10] resolve the daily rehearsal universe for $mount_date"
+  uni_log="$(mktemp "${TMPDIR:-/tmp}/session-morning-universe.XXXXXX")" \
+    && [[ -n "$uni_log" ]] || die "could not create the universe log (mktemp failed)"
+  LS_DATA_HOME="$DATA_HOME" \
+  LS_MOUNT_UNIVERSE_DATE="$mount_date" \
+  LS_MOUNT_UNIVERSE_METADATA="$UNIVERSE_METADATA" \
+    "$BIN/lab-mount-universe" --daily --out "$OUT_UNIVERSE" 2>&1 | tee "$uni_log"
+  uni_rc="${PIPESTATUS[0]}"
+
+  step "[11] GO / NO-GO (daily rehearsal)"
+  # There is no valid non-zero outcome on this path: the ORB producer's flat-open refusal has no
+  # daily counterpart, so anything but rc 0 with a written file is NO-GO.
+  if (( uni_rc != 0 )) || [[ ! -s "$OUT_UNIVERSE" ]]; then
+    echo "  lab-mount-universe --daily rc=$uni_rc and no universe file at $OUT_UNIVERSE. NO-GO."
+    echo "  Last output:"
+    sed 's/^/    | /' "$uni_log" | tail -20
+    rm -f "$uni_log"
+    exit 1
+  fi
+  rm -f "$uni_log"
+
+  # The PREVIOUS PROVEN trading session before the mount date, asked of the REAL calendar view one
+  # day at a time rather than re-derived from the snapshot's rows here: authorization, expiry and
+  # evidence supersession all decide a day's status, and a second reading of that in Python is a
+  # mirror that can drift. Proven only — an Unknown day is skipped, exactly as the rehearsal's own
+  # session_ordinal counts — and bounded, because a calendar proving nothing for a month is a
+  # NO-GO to report, not a loop to run. Days are walked newest first, so the first hit is the answer.
+  step_as_of="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  walk_days="$(python3 -c "
+import datetime,sys
+d=datetime.date.fromisoformat(sys.argv[1])
+print(' '.join((d-datetime.timedelta(days=i)).isoformat() for i in range(1,32)))" "$mount_date")" \
+    || die "LS_SM_MOUNT_DATE '$mount_date' is not a YYYY-MM-DD date"
+  previous_proven=""
+  for day in $walk_days; do
+    day_json="$("$BIN/calendar-status" --as-of "$step_as_of" --snapshot "$SNAPSHOT" --day "$day" --json)" \
+      || die "calendar-status could not answer for $day — the book's freshness is judged on the proven
+  calendar and cannot be judged without it. Its diagnostic:
+$day_json"
+    day_status="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('day_status',''))" "$day_json" 2>/dev/null)"
+    if [[ "$day_status" == "trading_session" ]]; then previous_proven="$day"; break; fi
+  done
+  [[ -n "$previous_proven" ]] || die "the calendar proves no trading session in the 31 days before
+  $mount_date — neither the watermark nor the book can be judged."
+  say "previous proven trading session before $mount_date: $previous_proven"
+
+  # Every check reports its own row, and every failing row is reported before the verdict — an
+  # operator fixing the first NO-GO should not discover the second on the re-run.
+  python3 - "$OUT_UNIVERSE" "$mount_date" "$CKPT" "$BOOK" "$previous_proven" "$shifted_before" \
+            "$BOOK_VERSION" "$SESSION_ORDINAL_EPOCH" <<'PY'
+import json, os, sys
+(universe_path, mount_date, ckpt_path, book_path, previous, shifted_before_json,
+ book_version, epoch) = sys.argv[1:9]
+nogo, warn = [], []
+
+try:
+    universe = json.load(open(universe_path))
+    rows = universe["rows"]
+    if universe.get("session_date") != mount_date:
+        nogo.append(f"universe file is for {universe.get('session_date')!r}, not {mount_date}")
+    tradable = sum(1 for r in rows if r.get("tradable"))
+    print(f"  universe: {len(rows)} ranked symbols, {tradable} tradable, "
+          f"signal {universe.get('ranking_signal')}"
+          + (" (PLACEHOLDER — driver falsification only)" if universe.get("ranking_signal_is_placeholder") else ""))
+except Exception as exc:
+    nogo.append(f"universe file {universe_path} is not a daily universe file ({exc})")
+
+# The watermark row reads against the PROVEN calendar, not LS_SM_SESSION_DATE, so a run handed a
+# stale session date (whose default is a hardcoded literal) still NO-GOs on a catalog that is behind.
+compact_previous = previous.replace("-", "")
+try:
+    checkpoint = json.load(open(ckpt_path))
+    daily = sorted(v for k, v in checkpoint["watermarks"].items() if k.endswith("|1-DAY"))
+    shifted_now = checkpoint.get("shifted") or {}
+    if not daily:
+        nogo.append("the checkpoint holds no daily watermark")
+    elif daily[0] < compact_previous:
+        behind = sum(1 for v in daily if v < compact_previous)
+        nogo.append(f"{behind}/{len(daily)} daily watermark(s) are behind the previous proven session "
+                    f"{previous} (oldest {daily[0]})")
+    else:
+        print(f"  watermarks: all {len(daily)} daily at or past {previous}")
+except Exception as exc:
+    shifted_now = {}
+    nogo.append(f"could not read {ckpt_path} ({exc})")
+
+# The book, judged the way RehearsalBook::load + assert_fresh judge it: an absent file is a flat
+# start; an unreadable one, a foreign version or epoch, or a stamp STRICTLY older than the previous
+# proven session refuses. A stamp between that session and today is healthy — the KRX witness is
+# retrospective, so yesterday's own teardown routinely stamps a day the calendar has not proven yet.
+legs = []
+if not os.path.exists(book_path):
+    print(f"  book: {book_path} is absent — a flat start")
+else:
+    try:
+        book = json.load(open(book_path))
+        legs = book.get("legs") or []
+        stamp = (book.get("session_date") or "").strip()
+        if book.get("version") != int(book_version):
+            nogo.append(f"book version {book.get('version')!r}, but the runner restores version {book_version}")
+        elif book.get("ordinal_epoch") != epoch:
+            nogo.append(f"book counts ordinals from {book.get('ordinal_epoch')!r}, but the runner counts from {epoch}")
+        elif not stamp and not legs:
+            print("  book: empty and unstamped — a bootstrapped flat start")
+        elif not stamp:
+            nogo.append(f"book carries {len(legs)} leg(s) but no session_date stamp")
+        elif stamp < previous:
+            nogo.append(f"book is stamped {stamp}, BEFORE the previous proven session {previous} — "
+                        f"a session's teardown did not write it; repair it against the account")
+        else:
+            print(f"  book: stamped {stamp} (previous proven session {previous}), {len(legs)} held leg(s)")
+    except Exception as exc:
+        nogo.append(f"book {book_path} does not parse ({exc})")
+
+# R22's shape, as a WARNING only: the strategy refuses a NEW entry into a shifted symbol itself, but
+# a leg already held across a shift has a stop and a prior close on the old basis.
+shifted_before = json.loads(shifted_before_json)
+for leg in legs:
+    key = f"{str(leg.get('shcode', '')).strip()}.XKRX|1-DAY"
+    if key in shifted_now:
+        when = "NEW this run" if key not in shifted_before else "already on record"
+        warn.append(f"held {leg.get('shcode')} (entered {leg.get('entry_date')}) is marked "
+                    f"adjustment-basis shifted, detected {shifted_now[key]} ({when})")
+
+for w in warn:
+    print(f"  WARNING: {w}")
+if nogo:
+    print("\nNO-GO:")
+    for n in nogo:
+        print(f"  - {n}")
+    sys.exit(1)
+PY
+  (( $? == 0 )) || exit 1
+  echo
+  echo "GO. Operator checklist:"
+  echo "  in-force artifact_id: $NEW_ID"
+  echo "  LS_DATA_HOME=$DATA_HOME"
+  echo "  LS_REHEARSAL_UNIVERSE_FILE=$OUT_UNIVERSE"
+  echo "  minutes to the 15:15 mount cutoff: $(( ($(hhmm_epoch 15:15) - $(now_epoch)) / 60 ))"
+  echo
+  echo "STOPPING HERE. lab-live --rehearse-daily is attended, nonce-gated, and the operator's."
+  exit 0
 fi
 
 step "[10] resolve the mount universe for $mount_date"

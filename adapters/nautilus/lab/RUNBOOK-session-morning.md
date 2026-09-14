@@ -44,6 +44,14 @@ what it does and why; read them when something disagrees with the script.
 intent* — a success with nothing left to retry, which is why it is not `40`, and not `0` either
 (`0` is what a wrapper reads as "there is a universe at `--out`").
 
+**This runbook is the ORB profile (`LS_SM_PROFILE=orb`, the default).** The same script also
+prepares the daily-resolution paper rehearsal with `LS_SM_PROFILE=daily-rehearsal`, against the
+rehearsal home that `../scripts/rehearsal-bootstrap.sh` clones once from the frozen judgment home.
+That profile swaps step [10] for the offline `lab-mount-universe --daily` and adds book and
+proven-session checks at step [11]; the exit-code table above holds for it unchanged (it has no
+flat-open `0`). Its operator procedure belongs to the rehearsal runbook, not this one. Either profile
+refuses (`64`) a data home carrying the `FROZEN-20260812` marker.
+
 ### `--catch-up` — the two clocks stop applying
 
 The attended run polices three clocks (ingest by 09:05, universe by 09:10, opening range 09:15)
