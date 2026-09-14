@@ -235,6 +235,30 @@ pub fn seed_book_legs(ledger: &Mutex<FillLedger>, legs: &[BookLeg], observed_ns:
     seeded
 }
 
+/// The book this session INTENDS to end holding (U9, KTD6/KTD11) — symbol → quantity, for
+/// every still-open long in the shared fill ledger.
+///
+/// This is what the rehearsal's teardown asserts against the broker in place of flatness,
+/// and it needs no new bookkeeping because [`seed_book_legs`] already put the inherited legs
+/// into the same ledger the session's own fills land in. The open set after the offsetting
+/// match is therefore, by construction, "what I came in holding, plus what I bought, minus
+/// what I sold" — the definition of the intent.
+///
+/// SHORTS ARE DROPPED, not reported as negative quantities: the daily lineage is long-only,
+/// [`ExpectedBook`](nautilus_ls::execution::ExpectedBook) is a map of held longs, and a
+/// negative entry would be silently filtered there anyway. A short reaching here is a real
+/// defect (an exit with no preceding buy — the exact miscount `seed_book_legs` exists to
+/// prevent), and it surfaces as a book MISMATCH at teardown rather than as a quiet drop,
+/// because the account will report the symbol as held while the intent omits it.
+pub fn intended_book(ledger: &Mutex<FillLedger>) -> Vec<(String, i64)> {
+    account_shared(ledger)
+        .open
+        .into_iter()
+        .filter(|p| p.qty > 0)
+        .map(|p| (p.symbol, p.qty))
+        .collect()
+}
+
 /// The [`MarkPolicy`] floors an inherited book contributes (U8, KTD13): symbol → stop
 /// price, for every leg whose book row carries one.
 ///
@@ -271,13 +295,31 @@ pub fn rehearsal_breaker_basis(
             let published = marks.get(&p.symbol).copied();
             let fresh = published
                 .is_some_and(|m| (now_unix - m.last_bar_unix) <= policy.max_mark_age_secs);
-            // KTD13 makes the book's stop a FALLBACK, not a co-bound: a fresh published
-            // mark stands on its own terms (its own stop still co-bounds it, as it always
-            // has). Folding the book's stop in beside a fresh close would mark every
-            // inherited leg at its stop for the whole session — the breaker would read a
-            // stop-loss-sized drawdown on a position that never moved.
+            // KTD13 makes a stop a FALLBACK, not a co-bound — and that has to hold for the
+            // STRATEGY's published stop too, not only the book's floor.
+            //
+            // `DailyStrategy::on_bar` stamps every open leg's mark with
+            // `stop_price: Some(leg.stop)`, including the inherited legs it was seeded with,
+            // and `mark_price` takes `min(close, stop)` for a long. So an INHERITED leg whose
+            // price never moved is valued at its stop for the rest of the session, and the
+            // breaker reads a stop-loss-sized drawdown across the whole restored book on a
+            // flat day. At the frozen terms that is a fabricated loss far larger than
+            // `session_max_loss_krw`, so it trips essentially every session.
+            //
+            // The co-bound is nonetheless RIGHT for a leg opened this session: it was entered
+            // near its stop, the bound is therefore small, and "a bar close is itself up to a
+            // bar stale, so a position can be through its stop inside it" genuinely applies.
+            // The discriminator is inheritance, not lane — `floors` carries exactly the legs
+            // restored from the book — so a fresh mark stands on its close alone only for
+            // those. A session with no inherited book (including every ladder session, which
+            // passes no floors at all) is bit-identical to before.
+            let inherited = floors.contains_key(&p.symbol);
             let mark = if fresh {
-                published
+                if inherited {
+                    published.map(|m| SymbolMark { stop_price: None, ..m })
+                } else {
+                    published
+                }
             } else {
                 floors
                     .get(&p.symbol)

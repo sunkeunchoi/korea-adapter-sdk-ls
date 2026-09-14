@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "note": "U9 (KTD3). The rehearsal lane's safety envelope and session clock. This is an OPERATIONAL file, not a governance artifact: a rehearsal produces no rung evidence and counts toward no ladder N, so changing a value here re-bases nothing. The ladder's own envelope stays in preregistration.json and is untouched by this lane.",
+  "heartbeat_interval_secs": 90,
+  "session_max_loss_krw": 3000000.0,
+  "session_max_loss_basis": "3% of the 100,000,000 KRW steady-state envelope the frozen daily terms imply (target_m 8 x hold 16 x notional_per_position 781,250). A one-session breaker, so it is deliberately a fraction of the WHOLE book rather than of the 6,250,000 KRW a single session newly commits.",
+  "mount_cutoff_kst": "15:15",
+  "poll_interval_secs": 20,
+  "decision_kst": "15:20",
+  "auction_end_kst": "15:30",
+  "session_end_kst": "15:33",
+  "stop_grace_secs": 60,
+  "watchdog_tick_secs": 5,
+  "decision_read_attempts": 3,
+  "marketable_limit_ticks": 3,
+  "min_deposit_krw": 100000000,
+  "starting_balance_krw": 100000000.0
+}

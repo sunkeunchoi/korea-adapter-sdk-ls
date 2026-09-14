@@ -158,10 +158,22 @@ impl RunWriter {
         self.write_json(OBSERVATION_FILE, observation)
     }
 
-    /// Write the data-quality report, scrubbing its free-text observations first.
+    /// Write the data-quality report, scrubbing EVERY free-text field first.
+    ///
+    /// `observations` is no longer the only one: U9's `held_symbol_gaps.reason` and
+    /// `rehearsal_divergences.detail` are free text on the same artifact and reach disk by the
+    /// same path. The report's own module header promises the free text is scrubbed at write
+    /// time, and a promise that covers one field of three is the kind a later contributor
+    /// reads as covering theirs.
     pub fn write_data_quality(&self, report: &DataQualityReport) -> anyhow::Result<()> {
         let mut scrubbed = report.clone();
         scrubbed.observations = scrubbed.observations.iter().map(|s| scrub(s)).collect();
+        for gap in &mut scrubbed.held_symbol_gaps {
+            gap.reason = scrub(&gap.reason);
+        }
+        for row in &mut scrubbed.rehearsal_divergences {
+            row.detail = scrub(&row.detail);
+        }
         self.write_json(DATA_QUALITY_FILE, &scrubbed)
     }
 
