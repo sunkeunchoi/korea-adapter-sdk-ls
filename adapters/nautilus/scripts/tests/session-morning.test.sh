@@ -1456,33 +1456,27 @@ argv_from_log() { # log binary [must-contain]
   printf '%s\n' "$1" | grep -F -- "${3:-}" | sed -n "s/^$2 //p" | head -1
 }
 
-# Replay step [10]'s daily argv against the REAL producer with every LS_* unset. lab-mount-universe
-# parses its whole argv before reading any environment, so "LS_DATA_HOME is required" is reached
-# ONLY when every argument was accepted — and it stops there, before any catalog read.
-replay_real_mount() { # argv -> verdict
-  local argv="$1" out
-  [ -x "$REAL_MOUNT_BIN" ] || { printf 'nobinary'; return; }
+# Replay a daily-profile argv against a REAL binary from a foreign CWD, every LS_* already unset by
+# this harness. Each oracle is a POSITIVE signal reached only after the binary's argument parser
+# accepted everything:
+#   * lab-mount-universe parses its whole argv before reading any environment, so "LS_DATA_HOME is
+#     required" is reached ONLY when every argument was accepted — and it stops there, before any
+#     catalog read.
+#   * calendar-status on the fixture's schema-invalid snapshot lands on the typed `"load": "corrupt"`
+#     diagnostic, which it only renders after Args::parse succeeded; a bad flag prints `unknown
+#     argument` instead.
+replay_real_daily() { # binary sentinel argv -> verdict
+  local bin="$1" sentinel="$2" argv="$3" out
+  [ -x "$bin" ] || { printf 'nobinary'; return; }
   # shellcheck disable=SC2086  # fixture paths are mktemp-generated and space-free
-  out="$(cd / && "$REAL_MOUNT_BIN" $argv 2>&1)"
+  out="$(cd / && "$bin" $argv 2>&1)"
   case "$out" in
-    *"LS_DATA_HOME is required"*) printf 'accepted' ;;
+    *"$sentinel"*) printf 'accepted' ;;
     *) printf 'rejected: %s' "$(printf '%s' "$out" | tr '\n' ' ')" ;;
   esac
 }
-
-# Replay step [11]'s calendar-status argv against the REAL binary. The fixture snapshot is not
-# schema-valid, so a parsed argv lands on the typed `"load": "corrupt"` diagnostic, which the binary
-# only renders after Args::parse succeeded; a bad flag prints `unknown argument` instead.
-replay_real_status() { # argv -> verdict
-  local argv="$1" out
-  [ -x "$REAL_STATUS_BIN" ] || { printf 'nobinary'; return; }
-  # shellcheck disable=SC2086
-  out="$(cd / && "$REAL_STATUS_BIN" $argv 2>&1)"
-  case "$out" in
-    *'"load": "corrupt"'*) printf 'accepted' ;;
-    *) printf 'rejected: %s' "$(printf '%s' "$out" | tr '\n' ' ')" ;;
-  esac
-}
+replay_real_mount()  { replay_real_daily "$REAL_MOUNT_BIN" "LS_DATA_HOME is required" "$1"; }
+replay_real_status() { replay_real_daily "$REAL_STATUS_BIN" '"load": "corrupt"' "$1"; }
 
 # --- the Rust constants both scripts restate --------------------------------------------------
 # The marker name, the book version and the ordinal epoch are Rust constants, and both scripts carry
