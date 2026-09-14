@@ -1199,9 +1199,19 @@ adapter-check:
 ## separator, so a literal containing one is silently truncated on BOTH sides); and
 ## three negative meta-tests proving the harness reds when the mtime comparison, the
 ## vanished-input clause, or the probe-literal registry is stripped INDEPENDENTLY.
-## SCOPE LIMITS: step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are
-## still never reached, and the stubs other than calendar-fetch-inputs/-refresh and
-## ls-ingest accept any argv. The freshness axes run against STUBS, so they prove the
+## U11 (plan 2026-09-08-1215) also covered: LS_SM_PROFILE / LS_SM_DATA_HOME — explicit
+## `orb` marshals the default's argv exactly; a FROZEN-20260812 judgment home is refused
+## before any traffic in either profile; the daily-rehearsal profile accumulates the
+## rehearsal clone with every daily symbol, runs the OFFLINE `lab-mount-universe --daily`
+## at [10] (argv replayed against the real binary), and at [11] judges the watermark and
+## rehearsal/book.json against the PROVEN calendar (calendar-status --json, also replayed:
+## a Monday reads Friday's book, a holiday and an Unknown day are skipped) with basis
+## shifts on held symbols as WARNING rows. rehearsal-bootstrap.sh is exercised here too —
+## it builds every daily fixture — and the marker name and book schema constants are
+## asserted against the Rust sources.
+## SCOPE LIMITS: the ORB step [10] (lab-mount-universe) and its step [11] GO/NO-GO report
+## are still never reached (the 09:00 guard), and the calendar-activate and lab-research
+## stubs accept any argv. The freshness axes run against STUBS, so they prove the
 ## script's logic — not that any real binary is current; nothing here builds or replays
 ## calendar-refresh, the binary that actually carries the #258 guard, and nothing
 ## asserts the registered literal is present in a REAL compiled artifact (R10 checks

@@ -53,9 +53,11 @@
 # is read FROM THE SCRIPT and planted in its stub so the fixture cannot drift from it.
 #
 # SCOPE LIMITS.
-#   * Step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are still never
-#     reached — the catch-up runs stop one step short of them by design, and nothing here
-#     drives the attended path past the 09:00 guard.
+#   * The ORB step [10] (lab-mount-universe) and its step [11] GO/NO-GO report are still
+#     never reached — the catch-up runs stop one step short of them by design, and nothing
+#     here drives the attended path past the 09:00 guard. The DAILY-REHEARSAL [10] and [11]
+#     are reached (U11, at the end of this file): that producer is offline, so no guard stands
+#     in the way, and its argv plus [11]'s calendar-status --json argv are replayed for real.
 #   * The freshness axes are exercised against STUBS, so they prove the SCRIPT's logic, not
 #     that any real binary is current. Two assertions reach past the stubs to the artifacts
 #     themselves: step [4]'s argv replay against the real `calendar-refresh`, and R11, which
@@ -76,6 +78,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_SCRIPT="$HERE/../session-morning.sh"
+REAL_BOOTSTRAP="$HERE/../rehearsal-bootstrap.sh"
 # The prebuilt artifacts the replays and R11 read. Derived from ONE directory rather than
 # spelled out per binary: R11 resolves a binary NAMED BY THE REGISTRY, so a second hardcoded
 # path here could disagree with the one the replays use and the two would certify different
@@ -166,11 +169,15 @@ make_fixture() { # [sed_expr] -> repo root on stdout
     # A symlink, never a copy — a copied script silently stops testing the real one.
     ln -s "$REAL_SCRIPT" "$naut/scripts/session-morning.sh"
   fi
+  # The bootstrap is always the REAL one, symlinked for the same reason: the daily fixture below is
+  # built BY it, so a home the chain accepts is a home the bootstrap actually produces.
+  ln -s "$REAL_BOOTSTRAP" "$naut/scripts/rehearsal-bootstrap.sh"
 
   # Step [1] reads this and skips the network probe entirely when it finds a
-  # POSITIVE line for the session date.
+  # POSITIVE line for the session date. FIXTURE_SESSION_COMPACT moves it with a test that
+  # overrides LS_SM_SESSION_DATE (a Monday reading Friday, a holiday).
   printf '%s\n' \
-    "2026-07-31T08:20:42+0900 basDd=$SESSION_COMPACT attempt=17 http=200 bytes=293133 rows=943 verdict=POSITIVE" \
+    "2026-07-31T08:20:42+0900 basDd=${FIXTURE_SESSION_COMPACT:-$SESSION_COMPACT} attempt=17 http=200 bytes=293133 rows=943 verdict=POSITIVE" \
     >"$naut/scripts/krx-witness-watch.log"
 
   printf '%s\n' '{"artifact_id":"fixture0000000000000000000000000000000000000000000000000000000","alerts":[]}' \
@@ -194,7 +201,7 @@ make_fixture() { # [sed_expr] -> repo root on stdout
 
   # ---- stubs: every one logs its full argv, so assertions can read the real call ----
   local b
-  for b in calendar-activate calendar-status lab-research lab-mount-universe; do
+  for b in calendar-activate lab-research; do
     cat >"$bin/$b" <<STUB
 #!/usr/bin/env bash
 echo "$b \$*" >>"\$STUB_LOG"
@@ -202,6 +209,60 @@ exit 0
 STUB
     chmod +x "$bin/$b"
   done
+
+  # calendar-status: step [6] calls it without --json and reads only its exit code. The daily
+  # profile's step [11] calls it with --json per day and reads `day_status`, so the stub answers
+  # that from a fixture calendar: weekdays are trading sessions, weekends are closed, and
+  # STUB_CAL_OVERRIDES ("YYYY-MM-DD=status,...") marks holidays and Unknown days. STUB_CAL_FAIL=1
+  # makes every --json answer an unusable load, the arm where the book cannot be judged at all.
+  cat >"$bin/calendar-status" <<'STUB'
+#!/usr/bin/env bash
+echo "calendar-status $*" >>"$STUB_LOG"
+day=""; json=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --day) day="$2"; shift 2 ;;
+    --json) json=1; shift ;;
+    *) shift ;;
+  esac
+done
+[ "$json" = 1 ] || exit 0
+[ "${STUB_CAL_FAIL:-0}" = 1 ] && { echo '{"outcome":{"load":"missing"}}'; exit 1; }
+python3 -c "
+import datetime,json,sys
+day,overrides=sys.argv[1],sys.argv[2]
+table=dict(p.split('=',1) for p in overrides.split(',') if p)
+status=table.get(day) or ('trading_session' if datetime.date.fromisoformat(day).weekday()<5 else 'closed')
+print(json.dumps({'outcome':'healthy','target_day':day,'day_status':status}))" "$day" "${STUB_CAL_OVERRIDES:-}"
+STUB
+  chmod +x "$bin/calendar-status"
+
+  # lab-mount-universe: the ORB [10] is never reached here (the 09:00 guard), so for it the stub only
+  # logs. The daily [10] IS reached, and its [11] reads the file, so under --daily the stub writes a
+  # DailyUniverseFile-shaped object for LS_MOUNT_UNIVERSE_DATE. It logs the env it was handed on its
+  # own line — the producer reads its whole config from the environment, so argv alone proves little.
+  #   STUB_UNIVERSE_SESSION  the session_date to write instead (the wrong-session arm)
+  #   STUB_UNIVERSE_RC       a non-zero exit, with no file written
+  cat >"$bin/lab-mount-universe" <<'STUB'
+#!/usr/bin/env bash
+echo "lab-mount-universe $*" >>"$STUB_LOG"
+echo "universe-env DATA_HOME=${LS_DATA_HOME:-} DATE=${LS_MOUNT_UNIVERSE_DATE:-} METADATA=${LS_MOUNT_UNIVERSE_METADATA:-} LANE=${LS_DISPATCH_LANE_ENV:-}" >>"$STUB_LOG"
+daily=0; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --daily) daily=1; shift ;;
+    --out) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "${STUB_UNIVERSE_RC:-0}" = 0 ] || { echo "stub: refused"; exit "$STUB_UNIVERSE_RC"; }
+if [ "$daily" = 1 ] && [ -n "$out" ]; then
+  printf '{"session_date":"%s","ranking_signal":"momentum12x1","ranking_signal_is_placeholder":false,"warmup_bars":13,"universe_metadata_hash":"fixture","rows":[{"shcode":"100000","rank":0,"tradable":true},{"shcode":"100001","rank":1,"tradable":false}]}\n' \
+    "${STUB_UNIVERSE_SESSION:-$LS_MOUNT_UNIVERSE_DATE}" >"$out"
+fi
+exit 0
+STUB
+  chmod +x "$bin/lab-mount-universe"
 
   # calendar-fetch-inputs: logs argv and writes the inputs artifact. It does NOT
   # re-implement the real required-argument contract — the real binary itself
@@ -253,6 +314,10 @@ STUB
   cat >"$bin/ls-ingest" <<'STUB'
 #!/usr/bin/env bash
 echo "ls-ingest $*" >>"$STUB_LOG"
+# The ingest's whole contract is its environment, so that is what gets logged — on a line of its own
+# whose prefix does not contain "ls-ingest", so no existing "was the ingest reached" match moves.
+nsyms="$(printf '%s' "${LS_INGEST_SYMBOLS:-}" | awk -F, '{print NF}')"
+echo "ingest-env KIND=${LS_INGEST_KIND:-} MODE=${LS_INGEST_MODE:-} NSYMS=$nsyms CATALOG=${LS_INGEST_CATALOG:-} LOOKBACK=${LS_INGEST_LOOKBACK:-}" >>"$STUB_LOG"
 secs="${STUB_INGEST_SECS:-0}"
 if [ "$secs" != "0" ]; then
   # `sleep` in the BACKGROUND plus `wait`, never a foreground `sleep`: bash defers a trapped
@@ -269,6 +334,23 @@ p,d=sys.argv[1],sys.argv[2]
 c=json.load(open(p))
 c['watermarks']={k:(d if k.endswith('|1-DAY') else v) for k,v in c['watermarks'].items()}
 json.dump(c,open(p,'w'))" "$LS_INGEST_CATALOG/ingest-checkpoint.json" "$STUB_INGEST_ADVANCE_TO"
+fi
+# STUB_INGEST_SHIFT="<instrument>|<bar_type>=<YYYYMMDD>" models a shift the accumulate detected AND
+# HEALED, which is the end state a real completed heal leaves: heal_daily clears the `shifted` mark and
+# appends a RebaseEvent in the same save (src/ingest/mod.rs). Leaving the mark set instead — as this
+# stub first did — is a state ls-ingest never produces, and it made the [11] warning look covered while
+# the real healed case fell straight through it.
+if [ -n "${STUB_INGEST_SHIFT:-}" ]; then
+  python3 -c "
+import json,sys
+p,spec=sys.argv[1],sys.argv[2]
+key,date=spec.split('=',1)
+instrument,bar_type=key.split('|',1)
+c=json.load(open(p))
+c.get('shifted',{}).pop(key,None)
+c.setdefault('rebase_events',[]).append(
+    {'instrument':instrument,'bar_type':bar_type,'detected':date,'healed':date,'origin':'heal'})
+json.dump(c,open(p,'w'))" "$LS_INGEST_CATALOG/ingest-checkpoint.json" "$STUB_INGEST_SHIFT"
 fi
 echo "ls-ingest COMPLETED" >>"$STUB_LOG"
 exit 0
@@ -340,6 +422,40 @@ STUB
     touch "$root/$FIXTURE_STALE_VIA"
   fi
 
+  # ---- the two DAILY homes (U11), made only when a test asks ------------------------------------
+  # FIXTURE_JUDGMENT_HOME=1 builds a frozen judgment home the way the real one is laid out: a
+  # 352-symbol daily checkpoint, a parquet placeholder, the FROZEN-20260812 marker at the home root,
+  # a stray ingest lock, and a runs/ tree. FIXTURE_DAILY=1 additionally runs the REAL bootstrap over
+  # it, so the rehearsal home every daily test drives is exactly what an operator would get.
+  #   FIXTURE_DAILY_WM   the judgment checkpoint's daily watermark (default the prior session)
+  #   FIXTURE_SHIFTED    its `shifted` object, as JSON (default {})
+  #   FIXTURE_BOOK       JSON to write over the bootstrapped empty book, or __absent__ to delete it
+  if [ "${FIXTURE_JUDGMENT_HOME:-0}" = 1 ] || [ "${FIXTURE_DAILY:-0}" = 1 ]; then
+    local jh="$root/data/next-daily-2016" shifted="${FIXTURE_SHIFTED:-}"
+    [ -n "$shifted" ] || shifted='{}'
+    mkdir -p "$jh/catalog/data/bar/fixture" "$jh/runs/fixture-run"
+    python3 -c "
+import json,sys
+path,wm,shifted=sys.argv[1],sys.argv[2],json.loads(sys.argv[3])
+marks={f'{100000+i:06d}.XKRX|1-DAY':wm for i in range(352)}
+json.dump({'watermarks':marks,'gaps':[],'shifted':shifted},open(path,'w'))" \
+      "$jh/catalog/ingest-checkpoint.json" "${FIXTURE_DAILY_WM:-20260729}" "$shifted"
+    printf 'fixture bars\n' >"$jh/catalog/data/bar/fixture/part-0.parquet"
+    printf 'fixture pin\n' >"$jh/catalog/universe-metadata-pin.json"
+    printf 'stale\n' >"$jh/catalog/.ls-ingest.lock"
+    printf 'FROZEN fixture\n' >"$jh/FROZEN-20260812"
+    printf 'judgment run\n' >"$jh/runs/fixture-run/manifest.json"
+  fi
+  if [ "${FIXTURE_DAILY:-0}" = 1 ]; then
+    bash "$naut/scripts/rehearsal-bootstrap.sh" >"$root/bootstrap.out" 2>&1
+    printf '%s' "$?" >"$root/bootstrap.rc"
+    if [ "${FIXTURE_BOOK:-}" = "__absent__" ]; then
+      rm -f "$root/data/rehearsal-daily/rehearsal/book.json"
+    elif [ -n "${FIXTURE_BOOK:-}" ]; then
+      printf '%s\n' "$FIXTURE_BOOK" >"$root/data/rehearsal-daily/rehearsal/book.json"
+    fi
+  fi
+
   printf '%s' "$root"
 }
 
@@ -379,6 +495,8 @@ drop_fixture() {
   CHAIN_ENV=(); FIXTURE_WM_A=""; FIXTURE_WM_B=""; FIXTURE_CKPT=""
   FIXTURE_AGE_BIN=""; FIXTURE_STALE_VIA=""; FIXTURE_DROP_DEPINFO_FOR=""; FIXTURE_OMIT_LITERAL_FOR=""
   FIXTURE_DELETE_SRC_FOR=""; FIXTURE_DROP_BIN=""; FIXTURE_UNEXEC_BIN=""
+  FIXTURE_SESSION_COMPACT=""; FIXTURE_JUDGMENT_HOME=""; FIXTURE_DAILY=""; FIXTURE_DAILY_WM=""
+  FIXTURE_SHIFTED=""; FIXTURE_BOOK=""
   return 0
 }
 
@@ -1297,6 +1415,621 @@ case "$CHAIN_OUT" in
   *"[10] NOT RUN"*) ok "--dry-run text shows the universe step is not run under --catch-up" ;;
   *) no "--dry-run text shows the universe step is not run under --catch-up" \
         "a '[10] NOT RUN' line" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# ============================================================ U11: profiles and the rehearsal home
+# Plan 2026-09-08-1215 U11 (R11, R23, R25; KTD10, KTD11). The daily rehearsal accumulates a CLONE of
+# the frozen judgment home and prepares the 15:20 close-auction session, through the same chain the
+# ORB morning uses. Four properties are guarded below, each with a mutant that proves the harness
+# can see it fail:
+#   * the default profile is unchanged — explicit `orb` reproduces the default's argv exactly;
+#   * a FROZEN home is refused before any traffic, in either profile;
+#   * the daily profile hands ls-ingest the rehearsal catalog with every daily symbol, swaps [10]
+#     for the OFFLINE `lab-mount-universe --daily`, and never runs lab-live;
+#   * [11] judges the watermark and the book against the PROVEN calendar — a Monday reads Friday's
+#     book, a holiday is skipped, a stamp between the proven session and today is healthy.
+
+REAL_MOUNT_BIN="$REAL_BIN_DIR/lab-mount-universe"
+REAL_STATUS_BIN="$REAL_BIN_DIR/calendar-status"
+DAILY_HOME_REL="data/rehearsal-daily"
+
+# `LS_SM_UNIVERSE_BY=23:59` is the only way the live daily path reaches [10] without a clock seam,
+# and it would stand the run down inside the day's last minute. Wait that minute out rather than
+# flake in it.
+avoid_midnight_edge() {
+  if [ "$(date +%H%M)" -ge 2358 ]; then sleep 125; fi
+}
+
+# A live daily run that reaches [11]: poll at 1s, deadlines far away, the stub ingest finishing at
+# once and advancing every daily watermark to $1 (default the session date). Extra NAME=value
+# overrides follow.
+daily_live_env() { # [advance_to] [NAME=value...]
+  local advance="${1:-$SESSION_COMPACT}"; shift || true
+  CHAIN_ENV=(
+    "LS_SM_PROFILE=daily-rehearsal"
+    "LS_SM_POLL_SECS=1"
+    "LS_SM_INGEST_BY=23:59"
+    "LS_SM_UNIVERSE_BY=23:59"
+    "STUB_INGEST_SECS=0"
+    "STUB_INGEST_ADVANCE_TO=$advance"
+    "$@"
+  )
+}
+
+# The argv a stub logged for one binary, from the FIRST line whose prefix matches.
+argv_from_log() { # log binary [must-contain]
+  printf '%s\n' "$1" | grep -F -- "${3:-}" | sed -n "s/^$2 //p" | head -1
+}
+
+# Replay a daily-profile argv against a REAL binary from a foreign CWD, every LS_* already unset by
+# this harness. Each oracle is a POSITIVE signal reached only after the binary's argument parser
+# accepted everything:
+#   * lab-mount-universe parses its whole argv before reading any environment, so "LS_DATA_HOME is
+#     required" is reached ONLY when every argument was accepted — and it stops there, before any
+#     catalog read.
+#   * calendar-status on the fixture's schema-invalid snapshot lands on the typed `"load": "corrupt"`
+#     diagnostic, which it only renders after Args::parse succeeded; a bad flag prints `unknown
+#     argument` instead.
+replay_real_daily() { # binary sentinel argv -> verdict
+  local bin="$1" sentinel="$2" argv="$3" out
+  [ -x "$bin" ] || { printf 'nobinary'; return; }
+  # shellcheck disable=SC2086  # fixture paths are mktemp-generated and space-free
+  out="$(cd / && "$bin" $argv 2>&1)"
+  case "$out" in
+    *"$sentinel"*) printf 'accepted' ;;
+    *) printf 'rejected: %s' "$(printf '%s' "$out" | tr '\n' ' ')" ;;
+  esac
+}
+replay_real_mount()  { replay_real_daily "$REAL_MOUNT_BIN" "LS_DATA_HOME is required" "$1"; }
+replay_real_status() { replay_real_daily "$REAL_STATUS_BIN" '"load": "corrupt"' "$1"; }
+
+# --- the Rust constants both scripts restate --------------------------------------------------
+# The marker name, the book version and the ordinal epoch are Rust constants, and both scripts carry
+# them as literals — one to exclude and refuse the marker, the other to write and judge the book. A
+# changed constant with a stale literal would clone the marker, or judge every book as foreign.
+rust_const() { # file const -> value
+  sed -n "s/^pub const $2: [^=]*= \"\{0,1\}\([^\";]*\)\"\{0,1\};$/\1/p" "$REPO_ROOT/$1" | head -1
+}
+script_var() { # script var -> value
+  sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p" "$1" | head -1
+}
+RUST_MARKER="$(rust_const adapters/nautilus/src/ingest/mod.rs FROZEN_CATALOG_MARKER)"
+RUST_BOOK_VERSION="$(rust_const adapters/nautilus/lab/src/runner/live_daily.rs BOOK_VERSION)"
+RUST_EPOCH="$(rust_const adapters/nautilus/lab/src/runner/live_daily.rs SESSION_ORDINAL_EPOCH)"
+# The parity assertions below fail closed when a constant is ABSENT (the value becomes the literal
+# '<rust const not found>'). This proves they also see a constant that DRIFTED: the same reader, run
+# over a copy whose literal was changed, must disagree with the Rust source.
+DRIFTED="$(mktemp)"
+/usr/bin/sed 's/^BOOK_VERSION=2$/BOOK_VERSION=3/' "$REAL_SCRIPT" >"$DRIFTED"
+if [ "$(script_var "$DRIFTED" BOOK_VERSION)" = "$RUST_BOOK_VERSION" ]; then
+  no "the constant-parity check can see a DRIFTED literal, not only an absent one" \
+     "a changed BOOK_VERSION to differ from the Rust constant" "both read $RUST_BOOK_VERSION"
+else
+  ok "the constant-parity check can see a DRIFTED literal, not only an absent one"
+fi
+rm -f "$DRIFTED"
+
+for S in "$REAL_SCRIPT" "$REAL_BOOTSTRAP"; do
+  SN="${S##*/}"
+  assert_eq "$SN's FROZEN_MARKER matches nautilus_ls::ingest::FROZEN_CATALOG_MARKER" \
+            "${RUST_MARKER:-<rust const not found>}" "$(script_var "$S" FROZEN_MARKER)"
+  assert_eq "$SN's BOOK_VERSION matches live_daily::BOOK_VERSION" \
+            "${RUST_BOOK_VERSION:-<rust const not found>}" "$(script_var "$S" BOOK_VERSION)"
+  assert_eq "$SN's SESSION_ORDINAL_EPOCH matches live_daily::SESSION_ORDINAL_EPOCH" \
+            "${RUST_EPOCH:-<rust const not found>}" "$(script_var "$S" SESSION_ORDINAL_EPOCH)"
+done
+
+# --- rehearsal-bootstrap.sh: the clone ---------------------------------------------------------
+FIXTURE_DAILY=1
+CHAIN_ROOT="$(make_fixture)"
+assert_eq "bootstrap: creates the rehearsal home (0)" "0" "$(cat "$CHAIN_ROOT/bootstrap.rc")"
+DH="$CHAIN_ROOT/$DAILY_HOME_REL"
+JH="$CHAIN_ROOT/data/next-daily-2016"
+if cmp -s "$JH/catalog/ingest-checkpoint.json" "$DH/catalog/ingest-checkpoint.json"; then
+  ok "bootstrap: the ingest checkpoint is cloned byte-for-byte"
+else
+  no "bootstrap: the ingest checkpoint is cloned byte-for-byte" "identical checkpoints" "they differ or one is missing"
+fi
+if [ -f "$DH/catalog/data/bar/fixture/part-0.parquet" ] && [ -f "$DH/catalog/universe-metadata-pin.json" ]; then
+  ok "bootstrap: the catalog's bars and metadata pin are cloned"
+else
+  no "bootstrap: the catalog's bars and metadata pin are cloned" "both files in the clone" "$(find "$DH" -type f)"
+fi
+assert_eq "bootstrap: the clone carries NO FROZEN marker, so it can advance" "" \
+          "$(find "$DH" -name 'FROZEN-*')"
+assert_eq "bootstrap: the clone carries NO lock file" "" "$(find "$DH" -name '*.lock')"
+assert_eq "bootstrap: the judgment runs/ are not copied" "absent" "$([ -e "$DH/runs" ] && echo present || echo absent)"
+assert_eq "bootstrap: state/ exists for the spend ledger" "yes" "$([ -d "$DH/state" ] && echo yes || echo no)"
+assert_eq "bootstrap: the source keeps its marker" "yes" "$([ -f "$JH/FROZEN-20260812" ] && echo yes || echo no)"
+# The empty book must be the one the runner restores as a flat start: RehearsalBook::empty("").
+BOOK_SHAPE="$(python3 -c "
+import json,sys
+b=json.load(open(sys.argv[1]))
+print(sorted(b), b['version'], repr(b['session_date']), repr(b['run_id']), b['ordinal_epoch'], b['legs'])" \
+  "$DH/rehearsal/book.json" 2>&1)"
+assert_eq "bootstrap: book.json is RehearsalBook::empty(\"\")" \
+          "['legs', 'ordinal_epoch', 'run_id', 'session_date', 'version'] $RUST_BOOK_VERSION '' '' $RUST_EPOCH []" \
+          "$BOOK_SHAPE"
+# And every key it writes is a field of the Rust struct, so a renamed field cannot pass on values.
+BOOK_RS="$REPO_ROOT/adapters/nautilus/lab/src/runner/live_daily/book.rs"
+for FIELD in version session_date run_id ordinal_epoch legs; do
+  if grep -qE "^    pub $FIELD: " "$BOOK_RS"; then
+    ok "bootstrap: book key '$FIELD' is a RehearsalBook field"
+  else
+    no "bootstrap: book key '$FIELD' is a RehearsalBook field" "pub $FIELD: in $BOOK_RS" "not found"
+  fi
+done
+
+# Never overwrites: a second run refuses and leaves the home — and any book in it — untouched.
+printf '%s\n' '{"sentinel":true}' >"$DH/rehearsal/book.json"
+bash "$CHAIN_ROOT/adapters/nautilus/scripts/rehearsal-bootstrap.sh" >/dev/null 2>&1
+assert_eq "bootstrap: an existing rehearsal home is refused (64)" "64" "$?"
+assert_eq "bootstrap: the refused re-run leaves the existing book untouched" '{"sentinel":true}' \
+          "$(cat "$DH/rehearsal/book.json")"
+drop_fixture
+
+FIXTURE_JUDGMENT_HOME=1
+CHAIN_ROOT="$(make_fixture)"
+bash "$CHAIN_ROOT/adapters/nautilus/scripts/rehearsal-bootstrap.sh" --dry-run >/dev/null 2>&1
+assert_eq "bootstrap: --dry-run exits 0" "0" "$?"
+assert_eq "bootstrap: --dry-run writes nothing" "absent" \
+          "$([ -e "$CHAIN_ROOT/$DAILY_HOME_REL" ] && echo present || echo absent)"
+# A symlink in the source would be copied as a link a later accumulate writes THROUGH.
+ln -s /tmp "$CHAIN_ROOT/data/next-daily-2016/catalog/escape"
+bash "$CHAIN_ROOT/adapters/nautilus/scripts/rehearsal-bootstrap.sh" >/dev/null 2>&1
+assert_eq "bootstrap: a symlink inside the source catalog is refused (64)" "64" "$?"
+assert_eq "bootstrap: the symlink refusal publishes nothing" "absent" \
+          "$([ -e "$CHAIN_ROOT/$DAILY_HOME_REL" ] && echo present || echo absent)"
+drop_fixture
+
+CHAIN_ROOT="$(make_fixture)"
+bash "$CHAIN_ROOT/adapters/nautilus/scripts/rehearsal-bootstrap.sh" >/dev/null 2>&1
+assert_eq "bootstrap: a missing judgment home is refused (64)" "64" "$?"
+bash "$CHAIN_ROOT/adapters/nautilus/scripts/rehearsal-bootstrap.sh" --bogus >/dev/null 2>&1
+assert_eq "bootstrap: an unknown argument is refused (64)" "64" "$?"
+drop_fixture
+
+# --- the profile switch itself -------------------------------------------------------------------
+CHAIN_ENV=("LS_SM_PROFILE=daily")
+run_chain --dry-run
+assert_eq "an unknown LS_SM_PROFILE is refused (64), not defaulted to orb" "64" "$CHAIN_RC"
+drop_fixture
+CHAIN_ENV=("LS_SM_DATA_HOME=data/turn4-fresh")
+run_chain --dry-run
+assert_eq "a relative LS_SM_DATA_HOME is refused (64)" "64" "$CHAIN_RC"
+drop_fixture
+
+# --- the default profile is unchanged --------------------------------------------------------------
+# Every pre-U11 assertion above already runs the default. What this adds is that NAMING the orb
+# profile changes nothing: the same catch-up chain, default and explicit, marshals the same argv to
+# every binary in the same order and exits the same way. Root paths and the per-run --as-of stamp
+# are the only differences normalised away.
+normalise_log() { # root log
+  printf '%s\n' "$2" | sed -e "s|$1|<ROOT>|g" -e 's/--as-of [^ ]*/--as-of <T>/g'
+}
+ingest_env 0 "$SESSION_COMPACT"
+run_chain --catch-up
+DEFAULT_RC="$CHAIN_RC"; DEFAULT_LOG="$(normalise_log "$CHAIN_ROOT" "$CHAIN_LOG")"
+drop_fixture
+ingest_env 0 "$SESSION_COMPACT"
+CHAIN_ENV+=("LS_SM_PROFILE=orb")
+run_chain --catch-up
+assert_eq "explicit orb: exits exactly as the default profile does" "$DEFAULT_RC" "$CHAIN_RC"
+assert_eq "explicit orb: marshals exactly the default profile's argv, in order" \
+          "$DEFAULT_LOG" "$(normalise_log "$CHAIN_ROOT" "$CHAIN_LOG")"
+case "$CHAIN_LOG" in
+  *"ingest-env KIND=daily MODE=accumulate NSYMS=2 CATALOG=$CHAIN_ROOT/data/turn4-fresh/catalog LOOKBACK=20260518"*)
+    ok "orb: ls-ingest still gets the turn4-fresh catalog and the 20260518 lookback" ;;
+  *) no "orb: ls-ingest still gets the turn4-fresh catalog and the 20260518 lookback" \
+        "an ingest-env line for turn4-fresh / 20260518" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# The clocks now come from the profile table rather than from inline defaults, so pin both arms. The
+# equivalence test above cannot: it overrides the clocks to make itself deterministic, so a mutant
+# moving the ORB arm's 09:05/09:10 would pass it.
+run_chain --dry-run
+case "$CHAIN_OUT" in
+  *"ingest by 09:05, universe by 09:10"*) ok "orb: the 09:05 / 09:10 clocks are the default" ;;
+  *) no "orb: the 09:05 / 09:10 clocks are the default" "ingest by 09:05, universe by 09:10" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+FIXTURE_DAILY=1
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal")
+run_chain --dry-run
+case "$CHAIN_OUT" in
+  *"ingest by 15:00, universe by 15:10"*) ok "daily: the 15:00 / 15:10 clocks precede the 15:15 cutoff" ;;
+  *) no "daily: the 15:00 / 15:10 clocks precede the 15:15 cutoff" "ingest by 15:00, universe by 15:10" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# --- a FROZEN home is refused before any traffic, in either profile ------------------------------
+for PROFILE in orb daily-rehearsal; do
+  FIXTURE_JUDGMENT_HOME=1
+  CHAIN_ROOT="$(make_fixture)"
+  CHAIN_ENV=("LS_SM_PROFILE=$PROFILE" "LS_SM_DATA_HOME=$CHAIN_ROOT/data/next-daily-2016")
+  _run_in "$CHAIN_ROOT"
+  assert_eq "$PROFILE: LS_SM_DATA_HOME at the frozen judgment home is refused (64)" "64" "$CHAIN_RC"
+  case "$CHAIN_OUT" in
+    *"FROZEN-20260812 exists"*) ok "$PROFILE: the refusal names the marker" ;;
+    *) no "$PROFILE: the refusal names the marker" "a 'FROZEN-20260812 exists' message" "$CHAIN_OUT" ;;
+  esac
+  assert_eq "$PROFILE: the frozen-home refusal issues no traffic" "" "$CHAIN_LOG"
+  drop_fixture
+done
+
+# The Rust guard also reads a marker misplaced INSIDE catalog/; so does this one.
+FIXTURE_DAILY=1
+CHAIN_ROOT="$(make_fixture)"
+printf 'misplaced\n' >"$CHAIN_ROOT/$DAILY_HOME_REL/catalog/FROZEN-20260812"
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal")
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "a marker misplaced inside catalog/ is refused too (64)" "64" "$CHAIN_RC"
+drop_fixture
+
+# NEGATIVE META-TEST: empty the marker loop and the orb run against the frozen home sails through.
+FIXTURE_JUDGMENT_HOME=1
+CHAIN_ROOT="$(make_fixture 's|^  if \[\[ -e "\$marker" \]\]; then$|  if false; then|')"
+CHAIN_ENV=("LS_SM_DATA_HOME=$CHAIN_ROOT/data/next-daily-2016")
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "harness detects a preflight stripped of the frozen-home refusal" "0" "$CHAIN_RC"
+drop_fixture
+
+# --- a LINKED catalog is the hole the logical marker checks leave -------------------------------
+# The marker sits at the judgment home's ROOT, so a hand-built home whose catalog/ links into that
+# home carries no marker on either logical path the preflight (or the Rust write guard) inspects,
+# while the accumulate writes through the link into the frozen bars.
+FIXTURE_DAILY=1
+CHAIN_ROOT="$(make_fixture)"
+LINKED="$CHAIN_ROOT/data/linked-home"
+mkdir -p "$LINKED/rehearsal"
+ln -s "$CHAIN_ROOT/data/next-daily-2016/catalog" "$LINKED/catalog"
+printf '%s\n' '{"version":2,"session_date":"","run_id":"","ordinal_epoch":"2010-01-04","legs":[]}' \
+  >"$LINKED/rehearsal/book.json"
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal" "LS_SM_DATA_HOME=$LINKED")
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "a catalog/ symlinked into the frozen home is refused (64)" "64" "$CHAIN_RC"
+assert_eq "the symlinked-catalog refusal issues no traffic" "" "$CHAIN_LOG"
+case "$CHAIN_OUT" in
+  *"is a symlink"*) ok "the symlink refusal names the link rather than the marker" ;;
+  *) no "the symlink refusal names the link rather than the marker" "an 'is a symlink' message" "$CHAIN_OUT" ;;
+esac
+# And with the link resolved away (a real directory whose REAL path is the frozen catalog — a bind
+# mount, a moved home, a hard-linked tree), the realpath marker check is what refuses.
+rm "$LINKED/catalog"
+cp -Rp "$CHAIN_ROOT/data/next-daily-2016/catalog" "$LINKED/catalog"
+cp "$CHAIN_ROOT/data/next-daily-2016/FROZEN-20260812" "$LINKED/catalog/FROZEN-20260812"
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "a marker reachable only through the resolved catalog path still refuses (64)" "64" "$CHAIN_RC"
+drop_fixture
+
+# NEGATIVE META-TEST: strip the symlink refusal and the linked home sails into the chain.
+FIXTURE_DAILY=1
+CHAIN_ROOT="$(make_fixture 's/^  if \[\[ -L "\$leaf" \]\]; then$/  if false; then/')"
+LINKED="$CHAIN_ROOT/data/linked-home"
+mkdir -p "$LINKED/rehearsal"
+ln -s "$CHAIN_ROOT/data/rehearsal-daily/catalog" "$LINKED/catalog"
+printf '%s\n' '{"version":2,"session_date":"","run_id":"","ordinal_epoch":"2010-01-04","legs":[]}' \
+  >"$LINKED/rehearsal/book.json"
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal" "LS_SM_DATA_HOME=$LINKED")
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "harness detects a preflight stripped of the symlinked-home refusal" "0" "$CHAIN_RC"
+drop_fixture
+
+# A home without rehearsal/ is not a bootstrapped rehearsal home — most likely an ORB minute home.
+CHAIN_ROOT="$(make_fixture)"
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal" "LS_SM_DATA_HOME=$CHAIN_ROOT/data/turn4-fresh")
+_run_in "$CHAIN_ROOT" --dry-run
+assert_eq "daily: a home with no rehearsal/ is refused (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"rehearsal-bootstrap.sh"*) ok "daily: the not-bootstrapped refusal names the bootstrap script" ;;
+  *) no "daily: the not-bootstrapped refusal names the bootstrap script" "rehearsal-bootstrap.sh named" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# --- the daily dry run -------------------------------------------------------------------------------
+FIXTURE_DAILY=1
+CHAIN_ENV=("LS_SM_PROFILE=daily-rehearsal")
+run_chain --dry-run
+assert_eq "daily --dry-run exits 0 on a freshly bootstrapped home" "0" "$CHAIN_RC"
+assert_eq "daily --dry-run invokes no binary" "" "$CHAIN_LOG"
+for WANT in "lab-mount-universe --daily --out $CHAIN_ROOT/$DAILY_HOME_REL/rehearsal/daily-universe-20260731.json" \
+            "LS_INGEST_CATALOG=$CHAIN_ROOT/$DAILY_HOME_REL/catalog" \
+            "LS_INGEST_LOOKBACK=20160801" \
+            "ok: lab-live is never invoked"; do
+  case "$CHAIN_OUT" in
+    *"$WANT"*) ok "daily --dry-run shows: $WANT" ;;
+    *) no "daily --dry-run shows: $WANT" "$WANT" "$CHAIN_OUT" ;;
+  esac
+done
+case "$CHAIN_OUT" in
+  *"only after 09:00"*) no "daily --dry-run carries no 09:00 guard (the producer is offline)" \
+                           "no 09:00 guard text" "$CHAIN_OUT" ;;
+  *) ok "daily --dry-run carries no 09:00 guard (the producer is offline)" ;;
+esac
+drop_fixture
+
+# --- the daily live path, GO ---------------------------------------------------------------------------
+avoid_midnight_edge
+FIXTURE_DAILY=1
+daily_live_env
+run_chain
+assert_eq "daily: a fresh bootstrapped home reaches GO (0)" "0" "$CHAIN_RC"
+case "$CHAIN_LOG" in
+  *"ingest-env KIND=daily MODE=accumulate NSYMS=352 CATALOG=$CHAIN_ROOT/$DAILY_HOME_REL/catalog LOOKBACK=20160801"*)
+    ok "daily: ls-ingest accumulates all 352 daily symbols into the REHEARSAL catalog" ;;
+  *) no "daily: ls-ingest accumulates all 352 daily symbols into the REHEARSAL catalog" \
+        "ingest-env KIND=daily MODE=accumulate NSYMS=352 CATALOG=<rehearsal>/catalog LOOKBACK=20160801" "$CHAIN_LOG" ;;
+esac
+assert_eq "daily: [10] hands the producer the rehearsal home, the mount date, the metadata, and NO lane" \
+          "universe-env DATA_HOME=$CHAIN_ROOT/$DAILY_HOME_REL DATE=2026-07-31 METADATA=$CHAIN_ROOT/adapters/nautilus/lab/config/universe-metadata-20260723.json LANE=" \
+          "$(printf '%s\n' "$CHAIN_LOG" | grep '^universe-env ')"
+case "$CHAIN_LOG" in
+  *lab-live*) no "daily: lab-live is never invoked" "no lab-live call" "$CHAIN_LOG" ;;
+  *) ok "daily: lab-live is never invoked" ;;
+esac
+case "$CHAIN_OUT" in
+  *"LS_REHEARSAL_UNIVERSE_FILE=$CHAIN_ROOT/$DAILY_HOME_REL/rehearsal/daily-universe-20260731.json"*)
+    ok "daily: the GO checklist names the universe file lab-live --rehearse-daily reads" ;;
+  *) no "daily: the GO checklist names the universe file lab-live --rehearse-daily reads" \
+        "LS_REHEARSAL_UNIVERSE_FILE=<rehearsal>/rehearsal/daily-universe-20260731.json" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"previous proven trading session before 2026-07-31: 2026-07-30"*)
+    ok "daily: [11] finds the previous proven session through calendar-status" ;;
+  *) no "daily: [11] finds the previous proven session through calendar-status" \
+        "previous proven ... 2026-07-30" "$CHAIN_OUT" ;;
+esac
+
+# Both new invocations replayed against the REAL binaries, from a foreign CWD.
+MOUNT_ARGV="$(argv_from_log "$CHAIN_LOG" lab-mount-universe --daily)"
+case "$(replay_real_mount "$MOUNT_ARGV")" in
+  accepted) ok "real lab-mount-universe accepts the daily [10] argv" ;;
+  nobinary) no "real lab-mount-universe accepts the daily [10] argv" "a compiled $REAL_MOUNT_BIN" "binary not built" ;;
+  *) no "real lab-mount-universe accepts the daily [10] argv" "argument parsing to pass" "$(replay_real_mount "$MOUNT_ARGV")" ;;
+esac
+case "$(replay_real_mount "${MOUNT_ARGV/--daily/--dialy}")" in
+  rejected*) ok "the [10] replay can see a misspelled flag" ;;
+  nobinary) no "the [10] replay can see a misspelled flag" "a compiled $REAL_MOUNT_BIN" "binary not built" ;;
+  *) no "the [10] replay can see a misspelled flag" "the real binary to refuse --dialy" "it accepted it" ;;
+esac
+STATUS_ARGV="$(argv_from_log "$CHAIN_LOG" calendar-status --json)"
+case "$(replay_real_status "$STATUS_ARGV")" in
+  accepted) ok "real calendar-status accepts the daily [11] --json argv" ;;
+  nobinary) no "real calendar-status accepts the daily [11] --json argv" "a compiled $REAL_STATUS_BIN" "binary not built" ;;
+  *) no "real calendar-status accepts the daily [11] --json argv" "argument parsing to pass" "$(replay_real_status "$STATUS_ARGV")" ;;
+esac
+case "$(replay_real_status "${STATUS_ARGV/--json/--jsn}")" in
+  rejected*) ok "the [11] replay can see a misspelled flag" ;;
+  nobinary) no "the [11] replay can see a misspelled flag" "a compiled $REAL_STATUS_BIN" "binary not built" ;;
+  *) no "the [11] replay can see a misspelled flag" "the real binary to refuse --jsn" "it accepted it" ;;
+esac
+drop_fixture
+
+# --- book freshness on the proven calendar ---------------------------------------------------------
+# daily_book <stamp> [legs-json] -> a version-2 book stamped <stamp>
+daily_book() {
+  printf '{"version":2,"session_date":"%s","run_id":"r","ordinal_epoch":"2010-01-04","legs":%s}' "$1" "${2:-[]}"
+}
+
+# daily_leg <shcode> <entry_date> -> one leg carrying every field the runner refuses a book without
+# (RehearsalBook::validate_fields), so a leg fixture cannot accidentally test the leg-validation path.
+daily_leg() {
+  printf '{"shcode":"%s","quantity":10,"entry_price":10000.0,"stop_price":9000.0,"prior_close":10100,"entry_date":"%s","entered_under":"momentum12x1","opening_order_id":"o-%s"}' \
+    "$1" "$2" "$1"
+}
+
+# A book stamped the previous proven session is the ordinary case.
+avoid_midnight_edge
+FIXTURE_DAILY=1; FIXTURE_BOOK="$(daily_book 2026-07-30)"
+daily_live_env
+run_chain
+assert_eq "daily: a book stamped the previous proven session is GO (0)" "0" "$CHAIN_RC"
+drop_fixture
+
+# A stamp older than it means a teardown never wrote the book.
+FIXTURE_DAILY=1; FIXTURE_BOOK="$(daily_book 2026-07-29)"
+daily_live_env
+run_chain
+assert_eq "daily: a book stamped BEFORE the previous proven session is NO-GO (1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"book is stamped 2026-07-29, BEFORE the previous proven session 2026-07-30"*)
+    ok "daily: the stale-book refusal names both dates" ;;
+  *) no "daily: the stale-book refusal names both dates" "stamped 2026-07-29, BEFORE ... 2026-07-30" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# NEGATIVE META-TEST: strip the staleness comparison and the same stale book reads GO.
+FIXTURE_DAILY=1; FIXTURE_BOOK="$(daily_book 2026-07-29)"
+daily_live_env
+run_chain_mutated 's/^        elif stamp < previous:$/        elif False:/'
+assert_eq "harness detects a [11] stripped of the book-staleness comparison" "0" "$CHAIN_RC"
+drop_fixture
+
+# A Monday reads Friday's book: the weekend is not a session, so Friday IS the previous one.
+avoid_midnight_edge
+FIXTURE_DAILY=1; FIXTURE_SESSION_COMPACT=20260731; FIXTURE_DAILY_WM=20260730
+FIXTURE_BOOK="$(daily_book 2026-07-31)"
+daily_live_env 20260731 "LS_SM_SESSION_DATE=2026-07-31" "LS_SM_MOUNT_DATE=2026-08-03"
+run_chain
+assert_eq "daily: on a Monday, a book stamped the Friday before is GO (0)" "0" "$CHAIN_RC"
+drop_fixture
+FIXTURE_DAILY=1; FIXTURE_SESSION_COMPACT=20260731; FIXTURE_DAILY_WM=20260730
+FIXTURE_BOOK="$(daily_book 2026-07-30)"
+daily_live_env 20260731 "LS_SM_SESSION_DATE=2026-07-31" "LS_SM_MOUNT_DATE=2026-08-03"
+run_chain
+assert_eq "daily: on a Monday, a book stamped the Thursday before is NO-GO (1)" "1" "$CHAIN_RC"
+drop_fixture
+
+# After a holiday Monday the previous session is the Friday before the long weekend.
+avoid_midnight_edge
+FIXTURE_DAILY=1; FIXTURE_SESSION_COMPACT=20260814; FIXTURE_DAILY_WM=20260813
+FIXTURE_BOOK="$(daily_book 2026-08-14)"
+daily_live_env 20260814 "LS_SM_SESSION_DATE=2026-08-14" "LS_SM_MOUNT_DATE=2026-08-18" \
+  "STUB_CAL_OVERRIDES=2026-08-17=closed"
+run_chain
+assert_eq "daily: after a holiday Monday, the Friday book is GO (0)" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"previous proven trading session before 2026-08-18: 2026-08-14"*)
+    ok "daily: the proven-session walk skips the holiday and the weekend" ;;
+  *) no "daily: the proven-session walk skips the holiday and the weekend" "previous ... 2026-08-14" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# The KRX witness is retrospective: yesterday can still read Unknown while its own teardown already
+# stamped the book with it. A stamp BETWEEN the proven session and today is healthy.
+avoid_midnight_edge
+FIXTURE_DAILY=1; FIXTURE_BOOK="$(daily_book 2026-07-30)"
+daily_live_env "$SESSION_COMPACT" "STUB_CAL_OVERRIDES=2026-07-30=unknown"
+run_chain
+assert_eq "daily: a book stamped an Unknown yesterday, after the proven session, is GO (0)" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"before 2026-07-31: 2026-07-29"*) ok "daily: an Unknown day is not counted as proven" ;;
+  *) no "daily: an Unknown day is not counted as proven" "previous ... 2026-07-29" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# The absent book is a flat start (RehearsalBook::load); an unreadable or foreign one is not.
+avoid_midnight_edge
+FIXTURE_DAILY=1; FIXTURE_BOOK="__absent__"
+daily_live_env
+run_chain
+assert_eq "daily: an absent book is a flat start, GO (0)" "0" "$CHAIN_RC"
+drop_fixture
+FIXTURE_DAILY=1; FIXTURE_BOOK='{"version":2,'
+daily_live_env
+run_chain
+assert_eq "daily: an unparseable book is NO-GO (1)" "1" "$CHAIN_RC"
+drop_fixture
+FIXTURE_DAILY=1; FIXTURE_BOOK='{"version":1,"session_date":"2026-07-30","run_id":"r","ordinal_epoch":"2010-01-04","legs":[]}'
+daily_live_env
+run_chain
+assert_eq "daily: a version-1 book is NO-GO (1), not restored from fields it may misread" "1" "$CHAIN_RC"
+drop_fixture
+
+# --- the watermark row reads the PROVEN calendar, not LS_SM_SESSION_DATE -------------------------
+# The session date defaults to a hardcoded literal, so a run can be handed a stale one. Here the chain
+# ingests 2026-07-29 cleanly for a 2026-07-31 mount — [7] is satisfied — but 2026-07-30 is proven, so
+# the catalog is a session behind what the rehearsal will trade on.
+FIXTURE_DAILY=1; FIXTURE_SESSION_COMPACT=20260729; FIXTURE_DAILY_WM=20260728
+daily_live_env 20260729 "LS_SM_SESSION_DATE=2026-07-29"
+run_chain
+assert_eq "daily: watermarks behind the previous proven session are NO-GO (1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"352/352 daily watermark(s) are behind the previous proven session 2026-07-30"*)
+    ok "daily: the watermark refusal counts the symbols behind" ;;
+  *) no "daily: the watermark refusal counts the symbols behind" "352/352 ... behind ... 2026-07-30" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+FIXTURE_DAILY=1; FIXTURE_SESSION_COMPACT=20260729; FIXTURE_DAILY_WM=20260728
+daily_live_env 20260729 "LS_SM_SESSION_DATE=2026-07-29"
+run_chain_mutated 's/^    elif daily\[0\] < compact_previous:$/    elif False:/'
+assert_eq "harness detects a [11] stripped of the proven-session watermark check" "0" "$CHAIN_RC"
+drop_fixture
+
+# --- the universe file and the calendar must both answer ---------------------------------------------
+FIXTURE_DAILY=1
+daily_live_env "$SESSION_COMPACT" "STUB_UNIVERSE_SESSION=2026-07-30"
+run_chain
+assert_eq "daily: a universe file resolved for another session is NO-GO (1)" "1" "$CHAIN_RC"
+drop_fixture
+FIXTURE_DAILY=1
+daily_live_env "$SESSION_COMPACT" "STUB_UNIVERSE_RC=3"
+run_chain
+assert_eq "daily: a failed lab-mount-universe --daily is NO-GO (1) — no flat-open exception" "1" "$CHAIN_RC"
+drop_fixture
+FIXTURE_DAILY=1
+daily_live_env "$SESSION_COMPACT" "STUB_CAL_FAIL=1"
+run_chain
+assert_eq "daily: a calendar that cannot answer for the book is NO-GO (1)" "1" "$CHAIN_RC"
+drop_fixture
+
+# --- adjustment-basis shifts on held symbols are WARNING rows, not refusals ------------------------
+avoid_midnight_edge
+SHIFT_LEGS="[$(daily_leg 100000 2026-07-20),$(daily_leg 100001 2026-07-21),$(daily_leg 100002 2026-07-22)]"
+FIXTURE_DAILY=1
+FIXTURE_SHIFTED='{"100000.XKRX|1-DAY":"20260725"}'
+FIXTURE_BOOK="$(daily_book 2026-07-30 "$SHIFT_LEGS")"
+daily_live_env "$SESSION_COMPACT" "STUB_INGEST_SHIFT=100001.XKRX|1-DAY=20260730"
+run_chain
+assert_eq "daily: a held symbol's basis shift warns but does not refuse (0)" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"WARNING: held 100000 "*"detected 20260725 (already on record, heal pending)"*)
+    ok "daily: a mark still in shifted is reported as a pending heal" ;;
+  *) no "daily: a mark still in shifted is reported as a pending heal" \
+        "WARNING: held 100000 ... (already on record, heal pending)" "$CHAIN_OUT" ;;
+esac
+# THE CASE THE FIRST VERSION OF THIS WARNING COULD NOT SEE. A real accumulate that detects a split on a
+# held leg also heals it, clearing the `shifted` mark and leaving only a rebase event — so a check that
+# reads `shifted` alone stays silent on the one shift the operator most needs to hear about.
+case "$CHAIN_OUT" in
+  *"WARNING: held 100001 "*"was RE-BASED this run"*"detected 20260730, healed 20260730"*)
+    ok "daily: a shift detected AND healed by this ingest is still reported" ;;
+  *) no "daily: a shift detected AND healed by this ingest is still reported" \
+        "WARNING: held 100001 ... was RE-BASED this run ... detected 20260730, healed 20260730" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"held 100002 "*) no "daily: an unshifted held symbol raises no warning" "no row for 100002" "$CHAIN_OUT" ;;
+  *) ok "daily: an unshifted held symbol raises no warning" ;;
+esac
+drop_fixture
+
+# NEGATIVE META-TEST: neutralise the rebase-event comparison and the healed shift goes unreported —
+# which is exactly the state this check was added to end.
+FIXTURE_DAILY=1
+FIXTURE_BOOK="$(daily_book 2026-07-30 "$SHIFT_LEGS")"
+daily_live_env "$SESSION_COMPACT" "STUB_INGEST_SHIFT=100001.XKRX|1-DAY=20260730"
+run_chain_mutated 's/^    if healed:$/    if False:/'
+case "$CHAIN_OUT" in
+  *"RE-BASED this run"*)
+    no "harness detects a [11] stripped of the rebase-event comparison" \
+       "no RE-BASED row from the mutant" "$CHAIN_OUT" ;;
+  *) ok "harness detects a [11] stripped of the rebase-event comparison" ;;
+esac
+drop_fixture
+
+# --- the book's legs are judged the way the runner judges them --------------------------------------
+# A GO on a book the mount then refuses sends the operator to the gateway at 15:15 to find out.
+FIXTURE_DAILY=1
+FIXTURE_BOOK="$(daily_book 2026-07-30 '[{"shcode":"100000","quantity":10,"entry_price":10000.0,"stop_price":10500.0,"prior_close":10100,"entry_date":"2026-07-20","entered_under":"momentum12x1","opening_order_id":"o-1"}]')"
+daily_live_env
+run_chain
+assert_eq "daily: a leg whose stop is not below its entry is NO-GO (1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"unusable leg(s) the runner would refuse"*"100000: stop_price"*)
+    ok "daily: the unusable-leg refusal names the leg and the field" ;;
+  *) no "daily: the unusable-leg refusal names the leg and the field" \
+        "an 'unusable leg(s) ... 100000: stop_price' message" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+FIXTURE_DAILY=1
+FIXTURE_BOOK="$(daily_book 2026-07-30 '[{"shcode":"100000","quantity":10,"entry_price":10000.0,"stop_price":9000.0,"prior_close":10100,"entry_date":"2026-07-20","entered_under":"momentum12x1"}]')"
+daily_live_env
+run_chain
+assert_eq "daily: a leg with no opening_order_id is NO-GO (1)" "1" "$CHAIN_RC"
+drop_fixture
+
+# The two book branches the version-1 and staleness cases do not reach.
+FIXTURE_DAILY=1
+FIXTURE_BOOK='{"version":2,"session_date":"2026-07-30","run_id":"r","ordinal_epoch":"2009-01-02","legs":[]}'
+daily_live_env
+run_chain
+assert_eq "daily: a book counting ordinals from another epoch is NO-GO (1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"counts ordinals from"*) ok "daily: the epoch refusal names the mismatch" ;;
+  *) no "daily: the epoch refusal names the mismatch" "a 'counts ordinals from' message" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+FIXTURE_DAILY=1
+FIXTURE_BOOK="$(daily_book '' "[$(daily_leg 100000 2026-07-20)]")"
+daily_live_env
+run_chain
+assert_eq "daily: legs with no session_date stamp are NO-GO (1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"no session_date stamp"*) ok "daily: the unstamped-legs refusal names itself" ;;
+  *) no "daily: the unstamped-legs refusal names itself" "a 'no session_date stamp' message" "$CHAIN_OUT" ;;
 esac
 drop_fixture
 
