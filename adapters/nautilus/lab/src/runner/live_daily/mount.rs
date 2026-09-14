@@ -489,8 +489,8 @@ pub async fn drive_rehearsal(prepared: PreparedRehearsal) -> anyhow::Result<Exit
                      attribute ({}) — they are NOT in the written book, so the next mount's probe \
                      will refuse until the book records them. Add each one's stop, entry date \
                      and label from the session that opened it, or clear the position at the \
-                     broker. (`lab-live --rehearsal-book adopt` will do this; that verb is a \
-                     later unit and does not exist yet.)",
+                     broker. `lab-live --rehearsal-book adopt --why <text>` admits them from the \
+                     account (nonce-gated).",
                     unattributed.len(),
                     unattributed.join(", ")
                 );
