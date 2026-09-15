@@ -81,6 +81,85 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Re-check — the pre-turn admissibility re-check ran ONCE on the U4 selected run and **REFUSED TO OPEN** the daily lineage: at this lineage's own measured clustering the hurdle is 0.080530 against the registered effect 0.048546, and the holdout would need 7,779 sessions where 1,566 exist (S_max 2,460); the standing block stays `currently open: NONE`, the bar is not lowered, no other candidate is re-checked, and `rederivation_trigger` (4) FIRES (2026-09-15) — plan 2026-09-08-1215 U5 (R2, R8, R9), queue `daily-lineage-recheck-and-opening-commit`
+
+- **Exactly one invocation, against exactly the run the plan named.**
+  `lab-research lineage recheck --run data/next-daily-2016/runs/20260910T110449Z-backtest-daily-ms-v0`
+  — the `momentum12x1` specification-window run selected by the 2026-09-10 comparison, read from
+  the marker-frozen judgment home. The command wrote `recheck.json` beside the run and exited 1.
+  Every identity it recorded is the one the freeze expects: catalog fingerprint `f538ddee…`, code
+  hash `fb78cc55…`, params hash `387efc3e…` (the frozen set), pre-registration content hash
+  `0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`, sample-margin content hash
+  `e4f1bba9…`, calendar artifact `911caaf4…` / calendar id `ecc90f88…`. The specification window
+  `2016-08-01 ..= 2019-12-31` resolved to 837 sessions with no Unknown day.
+- **Measured on the specification window (R8): this lineage's own clustering and supply.**
+
+  | | measured (this lineage) | projected (frozen, from ORB v35) |
+  |---|---:|---:|
+  | closed trades / exit clusters | 6,285 / 818 | — |
+  | ICC | **0.125182** | 0.327334 |
+  | design effect | 1.836250 | 3.291338 |
+  | per-trade net-r sd | **1.884930** | 0.641523 |
+  | calendar sessions / warmup / eligible | 837 / 13 / 824 | — |
+  | active entry sessions → participation | 824 → **1.000000** | target 1.0 |
+  | trades per calendar session | **7.757282** | target 8.0 |
+  | bootstrap blocks (length 16) | 53 | — |
+
+  The three terms the gate names all came in at or better than their projection: ICC is well
+  below ORB's, participation is exactly the target, entry rate is within 3% of `target_m`.
+  Effective n is 3,422.7 closed trades.
+- **Re-derived under the frozen no-lowering rule (R8), and the verdict.**
+
+  | | frozen | re-derived |
+  |---|---:|---:|
+  | variance ratio | 1 | **4.967131** |
+  | holdout SE (1,566 sessions) | 0.014748 | 0.032869 (unfloored 0.032869 — above the floor, so the floor did not bind) |
+  | bar = 1.96 × SE | 0.028907 | **0.064424** |
+  | haircut = 0.25 × bar | 0.007227 | 0.016106 |
+  | **hurdle** | 0.036133 | **0.080530** |
+  | effect required at power 0.80 | — | 0.108194 |
+  | required holdout sessions | 1,566 | **7,779** |
+  | trade-model required sessions | — | 2,802 |
+
+  Registered effect `+0.048546` < required `0.108194` ⇒ **REFUSE**. It also sits below the
+  re-derived bar alone (0.064424), so no haircut choice would have changed the answer.
+- **What moved the bar, precisely — and it is not one of the three named terms.** The variance
+  ratio decomposes as (1.884930 / 0.641523)² = 8.6329 × (1.836250 / 3.291338) = 0.5579 ×
+  (8.0 / 7.757282) = 1.0313 ⇒ 4.9671. Clustering and entry supply both *lowered* the projection;
+  the per-trade dispersion raised it 8.6× and won. The frozen SE was a transport of ORB v35's
+  per-trade net-r sd (0.6415, 24 sessions, 111 trades) onto this lineage's session count; this
+  lineage's 16-session holds under a 1.5 × ATR(1) stop close trades that are 2.94× as dispersed in
+  R units. The freeze's own text said the bar was "a projection under ORB's clustering, not a
+  measurement of this lineage" — this is that projection being measured, and it was low.
+- **`rederivation_trigger` (4) FIRES, and it is recorded as a firing, not an amendment (R9).**
+  The re-check measured values that move the projected bar (0.028907 → 0.064424, ×2.23), which
+  is the trigger's text. Per R9 and the artifact's own rule this invalidates the freeze for the
+  purpose of running any turn; every figure would have to be re-derived, not patched. **This entry
+  does not re-derive anything.** The suspend-vs-amend convention
+  (`docs/solutions/conventions/suspend-vs-amend-frozen-governance-artifacts.md`) asks the
+  no-consumer question first, and the numbers make it pointed: a re-derived freeze under the same
+  hypothesis would name a 7,779-session holdout against a 2,460-session ceiling (3.2× short — the
+  trade model's 2,802 is short too), so the re-derived bar would gate a judgment that cannot be
+  powered from the supply that exists. Whether that is a recorded stand-down of the daily lineage
+  or a re-registration under a different hypothesis is a governed decision for the operator; it is
+  queued as `daily-lineage-post-refuse-disposition` and NOT taken here.
+- **What this entry deliberately does NOT do.** The standing block above still reads
+  `currently open: NONE` — the re-check refuses to open, it does not close (the frozen gate text).
+  `lineage-preregistration.json` is untouched and still hashes `0ecd9d11…`; `preregistration.json`
+  and `sample-margin.json` are untouched. No other candidate is re-checked — re-running against a
+  different run would be a new pre-registration act, and the bar is not lowered. U6 (the single
+  holdout judgment) does not open; the ledger `ledger/lineage-holdout-judgments.jsonl` still does
+  not exist. The candidate's in-sample net RoR (0.047061) was not an input (R8) and is not evidence
+  either way.
+- **State after this entry: plan 2026-09-08-1215 terminates against this lineage reporting
+  `runner-ready` only, never `lineage-authorized`.** The daily paper REHEARSAL is unaffected in
+  mechanics and changed in meaning: it stays a driver-falsification exercise (`rehearsal: true`,
+  `paper_stage: false` remains hardcoded on both mount paths), its sessions count toward no rung's
+  N, and no comparison row against a registered effect can be opened from it. The rung-1 ladder
+  re-entry stays PARKED, now behind the disposition decision rather than behind U6. Queue: U5 is
+  closed as executed; U6's blocker is re-stated to name the disposition item; the disposition item
+  is added blocked on the operator's governed decision.
+
 ## Freeze — the daily lineage's ranking signal is FROZEN to `momentum12x1`: `FROZEN_RANKING_SIGNAL` moves `None` → `Some(Momentum12x1)` and the judgeable-run parameter identity moves with it, `c7980e8b…` → `387efc3e…`, exactly as the plan declared; the serde default stays `Placeholder` so legacy manifests keep their unjudgeable marker (KTD9); no strategy code hash moves, no run (2026-09-11) — plan 2026-09-08-1215 U4, queue `daily-candidate-declaration-and-signal-freeze`
 
 - **What was frozen, and on what evidence.** `momentum12x1`, selected by the comparison in the

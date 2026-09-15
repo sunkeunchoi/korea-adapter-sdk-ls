@@ -18,6 +18,14 @@ and stays byte-identical.
 `currently open: NONE`. Opening happens in a later commit, gated on the pre-turn
 admissibility re-check clearing — see [§ The two gates](#the-two-gates).
 
+> **Status 2026-09-15: the pre-turn admissibility re-check ran once and REFUSED TO OPEN.** At this
+> lineage's own measured clustering the hurdle re-derives to 0.080530 against the registered
+> effect 0.048546, and the projected bar moved (0.028907 → 0.064424), so `rederivation_trigger`
+> (4) has fired. The lineage is not open and not closed; the terms below are unchanged and the
+> JSON's bytes and content hash are untouched. The measurements and the decomposition are in the
+> TURN-LOG entry "Re-check — … REFUSED TO OPEN … (2026-09-15)"; what happens next is the queued
+> governed decision `daily-lineage-post-refuse-disposition`.
+
 ---
 
 ## Why freeze at all
