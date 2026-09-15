@@ -183,6 +183,7 @@ execution: code
 - `make next`/`lab-next`가 진행 중인 리허설 시퀀스와 다음 행위를 표시하는 리더. 첫 세션 뒤. 그 전까지 리허설 상태는 런북과 리허설 원장이 보여준다.
 - 2016 이전 Unknown 캘린더 3일, `next.rs`/`queue/mod.rs` 분할, AGENTS.md 동사 열거. 큐에 이미 있다.
 - 조달 아크(`arc-*`). 병렬로 계속되며 이 계획이 소유하지 않는다.
+- **R33의 둘째 분기 — 외피의 날짜별 세션 시계 오버라이드. 유예한다(2026-09-15 결정).** 외피는 전역 시계 하나(`mount_cutoff_kst`/`decision_kst`/`auction_end_kst`/`session_end_kst`)만 갖고 날짜별 필드가 없으므로, R33의 "외피 파일이 그 날짜의 시각을 명시하면"은 도달 불가능한 분기다. 즉 R33은 **장 시간이 바뀐 날 무조건 stand-down**으로 축약되며, 그것이 이 계획 하에서 R33이 갖는 유효 내용이다. 사유: 단축장은 연 1~2일이고, 잘못 적힌 per-date 시계는 stand-down보다 나쁜 실패(실제와 다른 시각으로 마운트해 결정 바를 엉뚱한 시점에 읽는다)를 만든다. 건너뛴 세션의 비용은 이미 규정돼 있다 — 보유 시계는 멈추지 않고, 늦은 청산은 버그가 아니라 TURN-LOG에 기록하는 divergence다(KTD11). 되살릴 조건: 단축장에 실제로 참석해야 할 이유가 생기면 그때 오버라이드 맵을 만들되, `RehearsalEnvelope::validate`가 `mount_cutoff < decision < auction_end <= session_end` 단조성을 **날짜마다** 검사해야 한다.
 
 **Outside this plan**
 
