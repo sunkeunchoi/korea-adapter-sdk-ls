@@ -258,11 +258,9 @@ book and there was no hard stop. Note that `closes` stays empty, so every held l
 3. **The day loop failed or panicked** before the session took its decision. (A cancelled join is
    explicitly not abnormal.)
 
-> **Trap — the `72` message names the wrong variable.** The hard-stop text says
-> `LS_MOUNT_STOP_GRACE_SECS`. That variable is the **ladder's** (`live/mount.rs:1545`); this lane
-> builds its driver config from the envelope, so setting it changes nothing here. Edit
-> `stop_grace_secs` in `config/rehearsal-envelope.json` instead — and mind the envelope's own rule
-> that it must stay `<= heartbeat_interval_secs`.
+The `72` message names the knob to change: on this lane that is `stop_grace_secs` in
+`config/rehearsal-envelope.json`, not the ladder's `LS_MOUNT_STOP_GRACE_SECS`, which this lane never
+reads. Mind the envelope's own rule that it must stay `<= heartbeat_interval_secs`.
 
 A `72` **de-escalates nothing** — a rehearsal's sessions count toward no rung. But the next session
 inherits this account, and a trip in `rehearsal/trips.jsonl` refuses the next mount until cleared.
@@ -453,8 +451,13 @@ A `71` costs nothing — no node, no order, unchanged book — so re-running aft
 ## Days with changed market hours
 
 KRX moves the session on some days (the CSAT day, and others). The envelope carries **one global
-clock and no per-date field**, so there is currently no supported way for it to "name that date's
-times".
+clock and no per-date field**, so it cannot "name that date's times".
+
+That is a **recorded deferral, not an oversight** — see the plan's § Scope Boundaries, *Deferred to
+Follow-Up Work* (decision of 2026-09-15). A short session comes once or twice a year, and a
+mis-typed per-date clock fails worse than standing down does: it mounts on hours that are not the
+day's real ones and reads the decision bar at the wrong moment. So R33 reduces, deliberately, to its
+first branch.
 
 **Therefore: stand down on any day whose market hours differ from the standard session** (R33). Do
 not mount. Record the stand-down in the TURN-LOG.
@@ -462,6 +465,9 @@ not mount. Record the stand-down in the TURN-LOG.
 Editing the envelope's times for a single day is physically possible — it is an operational file —
 but it is a global edit affecting every later session, so if it is ever done it must be recorded in
 the TURN-LOG and reverted the same day. Prefer the stand-down.
+
+A skipped session is not free, and its cost is already governed: the hold clock does not pause, and
+a late exit is a **divergence to record**, not a bug (KTD11 — see § Session cadence).
 
 ---
 

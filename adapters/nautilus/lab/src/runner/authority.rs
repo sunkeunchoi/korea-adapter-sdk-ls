@@ -262,15 +262,23 @@ impl SessionIdentity {
 /// return on either one would hide the other. Ordering puts the not-flat message last so it
 /// is the line left on the operator's screen.
 ///
-/// `rehearsal` selects the recovery instructions (U8/KTD3). A rehearsal has no dispatch
-/// chain, so the ladder's `--clear-killswitch` does not apply to it and naming it would
-/// send the operator to a nonce-gated verb that writes into a store their home does not
-/// have; its own recovery verbs are U13's.
+/// `rehearsal` selects the recovery instructions (U8/KTD3) AND the name of the knob that
+/// governs the stop grace. A rehearsal has no dispatch chain, so the ladder's
+/// `--clear-killswitch` does not apply to it and naming it would send the operator to a
+/// nonce-gated verb that writes into a store their home does not have; its own recovery
+/// verbs are U13's. The grace knob differs for the same reason the lanes do: only the
+/// ladder reads `LS_MOUNT_STOP_GRACE_SECS` (`live/mount.rs`'s `mount_inputs_from_env`),
+/// while the rehearsal takes its grace off the envelope in `preflight_offline`. Naming the
+/// env var on the rehearsal arm sent an operator to a variable that changes nothing on the
+/// lane they are standing on.
 pub(crate) fn mount_verdict(outcome: &LiveSessionOutcome, rehearsal: bool) -> (u8, Vec<String>) {
-    // The lane's own recovery path, resolved ONCE and shared by both causes — the
-    // diagnosis is identical across lanes, only the verb that fixes it differs.
-    let (lane, recovery) = if rehearsal {
-        ("rehearsal", "A rehearsal's sessions count toward no rung, so nothing de-escalates — \
+    // The lane's own recovery path and its own stop-grace knob, resolved ONCE and shared by
+    // both causes — the diagnosis is identical across lanes, only the verb that fixes it and
+    // the place the grace is configured differ.
+    let (lane, grace_knob, recovery) = if rehearsal {
+        ("rehearsal",
+         "`stop_grace_secs` in `config/rehearsal-envelope.json`",
+         "A rehearsal's sessions count toward no rung, so nothing de-escalates — \
          but the next session inherits this account. Reconcile it against \
          `rehearsal/book.json`: `lab-live --rehearsal-book adopt` takes the broker's view and \
          `lab-live --rehearsal-clear-trip --why <text>` clears a recorded trip (both \
@@ -278,7 +286,9 @@ pub(crate) fn mount_verdict(outcome: &LiveSessionOutcome, rehearsal: bool) -> (u
          The ladder's --clear-killswitch does NOT apply here — it writes to a dispatch chain a \
          rehearsal home does not have. See lab/RUNBOOK-rehearsal-daily.md.")
     } else {
-        ("mount", "`hard_stopped` is a typed limit event: the ladder de-escalates and the \
+        ("mount",
+         "LS_MOUNT_STOP_GRACE_SECS",
+         "`hard_stopped` is a typed limit event: the ladder de-escalates and the \
          readiness window reds on it. Reconcile the account before the next dispatch. A \
          recorded watchdog/breaker trip reds the next --dispatch until you clear it with \
          `lab-live --clear-killswitch` (nonce-gated). See lab/RUNBOOK-rung1.md.")
@@ -289,8 +299,8 @@ pub(crate) fn mount_verdict(outcome: &LiveSessionOutcome, rehearsal: bool) -> (u
         // have confirmed flat. What failed is the node — it did not return from `run`
         // within the grace after being asked to stop, so the driver abandoned it.
         messages.push(format!(
-            "{lane} ABNORMAL (HARD STOP): `node.run` did not return within \
-             LS_MOUNT_STOP_GRACE_SECS of the stop request, so the driver abandoned the node and \
+            "{lane} ABNORMAL (HARD STOP): `node.run` did not return within the stop grace \
+             ({grace_knob}) of the stop request, so the driver abandoned the node and \
              tore down without it. The run IS finalized and scannable — its data_quality \
              carries `hard_stopped` plus the teardown's own flat verdict. {recovery}"
         ));
@@ -381,5 +391,33 @@ mod tests {
         let (_, ladder) = mount_verdict(&outcome_fixture(true, false), false);
         assert!(ladder[0].contains("de-escalates"), "{ladder:?}");
         assert!(ladder[1].contains("--clear-killswitch"), "{ladder:?}");
+    }
+
+    /// The hard-stop line must name the knob that governs the lane it fired on. Only the
+    /// ladder reads `LS_MOUNT_STOP_GRACE_SECS`; the rehearsal's grace comes off
+    /// `config/rehearsal-envelope.json`, so naming the env var there told an operator to
+    /// raise a variable that changes nothing — a wrong instruction at the exact moment
+    /// they are trying to stop a node that will not stop.
+    #[test]
+    fn the_hard_stop_line_names_each_lanes_own_stop_grace_knob() {
+        let (_, rehearsal) = mount_verdict(&outcome_fixture(true, false), true);
+        assert!(
+            rehearsal[0].contains("`stop_grace_secs` in `config/rehearsal-envelope.json`"),
+            "the rehearsal is sent to its envelope: {rehearsal:?}"
+        );
+        assert!(
+            !rehearsal[0].contains("LS_MOUNT_STOP_GRACE_SECS"),
+            "and never to the ladder's env var, which this lane does not read: {rehearsal:?}"
+        );
+
+        let (_, ladder) = mount_verdict(&outcome_fixture(true, false), false);
+        assert!(
+            ladder[0].contains("LS_MOUNT_STOP_GRACE_SECS"),
+            "the ladder keeps the env var it really does read: {ladder:?}"
+        );
+        assert!(
+            !ladder[0].contains("rehearsal-envelope.json"),
+            "and is not sent to a file its mount never loads: {ladder:?}"
+        );
     }
 }
