@@ -4401,4 +4401,167 @@ mod frozen_catalog_marker {
         ensure_catalog_writable(&catalog)
             .expect("a marker outside this home does not freeze it");
     }
+
+    /// THE LINK HOLE. A data home whose `catalog/` symlinks into the frozen home carries the
+    /// marker on neither logical path the guard used to check — `<home>/FROZEN-…` does not
+    /// exist, and the canonical marker sits beside the frozen *catalog*, not inside it — while
+    /// the write follows the link straight into the bars the pin was taken from. U11 closed
+    /// this in `session-morning.sh`; the guard has to close it for every other caller.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_catalog_linked_into_a_frozen_home_refuses() {
+        let (_frozen, frozen_catalog) = frozen_home(true).await;
+        let other = tempdir().unwrap();
+        let linked = other.path().join("catalog");
+        std::os::unix::fs::symlink(&frozen_catalog, &linked).unwrap();
+
+        // The home the caller names is clean by every logical test.
+        assert!(!other.path().join(FROZEN_CATALOG_MARKER).exists());
+        assert!(!linked.join(FROZEN_CATALOG_MARKER).exists());
+
+        let err = write_bars(&linked, vec![daily_bar(samsung_daily(), ymd(2024, 1, 4), 60_500)])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(FROZEN_CATALOG_MARKER), "the refusal names the marker: {err}");
+        assert!(
+            err.contains("symlink") && err.contains(&linked.display().to_string()),
+            "and says the path passed is being redirected, so the operator removes the LINK \
+             rather than just re-pointing the home: {err}"
+        );
+
+        // The frozen bars are untouched: still the one seeded bar, read through the link.
+        assert_eq!(read_all_bars(&frozen_catalog).await.unwrap().len(), 1);
+    }
+
+    /// A leaf link that lands one level INSIDE the frozen catalog. The first fix resolved the
+    /// catalog and looked only beside it, so this shape kept writing into the frozen bars while
+    /// the guard's own doc comment claimed the leaf case was closed. Reaching the frozen home
+    /// means recognising `catalog` on the way up from the resolved path.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_leaf_link_into_the_frozen_catalogs_bar_dir_refuses() {
+        let (frozen, frozen_catalog) = frozen_home(true).await;
+        let bars = frozen_catalog.join("data");
+        std::fs::create_dir_all(&bars).unwrap();
+        let other = tempdir().unwrap();
+        let linked = other.path().join("catalog");
+        std::os::unix::fs::symlink(&bars, &linked).unwrap();
+
+        let err = write_bars(&linked, vec![daily_bar(samsung_daily(), ymd(2024, 1, 4), 60_500)])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(FROZEN_CATALOG_MARKER), "{err}");
+        assert!(
+            err.contains(&frozen.path().join(FROZEN_CATALOG_MARKER).display().to_string()),
+            "the refusal names the frozen home the link reaches, not the home passed: {err}"
+        );
+    }
+
+    /// The bars are not at the catalog root — `ParquetDataCatalog` puts every file under
+    /// `catalog/data`. A link THERE redirects the write while the catalog root itself is an
+    /// ordinary unmarked directory, so resolving only the root leaves the pinned bars reachable.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_at_the_bar_dir_refuses_even_though_the_catalog_root_is_real() {
+        let (_frozen, frozen_catalog) = frozen_home(true).await;
+        let frozen_bars = frozen_catalog.join("data");
+        std::fs::create_dir_all(&frozen_bars).unwrap();
+        let other = tempdir().unwrap();
+        let catalog = other.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        std::os::unix::fs::symlink(&frozen_bars, catalog.join("data")).unwrap();
+
+        // The catalog root is a real, unmarked directory by every logical AND resolved test of
+        // the root itself — the redirection is one level in.
+        assert!(!catalog.join(FROZEN_CATALOG_MARKER).exists());
+        assert!(!other.path().join(FROZEN_CATALOG_MARKER).exists());
+        assert!(!std::fs::canonicalize(&catalog).unwrap().join(FROZEN_CATALOG_MARKER).exists());
+
+        assert!(
+            ensure_catalog_writable(&catalog).is_err(),
+            "a link at the bar dir carries the write into the frozen bars"
+        );
+    }
+
+    /// A path that cannot be resolved AND still carries `..` is refused outright. The caller
+    /// creates its own directories immediately after this guard, which resolves the `..` against
+    /// whatever exists by then — so "canonicalize failed, therefore nothing to follow" is false
+    /// exactly here. Fail closed on not knowing where the write lands.
+    #[tokio::test]
+    async fn an_unresolvable_dotdot_path_is_refused_and_the_frozen_bars_survive() {
+        let (frozen, frozen_catalog) = frozen_home(true).await;
+        let sneak = frozen.path().join("not-yet").join("..").join("catalog");
+        assert!(std::fs::canonicalize(&sneak).is_err(), "the fixture must not resolve yet");
+
+        let err = delete_bar_series(&sneak, samsung_daily()).await.unwrap_err().to_string();
+        assert!(err.contains(".."), "the refusal names what it could not evaluate: {err}");
+        assert!(!sneak.exists(), "and nothing created the path on the way to refusing");
+        assert_eq!(read_all_bars(&frozen_catalog).await.unwrap().len(), 1, "bars untouched");
+    }
+
+    /// The refusal must not invent a symlink. A plainly marked home is refused by a LOGICAL
+    /// candidate, and that refusal carries no resolution sentence — an ordering or flag
+    /// regression that marked every hit resolved would send operators hunting a link that is
+    /// not there, and nothing else would catch it.
+    #[tokio::test]
+    async fn a_plainly_marked_home_refuses_without_claiming_a_link() {
+        let (_dir, catalog) = frozen_home(true).await;
+        let err = ensure_catalog_writable(&catalog).unwrap_err().to_string();
+        assert!(err.contains(FROZEN_CATALOG_MARKER), "{err}");
+        assert!(
+            !err.contains("resolves to") && !err.contains("symlink"),
+            "no link is involved, so the refusal must not mention one: {err}"
+        );
+    }
+
+    /// A linked ANCESTOR needs no resolving: `Path::exists` follows the whole logical path, so
+    /// the marker beside the real home is already found by the logical candidate. This is the
+    /// entire reason the resolved candidates start at the catalog and not further up, and a
+    /// refactor could reopen it with every other test still green.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_linked_ancestor_is_caught_by_the_logical_candidates() {
+        let (frozen, _frozen_catalog) = frozen_home(true).await;
+        let outer = tempdir().unwrap();
+        let linked_home = outer.path().join("home");
+        std::os::unix::fs::symlink(frozen.path(), &linked_home).unwrap();
+
+        // The catalog leaf itself is a real directory reached through the linked home.
+        let catalog = linked_home.join("catalog");
+        assert!(!catalog.symlink_metadata().unwrap().file_type().is_symlink());
+        let err = ensure_catalog_writable(&catalog).unwrap_err().to_string();
+        assert!(err.contains(FROZEN_CATALOG_MARKER), "{err}");
+        assert!(
+            !err.contains("resolves to"),
+            "the logical candidate found it, so there is no resolution to report: {err}"
+        );
+    }
+
+    /// Not vacuous: resolving the path only ever looks for the marker. A linked catalog whose
+    /// target is an ordinary unmarked home writes normally — the guard keys on the freeze, not
+    /// on the link, so it must not turn into a blanket ban on symlinked homes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_catalog_linked_into_an_unmarked_home_still_writes() {
+        let target = tempdir().unwrap();
+        let real_catalog = target.path().join("catalog");
+        std::fs::create_dir_all(&real_catalog).unwrap();
+        let other = tempdir().unwrap();
+        let linked = other.path().join("catalog");
+        std::os::unix::fs::symlink(&real_catalog, &linked).unwrap();
+
+        write_bars(&linked, vec![daily_bar(samsung_daily(), ymd(2024, 1, 3), 60_000)])
+            .await
+            .unwrap();
+        assert_eq!(read_all_bars(&real_catalog).await.unwrap().len(), 1);
+
+        // ...and freezing the TARGET home shuts the link, with no change on the linking side.
+        std::fs::write(target.path().join(FROZEN_CATALOG_MARKER), "x").unwrap();
+        assert!(
+            ensure_catalog_writable(&linked).is_err(),
+            "the target's marker decides, reached through the link"
+        );
+    }
 }

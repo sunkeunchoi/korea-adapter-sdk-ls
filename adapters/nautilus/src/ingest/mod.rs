@@ -3361,6 +3361,54 @@ fn last_gap(cp: &Checkpoint) -> checkpoint::CoverageGap {
 /// is a new governed act (a new pin and a new marker), not a silent reuse of this one.
 pub const FROZEN_CATALOG_MARKER: &str = "FROZEN-20260812";
 
+/// The subdirectory `ParquetDataCatalog` writes every bar file into, relative to the catalog root.
+///
+/// Not a name this crate chooses — it is nautilus's on-disk layout, verified against the judgment
+/// home (`data/next-daily-2016/catalog/` holds `data/`, `ingest-checkpoint.json` and
+/// `universe-metadata-pin.json`). It is named here for one reason: it is the only subpath whose
+/// redirection can reach the pinned bars, so [`ensure_catalog_writable`] resolves it too.
+const CATALOG_BAR_DIR: &str = "data";
+
+/// The directory name the `FROZEN-…` marker is defined relative to: the marker sits BESIDE a
+/// `catalog/`, in its data home.
+const CATALOG_DIR_NAME: &str = "catalog";
+
+/// Every directory a `FROZEN-…` marker could sit in that would govern a write landing at `real`.
+///
+/// Two shapes, both taken from the marker's own contract (`<data_home>/FROZEN-…` beside
+/// `<data_home>/catalog/`, and the marker dropped one level in):
+///
+/// 1. `real` itself and the directory beside it — the home of whatever the path resolved to.
+/// 2. For any ancestor of `real` named `catalog`, that ancestor and ITS home. This is what catches
+///    a link that lands *inside* a frozen catalog rather than on it: `<home>/catalog ->
+///    <frozen>/catalog/data` resolves one level too deep for (1) alone, and the frozen home is
+///    reached only by recognising `<frozen>/catalog` on the way up.
+///
+/// Only an ancestor actually named `catalog` counts, which is what keeps this from walking to the
+/// filesystem root and freezing a home because some unrelated ancestor carries a same-named file —
+/// the boundary `a_marker_two_levels_up_does_not_freeze_the_home` pins.
+fn frozen_homes_of(real: &Path) -> Vec<PathBuf> {
+    let mut homes: Vec<PathBuf> = Vec::new();
+    let push = |homes: &mut Vec<PathBuf>, dir: &Path| {
+        if !homes.iter().any(|h| h == dir) {
+            homes.push(dir.to_path_buf());
+        }
+    };
+    push(&mut homes, real);
+    if let Some(parent) = real.parent() {
+        push(&mut homes, parent);
+    }
+    for ancestor in real.ancestors().skip(1) {
+        if ancestor.file_name() == Some(std::ffi::OsStr::new(CATALOG_DIR_NAME)) {
+            push(&mut homes, ancestor);
+            if let Some(parent) = ancestor.parent() {
+                push(&mut homes, parent);
+            }
+        }
+    }
+    homes
+}
+
 /// Refuse a catalog mutation when the home is marked frozen.
 ///
 /// Called by every entry point that changes catalog CONTENT — [`write_bars`],
@@ -3375,23 +3423,82 @@ pub const FROZEN_CATALOG_MARKER: &str = "FROZEN-20260812";
 /// that fails to fire because the file sits one directory over is the failure mode this whole
 /// mechanism exists to avoid.
 ///
+/// **The same two locations are checked again on every REAL path this write can land in**
+/// ([`frozen_homes_of`]). A logical check alone leaves the link hole: a data home whose `catalog/`
+/// symlinks into the frozen home carries the marker on neither logical path, because
+/// `<home>/FROZEN-…` does not exist and the canonical marker sits beside the frozen *catalog*, not
+/// inside it, while the write follows the link into the frozen bars. Resolving first makes the
+/// freeze a property of the write rather than of the caller that remembered to check.
+///
+/// # What is resolved, and what is still not
+///
+/// A write to `catalog_path` lands wherever that path really goes AND wherever the writer's own
+/// subpaths really go, so two roots are resolved: the catalog itself, and [`CATALOG_BAR_DIR`] —
+/// where `ParquetDataCatalog` puts every bar file, and therefore the only subpath whose
+/// redirection can reach the pinned bars. A link at any OTHER depth below the catalog is still
+/// unguarded; `rehearsal-bootstrap.sh` refuses to clone a source catalog containing any symlink,
+/// which covers the one path that legitimately produces a home, and nothing else does.
+///
+/// [`Path::exists`] follows links, so the logical pair already catches a marker reached through a
+/// linked *ancestor* of the catalog. It is the leaf and below that need resolving.
+///
 /// # Errors
 ///
-/// [`AdapterError::Ingest`] naming the marker found and what it protects.
+/// [`AdapterError::Ingest`] naming the marker found and what it protects, or refusing a path whose
+/// destination cannot be determined at all.
 pub fn ensure_catalog_writable(catalog_path: &Path) -> AdapterResult<()> {
-    let candidates = [
-        catalog_path.parent().map(|home| home.join(FROZEN_CATALOG_MARKER)),
-        Some(catalog_path.join(FROZEN_CATALOG_MARKER)),
-    ];
-    for marker in candidates.into_iter().flatten() {
+    // A path that does not resolve AND still carries `..` is refused outright, because the two
+    // logical candidates are then meaningless and the resolved ones do not exist: `<frozen>/x/../
+    // catalog` with no `x` misses all of them, and the caller's own `create_dir_all` then makes
+    // the very path the guard could not evaluate — landing in the frozen catalog. Fail closed on
+    // not knowing. A plain not-yet-created catalog has no `..` and still writes.
+    let unresolvable = std::fs::canonicalize(catalog_path).is_err();
+    if unresolvable && catalog_path.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(AdapterError::Ingest(format!(
+            "refusing to write to {}: the path does not exist yet AND contains `..`, so where it \
+             will land cannot be determined — and the caller creates its own directories right \
+             after this check, which would resolve the `..` against whatever is there by then. \
+             The FROZEN-marker guard cannot protect a destination it cannot name. Pass the \
+             catalog path without `..`.",
+            catalog_path.display()
+        )));
+    }
+
+    // (marker path, the resolved root that produced it — `None` for a logical candidate).
+    let mut candidates: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+    if let Some(home) = catalog_path.parent() {
+        candidates.push((home.join(FROZEN_CATALOG_MARKER), None));
+    }
+    candidates.push((catalog_path.join(FROZEN_CATALOG_MARKER), None));
+    for root in [catalog_path.to_path_buf(), catalog_path.join(CATALOG_BAR_DIR)] {
+        let Ok(real) = std::fs::canonicalize(&root) else { continue };
+        for home in frozen_homes_of(&real) {
+            candidates.push((home.join(FROZEN_CATALOG_MARKER), Some(real.clone())));
+        }
+    }
+
+    for (marker, resolved_from) in candidates {
         if marker.exists() {
+            // Say what was resolved rather than asserting a cause. A resolved hit usually IS a
+            // symlink, but not always — a `..` path with no link anywhere resolves too, and
+            // sending that operator to delete a link that does not exist is its own failure.
+            let resolution = match resolved_from {
+                Some(real) => format!(
+                    " The marker is not on the path you passed ({}) — that path resolves to {}, \
+                     which is inside the frozen home. If a symlink is redirecting it, removing \
+                     the link is the fix; re-pointing the data home alone would leave it.",
+                    catalog_path.display(),
+                    real.display()
+                ),
+                None => String::new(),
+            };
             return Err(AdapterError::Ingest(format!(
                 "refusing to write to a FROZEN catalog: {} exists. This data home is pinned as \
                  the lineage judgment catalog — its bars back the committed catalog_fingerprint, \
                  so advancing it would silently invalidate the pin and the single holdout \
                  judgment would refuse with no way to tell why. Point LS_DATA_HOME at the \
                  advancing rehearsal home instead, or remove the marker as a governed act \
-                 (re-derivation) and re-pin the fingerprint.",
+                 (re-derivation) and re-pin the fingerprint.{resolution}",
                 marker.display()
             )));
         }

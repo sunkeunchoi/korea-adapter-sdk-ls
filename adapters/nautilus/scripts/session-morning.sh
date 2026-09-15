@@ -584,21 +584,24 @@ fi
 # ACTIVATION have already been spent against a run that can never advance. Both marker locations the
 # Rust guard reads are checked, so a misplaced marker protects here exactly as it does there.
 #
-# A LINK IS THE HOLE BOTH MARKER CHECKS LEAVE. `LS_SM_DATA_HOME` accepts any absolute home, and both
-# this loop and the Rust guard compare LOGICAL paths — so a home whose `catalog/` is a symlink into
-# the judgment catalog carries no marker on any path either of them looks at, while the accumulate
-# writes through the link into the frozen bars. The leaf is refused outright and the marker is looked
-# for on the catalog's REAL path as well. Only the LEAF is tested for -L, never an ancestor: macOS
-# resolves TMPDIR under /var -> /private/var, so refusing on any symlinked ancestor would refuse every
-# run from a temp tree (the harness's own fixture repos among them).
-# The deeper fix — canonicalizing inside nautilus_ls::ingest::ensure_catalog_writable, which has the
-# same logical-path blind spot — belongs to the Rust guard and is recorded as follow-up, not done here.
+# A LINK IS THE HOLE A LOGICAL MARKER CHECK LEAVES. `LS_SM_DATA_HOME` accepts any absolute home, so a
+# home whose `catalog/` is a symlink into the judgment catalog carries no marker on any logical path
+# — while the accumulate writes through the link into the frozen bars. The leaf is refused outright
+# and the marker is looked for on the catalog's REAL path as well. Only the LEAF is tested for -L,
+# never an ancestor: macOS resolves TMPDIR under /var -> /private/var, so refusing on any symlinked
+# ancestor would refuse every run from a temp tree (the harness's own fixture repos among them).
+# ensure_catalog_writable resolves the catalog and its bar root too, so a link at either depth is
+# refused there as well, for every OTHER caller. This check is not redundant with it: it fires here,
+# before the witness probe, the fetch and a calendar ACTIVATION have been spent on a run that can
+# never land. It is also WIDER — any linked home or catalog is refused, frozen target or not.
 for leaf in "$DATA_HOME" "$CATALOG"; do
   if [[ -L "$leaf" ]]; then
-    echo "error: $leaf is a symlink. A linked data home or catalog defeats the FROZEN-marker" >&2
-    echo "       refusal below AND the ingest's own write guard — both compare logical paths, so" >&2
-    echo "       an accumulate would write through the link into whatever it points at. Point" >&2
-    echo "       LS_SM_DATA_HOME at a real directory." >&2
+    echo "error: $leaf is a symlink. This chain refuses a linked data home or catalog outright," >&2
+    echo "       whatever it points at: the marker refusal below reads the paths you gave, so a" >&2
+    echo "       link can carry the accumulate somewhere those paths never name. The ingest's own" >&2
+    echo "       write guard resolves links before it looks for the marker, but it runs later —" >&2
+    echo "       after this run has already spent a fetch. Point LS_SM_DATA_HOME at a real" >&2
+    echo "       directory." >&2
     exit 64
   fi
 done
