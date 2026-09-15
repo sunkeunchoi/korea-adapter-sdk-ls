@@ -31,9 +31,15 @@ right now": it derives the KRX window state, reads the single work queue at
 prep, ingest, gate run) with its stage and exact resume command. The queue is
 the **sole staging location** for new and pre-staged operational work; dated
 `TODO-*.md` files are retired and the `make todo-check` gate line rejects them.
-Queue state changes flow through `lab-next add / done / supersede` — never
-hand-edit the JSONL. Resumable gate runs go through `make gate-run` (state in
-gitignored `.gate-run/`).
+Queue state changes flow through `lab-next add / done / supersede / priority /
+block / unblock` — never hand-edit the JSONL. The last three write state the
+first three cannot: `priority <id>` moves the single frontier marker and
+`priority --clear` retracts it; `block <id> --until <condition>` records the
+condition, and `unblock <id>` retracts it. A blocked row moves to the
+`standing:` section — never offered as `next:`, never listed under `queue:` —
+and it **refuses `done`**, so a row whose blocker is stale needs `unblock`
+first. Resumable gate runs go through `make gate-run` (state in gitignored
+`.gate-run/`).
 
 ## Gate (run before committing TR/SDK/metadata changes)
 

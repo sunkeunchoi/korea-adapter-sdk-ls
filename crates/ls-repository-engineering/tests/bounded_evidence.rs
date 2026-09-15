@@ -116,9 +116,22 @@ fn wave1_subject_and_deferred_lifecycle_inputs_are_byte_identical() {
             ".repository-engineering/package.toml",
             "11b7bbc0da007eb76e0bb14d41b07d11eb289930475aa8858d53cf38af98c448",
         ),
+        // RE-BASELINED ONCE, 2026-09-15, from 539b8e98…ced7314a. The ledger had been
+        // byte-frozen since the bounded evidence was published (9a912fe), and this is the
+        // first move off that freeze. WHAT CHANGED: exactly one field — the `source_digest`
+        // of row `instruction--agents-md`, refreshed because AGENTS.md's § "What now" was
+        // edited to enumerate the queue's full mutation surface (`priority` / `block` /
+        // `unblock` had landed with no sanctioned command named for the state only they can
+        // write). WHY IT DOES NOT TOUCH THE EVIDENCE: the frozen set is 26 audit cases over
+        // the CARRIED and DISCARD rows of the migration-source extraction ledger; an
+        // instruction row's reviewed-source digest is not an input to any of them, and no
+        // row's `migration_state`, `current_authority`, `disposition`, or `parity_reference`
+        // moved — the assertions at the bottom of this test still hold over every row.
+        // A future edit that moves anything beyond a reviewed-source digest is NOT covered
+        // by this reasoning and re-opens the question.
         (
             ".repository-engineering/migration-ledger.toml",
-            "539b8e988bd2d6a6fadeff59acd98ab07a4b40d7378c41bfffb92117ced7314a",
+            "f7c7c7d1afca1ac4a4ad3c9c662792b859b449aee4ce944d4543e1b80a6c1fcd",
         ),
         (
             "docs/migration-source-extraction-ledger.md",
