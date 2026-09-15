@@ -43,7 +43,7 @@
     },
     {
       "path": ".repository-engineering/package.lock.json",
-      "sha256": "sha256:f874a27440c9ed59b0e10e060eee7436e22bd06bfe351c0751c0d796a010aba0",
+      "sha256": "sha256:816adf87269f6c93c1f34fe5aa481f14ef390e1ffadc39e701811e96fd447632",
       "byte_length": "3580"
     },
     {
@@ -188,7 +188,7 @@
     },
     {
       "path": "docs/reference/repository-engineering-package.md",
-      "sha256": "sha256:1cfbcd9032063ff7dee6ae3c90fb83c67473959620749c1308986f9533b94329",
+      "sha256": "sha256:a1d1141cbc683c799b809aced1e89755df1d8ca45ca7e6abc30e3cdddd204ceb",
       "byte_length": "21376"
     }
   ]

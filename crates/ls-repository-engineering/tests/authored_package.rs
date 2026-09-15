@@ -383,6 +383,28 @@ fn exactly_two_planned_rows_changed_and_every_other_row_matches_the_pre_wave_has
     architecture.source_digest = Some(ls_repository_engineering::schema::Sha256Digest(
         "sha256:636274dea047898a23d1ccab146a51f4f34e9e93e772b82fa9cfdbaba2b944ce".to_owned(),
     ));
+    // AGENTS.md is a LIVING instruction file, and the same treatment for the same reason:
+    // its § "What now" enumeration of the queue's mutation verbs went stale when `priority`,
+    // `block` and `unblock` landed, so an agent following the standards had no sanctioned
+    // command for the state only those verbs can write. Refreshing the reviewed source is a
+    // governed act — asserting the new digest HERE, by name, is that assertion, and the
+    // pre-wave value is substituted back so the aggregate below keeps catching drift in
+    // every row nobody reviewed. Bump the asserted digest, never the aggregate, when this
+    // file is edited again.
+    let agents = protected
+        .rows
+        .iter_mut()
+        .find(|row| row.logical_id.0 == "instruction--agents-md")
+        .unwrap();
+    assert_eq!(agents.migration_state, MigrationState::Unported);
+    assert_eq!(agents.current_authority, AuthorityState::Legacy);
+    assert_eq!(
+        agents.source_digest.as_ref().unwrap().0,
+        "sha256:5cf38c515d1b08cef64666dab16f7c585c46a68913344fd4b55624c917505560"
+    );
+    agents.source_digest = Some(ls_repository_engineering::schema::Sha256Digest(
+        "sha256:ff05c030fd3dff3aa480cbd29a00822311a591110555f2d149b3a39af5244622".to_owned(),
+    ));
     protected.rows.retain(|row| {
         !matches!(
             row.logical_id.0.as_str(),

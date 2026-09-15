@@ -1,6 +1,6 @@
 {
   "schema_version": "v0",
-  "package_lock_id": "sha256:67abd1f5f68f4fba508f13d41d32ba7e306e01f21709c8dd42ada9db9f0b8c83",
+  "package_lock_id": "sha256:3f538002910787f79f51b55c24abfc195df3296a1930d00f0241a44b7f6bbec9",
   "normative": {
     "package": {
       "schema_version": "v0",
@@ -17,7 +17,7 @@
     "migration_ledger": {
       "schema_version": "v0",
       "path": ".repository-engineering/migration-ledger.toml",
-      "sha256": "sha256:f0ca6469a46d7993e83178dd5e0fb4414505bf45db608c04c56294fff44d8b70",
+      "sha256": "sha256:17db6b007777a909789026009a188fabb9f33693bc6f8d6d5743adcb2b90a2a1",
       "media_type": "application/toml"
     },
     "schema_registry": {
@@ -77,7 +77,7 @@
     "generator": {
       "schema_version": "v0",
       "path": "crates/ls-repository-engineering",
-      "sha256": "sha256:1da615537be86355734530fb8073147f7de0229253a43c8d36ada8d7f43f0df1",
+      "sha256": "sha256:d8173fd372326d90950c7c4dcaae5963dbd267c93e4a5e5468766a49959ff2a2",
       "media_type": "application/vnd.rust.crate"
     },
     "dependency_lock": {
