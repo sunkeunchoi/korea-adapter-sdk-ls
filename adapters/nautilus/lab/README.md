@@ -24,6 +24,10 @@ Runs live beside the catalog under one data home:
   decisions.jsonl                   # one decision envelope per decision (universe + transitions)
   data_quality.json                 # coverage gaps, adjustment-basis flag, approximated-fill
                                     #   count, reconcile-advised conditions (live), universe
+  inherited-book.json               # REHEARSAL lane only — the book the session inherited,
+                                    #   captured at mount time. The live rehearsal/book.json
+                                    #   keeps only still-held legs, so this is the only record
+                                    #   of which run opened a leg an exit closed (U12/KTD2)
   analysis.md                       # YOU write this (see below) — it co-locates here
 <data>/decisions/decisions.jsonl    # cross-run agent-decision registry (append-only;
                                     #   intent-bearing Research-policy envelopes — never
@@ -128,6 +132,7 @@ and labels every artifact `rehearsal: true` so no governance report can read one
 | `--rehearse-daily --stop-before-orders` | operator | same | resolve and record the decision, deliver no bar, submit nothing |
 | `--rehearsal-clear-trip --why <text>` | operator | nonce, attended | clear every standing trip in `rehearsal/trips.jsonl` (0 / 71 / 77 — no paper interlock) |
 | `--rehearsal-book adopt [--why <text>]` | operator | nonce, attended, **paper-only** | cancel all resting orders and rewrite `rehearsal/book.json` from the account (0 / 66 / 71 / 77); **refused 09:00–15:40 KST** |
+| `lab-research report rehearsal --run <id>` | agent | read-only | the session's own rows on a **net** basis (`config/transaction-costs.json` applied at read time), the halt-day divergence class shown separately, and each exit attributed to the run that opened its leg |
 
 The clock, the breaker and the deposit floor come from
 [`config/rehearsal-envelope.json`](config/rehearsal-envelope.json) — an **operational** file, not a

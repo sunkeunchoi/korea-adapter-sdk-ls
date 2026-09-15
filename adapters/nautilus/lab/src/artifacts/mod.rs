@@ -72,6 +72,10 @@ pub const DATA_QUALITY_FILE: &str = "data_quality.json";
 pub const OBSERVATION_FILE: &str = "observation.json";
 /// The agent-written analysis file (co-located into a finalized run dir, R15).
 pub const ANALYSIS_FILE: &str = "analysis.md";
+/// The book the session INHERITED, captured at mount time (U12). Written only by the
+/// rehearsal lane; see [`RunWriter::write_inherited_book`] for why a run cannot borrow the
+/// live `rehearsal/book.json` instead.
+pub const INHERITED_BOOK_FILE: &str = "inherited-book.json";
 
 /// Scrub a free-text string of account/secret-like tokens (KTD2), delegating to the
 /// adapter's scrub. Applied to free-text fields at write time so aborted `.tmp-`
@@ -156,6 +160,27 @@ impl RunWriter {
     /// other case, before there is anything to write.
     pub fn write_observation(&self, observation: &RunObservation) -> anyhow::Result<()> {
         self.write_json(OBSERVATION_FILE, observation)
+    }
+
+    /// Write the book this session INHERITED, verbatim as it stood at mount time (U12).
+    ///
+    /// Generic over the book type on purpose: `RehearsalBook` lives in `runner`, which sits
+    /// above this module, and reaching up for it to name one parameter would invert the
+    /// dependency for no gain. The file name is the contract; the shape is the caller's.
+    ///
+    /// # Why this artifact exists
+    ///
+    /// `<data_home>/rehearsal/book.json` is a LIVE file: the teardown rewrites it from the
+    /// broker's snapshot, and `from_snapshot` keeps only what is still held — so the leg an
+    /// exit closed is **gone** from it by the time any report runs. `entered_under` (the run
+    /// id that opened a leg, KTD2's leg-level label) therefore reaches no finished run
+    /// unless the mount-time book is captured here, inside the run, where it is immutable.
+    /// Without it "exclude the exits of legs entered under a rehearsal" is not computable
+    /// from a run directory at all.
+    ///
+    /// Only the rehearsal lane writes it; a ladder run has no book and passes `None`.
+    pub fn write_inherited_book<T: serde::Serialize>(&self, book: &T) -> anyhow::Result<()> {
+        self.write_json(INHERITED_BOOK_FILE, book)
     }
 
     /// Write the data-quality report, scrubbing EVERY free-text field first.

@@ -1904,7 +1904,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | lineage recheck --run <spec-run> | lineage judge --run <holdout-run> --recheck <recheck-run> | runs compare | replay | catalog status | catalog compact | catalog fingerprint | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | lineage recheck --run <spec-run> | lineage judge --run <holdout-run> --recheck <recheck-run> | runs compare | replay | catalog status | catalog compact | catalog fingerprint | analyze --scaffold | report mfe | report tiers | report sample | report paired | report rehearsal --run <rehearsal-run> | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -2140,7 +2140,15 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // the exit code reflects I/O and input integrity only.
                 Ok(ExitCode::SUCCESS)
             }
-            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers` | `report sample` | `report paired`\n{USAGE}"),
+            Some("rehearsal") => {
+                let out = crate::runner::report::report_rehearsal(&rehearsal_config_from_env()?)?;
+                print_lines(&out.lines);
+                // A rehearsal's rows are an observation, never a verdict — there is nothing
+                // here for an exit code to adjudicate. As with its siblings, the code
+                // reflects I/O and input integrity only.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers` | `report sample` | `report paired` | `report rehearsal`\n{USAGE}"),
         },
         Some("trials") => match std::env::args().nth(2).as_deref() {
             Some("count") => {
@@ -2346,6 +2354,44 @@ fn sample_config_from_env() -> anyhow::Result<crate::runner::report::SampleConfi
             .map(PathBuf::from),
         replicates: env_parsed("LS_SAMPLE_REPLICATES", crate::runner::report::SAMPLE_REPLICATES)?,
         seed: env_parsed("LS_SAMPLE_SEED", crate::runner::report::SAMPLE_SEED)?,
+    })
+}
+
+/// `report rehearsal`'s inputs (U12).
+///
+/// The run id is **required** and accepted as `--run <id>` — the form the plan specifies and
+/// the form `report sample`'s refusal tells an operator to type — with `LS_REPORT_RUN` kept
+/// as the fallback so the four sibling reports' convention still works. There is no default:
+/// `latest_finalized_run` partitions rehearsals out by design, so a defaulted lookup could
+/// never resolve the very runs this report exists for, and silently reporting some other run
+/// instead would be worse than refusing.
+fn rehearsal_config_from_env() -> anyhow::Result<crate::runner::report::RehearsalConfig> {
+    let argv_run = {
+        let args: Vec<String> = std::env::args().skip(3).collect();
+        args.iter()
+            .position(|a| a == "--run")
+            .and_then(|i| args.get(i + 1).cloned())
+            .filter(|v| !v.trim().is_empty() && !v.starts_with("--"))
+    };
+    let run_id = argv_run
+        .or_else(|| std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "report rehearsal requires a run: `--run <run-id>` (or LS_REPORT_RUN). It is \
+                 never defaulted — the latest-finalized lookup excludes rehearsals, so a \
+                 default would resolve a different run than the one you meant"
+            )
+        })?;
+    Ok(crate::runner::report::RehearsalConfig {
+        data_home: data_home_from_env()?,
+        run_id,
+        // The same override the backtest path uses, so a run and its report can be costed
+        // from one artifact; otherwise the committed rates.
+        cost_config: std::env::var(crate::runner::backtest_daily::COST_CONFIG_ENV)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(crate::runner::report::frozen_cost_config_path),
     })
 }
 

@@ -674,6 +674,13 @@ pub struct LiveSessionContext {
     pub trading_date: String,
     /// Typed rows the session's own runner recorded (U9). Empty on the ladder.
     pub observations: SessionObservations,
+    /// The book this session inherited, as it stood at mount time (U12). `None` on the
+    /// ladder, which has no book.
+    ///
+    /// Captured into the run because the live `rehearsal/book.json` is rewritten by the
+    /// teardown and keeps only still-held legs: the leg an exit closed has already been
+    /// dropped from it when a report runs, taking its `entered_under` with it.
+    pub inherited_book: Option<crate::runner::live_daily::RehearsalBook>,
 }
 
 
@@ -1168,6 +1175,14 @@ fn stage_and_finalize(
 
     writer.write_manifest(&ctx.manifest)?;
     writer.write_decisions(&sink.snapshot())?;
+
+    // U12. The mount-time book, captured before the teardown rewrites the live one. This is
+    // the only place a finished run can learn which run OPENED a leg it closed, so it is
+    // written on the rehearsal lane unconditionally — including for an empty book, whose
+    // emptiness is itself the answer ("every exit this session closed a leg it opened").
+    if let Some(book) = &ctx.inherited_book {
+        writer.write_inherited_book(book)?;
+    }
 
     // Mirror the run's KTD2 labels onto the data-quality report so the artifact scans can
     // exclude a rehearsal without opening its manifest (the manifest stays the authority).

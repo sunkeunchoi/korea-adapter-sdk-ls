@@ -244,6 +244,8 @@ fn ctx_with(
         trading_date: "20260725".to_string(),
         // U9's field. The ladder's runner records none of the rehearsal row types.
         observations: SessionObservations::new(),
+        // U12's field. The ladder holds no book.
+        inherited_book: None,
     }
 }
 
@@ -1306,4 +1308,93 @@ async fn a_report_write_failure_does_not_suppress_the_finalized_artifacts() {
         "and the run finalized, so there is no `.tmp-` residue for the ladder to read as a \
          limit event"
     );
+}
+
+// ---------------------------------------------------------------------------
+// U12 — the mount-time book is captured INTO the run.
+// ---------------------------------------------------------------------------
+
+/// A ladder session writes no `inherited-book.json`: it starts flat and ends flat, so there
+/// is no leg for a later report to attribute and an empty file would imply there was.
+#[tokio::test]
+async fn a_ladder_session_writes_no_inherited_book() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+
+    let outcome = run_live_session(
+        r.handles.clone(),
+        &driver_cfg(&ka),
+        &ctx(r.home.path()),
+        frozen(base),
+        returns_immediately,
+    )
+    .await
+    .expect("the session finalizes");
+
+    assert!(
+        !outcome.run_dir.join(nautilus_ls_lab::artifacts::INHERITED_BOOK_FILE).exists(),
+        "the ladder has no book to inherit"
+    );
+}
+
+/// A session that DID inherit a book captures it verbatim into the run.
+///
+/// This is the whole point of the artifact: `<data_home>/rehearsal/book.json` is rewritten by
+/// the teardown and keeps only still-held legs, so the leg an exit closed — and the
+/// `entered_under` label that says which run opened it — survives nowhere else. Without this
+/// capture `report rehearsal` cannot tell a rehearsal-entered exit from a paper-stage one.
+#[tokio::test]
+async fn an_inherited_book_is_captured_into_the_run_verbatim() {
+    use nautilus_ls_lab::runner::live_daily::{RehearsalBook, RehearsalBookLeg};
+
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+
+    let book = RehearsalBook {
+        version: 2,
+        session_date: "2026-06-01".to_string(),
+        run_id: "prior-run".to_string(),
+        ordinal_epoch: "2010-01-04".to_string(),
+        legs: vec![RehearsalBookLeg {
+            shcode: "005930".to_string(),
+            quantity: 10,
+            entry_price: 1_000.0,
+            stop_price: 950.0,
+            prior_close: 1_000,
+            entry_date: "2026-06-01".to_string(),
+            entered_under: "opener-run".to_string(),
+            opening_order_id: "BOOK-005930-2026-06-01".to_string(),
+        }],
+    };
+    let mut c = ctx(r.home.path());
+    c.inherited_book = Some(book.clone());
+
+    let outcome = run_live_session(
+        r.handles.clone(),
+        &driver_cfg(&ka),
+        &c,
+        frozen(base),
+        returns_immediately,
+    )
+    .await
+    .expect("the session finalizes");
+
+    let path = outcome.run_dir.join(nautilus_ls_lab::artifacts::INHERITED_BOOK_FILE);
+    let written: RehearsalBook =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written.legs.len(), 1);
+    assert_eq!(written.legs[0].shcode, "005930");
+    assert_eq!(
+        written.legs[0].entered_under, "opener-run",
+        "the label the whole artifact exists to preserve"
+    );
+    assert_eq!(written.session_date, "2026-06-01", "captured verbatim, not re-stamped");
 }
