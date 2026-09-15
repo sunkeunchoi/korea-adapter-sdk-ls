@@ -3065,15 +3065,18 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
 
     let records = performance.trades.len();
     let closed: Vec<_> = performance.trades.iter().filter(|t| t.ts_closed.is_some()).collect();
-    if closed.is_empty() {
-        anyhow::bail!(
-            "run {run_id} has no CLOSED trades ({records} trade record(s) in {PERFORMANCE_FILE}) \
-             — a session that opened or held without closing anything has no realized row to \
-             report. Its holdings and decisions are in the run's observation and decision \
-             artifacts"
-        );
-    }
-
+    // A session that closed nothing is NOT an error here, unlike in `report sample` — which
+    // is nothing but a realized distribution, so an empty one really is a refusal there.
+    //
+    // This report has two more sections that need no realized row at all, and one of them is
+    // the reason it exists: on a TRADING-HALT day the live lane keeps its position and
+    // typically closes nothing, and R26 requires that divergence class to be shown. Bailing
+    // before the renderer meant the class was unprintable on exactly the day it describes.
+    // The first attended sessions have the same shape by construction — a
+    // `--stop-before-orders` session submits nothing, the next only enters, and the hold runs
+    // 16 sessions — so a refusal would make the verb unusable on every run it will see before
+    // the holdout. An empty realized set is a session state, and a nonzero exit is reserved
+    // for input and I/O failure.
     let mut exits = Vec::with_capacity(closed.len());
     for t in &closed {
         // The live path writes bare shcodes; the backtest path appends a venue suffix. The
@@ -3153,7 +3156,8 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
     // unjoined).
     let unjoined_risk_trades: u32 = rows.iter().map(|r| r.unjoined_closes).sum();
 
-    let lines = render_rehearsal(cfg, &manifest, &rows, &exits, &costs, inherited.is_some());
+    let lines =
+        render_rehearsal(cfg, &manifest, &rows, &exits, &costs, inherited.is_some(), records);
     Ok(RehearsalOutcome { run_id, rehearsal, rows, exits, unjoined_risk_trades, lines })
 }
 
@@ -3167,6 +3171,7 @@ fn render_rehearsal(
     exits: &[RehearsalExit],
     costs: &crate::strategy::orb::TransactionCostModel,
     had_inherited_book: bool,
+    record_count: usize,
 ) -> Vec<String> {
     let run_id = &manifest.run_id;
     let paper_stage = manifest.paper_stage == Some(true);
@@ -3198,6 +3203,19 @@ fn render_rehearsal(
     }
 
     lines.push(format!("session rows — net basis (R26){}:", if paper_stage { ", R28-excluded" } else { "" }));
+    if rows.is_empty() {
+        // Say which session state this is, rather than leaving a blank section the reader
+        // has to interpret. The divergence classes below still print — on a halt day they
+        // are the whole point of the run.
+        lines.push(format!(
+            "  no realized row: this run closed nothing ({} trade record(s) in \
+             {PERFORMANCE_FILE}). That is a session state, not a fault — a held position \
+             under a trading halt, a `--stop-before-orders` session, and an entry inside its \
+             16-session hold all look like this. The divergence classes below still apply, \
+             and the holdings are in the run's observation and decision artifacts.",
+            record_count
+        ));
+    }
     for r in rows {
         lines.push(format!(
             "  {}  closes {:<3} net RoR {}{}",

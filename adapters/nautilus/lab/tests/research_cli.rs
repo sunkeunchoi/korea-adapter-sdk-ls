@@ -4776,15 +4776,22 @@ mod report_rehearsal {
         assert!(text.contains("NOT the same as their being empty"), "{text}");
     }
 
-    /// A run that closed nothing is a refusal that names where its state actually lives.
+    /// A run that closed nothing is a SESSION STATE, not a refusal. It is the shape of a
+    /// halt day, a `--stop-before-orders` session, and an entry inside its 16-session hold —
+    /// every run this verb sees before the holdout.
     #[test]
-    fn a_run_with_no_closed_trades_is_refused() {
+    fn a_run_with_no_closed_trades_still_reports() {
         let dir = tempdir().unwrap();
         let costs = cost_file(dir.path());
         write_run(dir.path(), "rehearse-6", Some(true), Some(false), vec![]);
 
-        let err = report_rehearsal(&cfg(dir.path(), "rehearse-6", costs)).unwrap_err().to_string();
-        assert!(err.contains("no CLOSED trades"), "{err}");
+        let out = report_rehearsal(&cfg(dir.path(), "rehearse-6", costs)).unwrap();
+
+        assert!(out.rows.is_empty());
+        assert!(out.exits.is_empty());
+        let text = out.lines.join("\n");
+        assert!(text.contains("no realized row: this run closed nothing"), "{text}");
+        assert!(text.contains("not a fault"), "{text}");
     }
 
     /// The staging guard: net RoR is printed, a KRW P&L never is.
@@ -5162,6 +5169,54 @@ mod report_rehearsal_review_fixes {
             !text.contains("carry no risk join"),
             "it must not blame the risk join: {text}"
         );
+    }
+
+    // --- Review finding #4 ---------------------------------------------------------------
+
+    /// THE case the verb exists for: a trading halt. The live lane keeps the position and
+    /// closes nothing, so the run has no realized row — and R26 requires that divergence
+    /// class to be shown. It must print, not be swallowed by a refusal.
+    #[test]
+    fn a_halt_day_with_no_closes_still_prints_the_divergence_class() {
+        use nautilus_ls_lab::artifacts::data_quality::{DataQualityReport, HeldSymbolGap};
+        use nautilus_ls_lab::artifacts::DATA_QUALITY_FILE;
+
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "r-halt", Some(true), Some(false), vec![]);
+        let mut dq = DataQualityReport::backtest(Vec::new(), Vec::new());
+        dq.held_symbol_gaps = vec![HeldSymbolGap {
+            instrument_id: "000660.XKRX".to_string(),
+            session_date: "2026-06-02".to_string(),
+            reason: "the 15:20 t8407 decision read returned no usable row".to_string(),
+        }];
+        std::fs::write(
+            dir.path().join("runs").join("r-halt").join(DATA_QUALITY_FILE),
+            serde_json::to_string(&dq).unwrap(),
+        )
+        .unwrap();
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-halt", costs)).unwrap();
+
+        let text = out.lines.join("\n");
+        assert!(text.contains("no realized row"), "{text}");
+        assert!(
+            text.contains("halt-day holds (held_symbol_gaps): 1 row(s)"),
+            "the class R26 asks for must print on the day it describes: {text}"
+        );
+        assert!(text.contains("000660.XKRX"), "{text}");
+    }
+
+    /// A `--stop-before-orders` session submits nothing and closes nothing. Same shape.
+    #[test]
+    fn a_stop_before_orders_session_reports_rather_than_refusing() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "r-sbo", Some(true), Some(false), vec![]);
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-sbo", costs)).unwrap();
+        assert!(out.rows.is_empty());
+        assert!(out.lines.join("\n").contains("NO EVIDENCE"), "still labelled a rehearsal");
     }
 
     // --- Review finding #2 ---------------------------------------------------------------

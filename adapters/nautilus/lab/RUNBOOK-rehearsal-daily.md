@@ -305,6 +305,12 @@ that comparison is the whole reason the class is typed.
 Like `report sample`, it prints net RoR and never a KRW P&L. The KRW figure the runbook asks
 you to log is in the run's `observation.json`.
 
+**A session that closed nothing still reports.** That is the normal shape of a halt day, of a
+`--stop-before-orders` session, and of an entry still inside its 16-session hold — so it is
+the shape of every session before the first exit. You get a "no realized row" line and the
+divergence classes below it; a nonzero exit means input or I/O failure, never an empty
+session.
+
 Two things the rows will not do, both deliberate:
 
 - **A row containing an exit with no entry-risk join has no net RoR at all** — not a partial
