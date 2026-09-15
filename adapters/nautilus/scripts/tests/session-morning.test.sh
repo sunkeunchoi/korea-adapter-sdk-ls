@@ -1678,8 +1678,9 @@ drop_fixture
 
 # --- a LINKED catalog is the hole the logical marker checks leave -------------------------------
 # The marker sits at the judgment home's ROOT, so a hand-built home whose catalog/ links into that
-# home carries no marker on either logical path the preflight (or the Rust write guard) inspects,
-# while the accumulate writes through the link into the frozen bars.
+# home carries no marker on either logical path the preflight inspects, while the accumulate writes
+# through the link into the frozen bars. (The Rust write guard resolves links before looking for the
+# marker, so it catches this one too — but only once a run has already spent a fetch to reach it.)
 FIXTURE_DAILY=1
 CHAIN_ROOT="$(make_fixture)"
 LINKED="$CHAIN_ROOT/data/linked-home"
