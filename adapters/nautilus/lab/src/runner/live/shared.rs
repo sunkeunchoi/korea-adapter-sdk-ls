@@ -674,6 +674,13 @@ pub struct LiveSessionContext {
     pub trading_date: String,
     /// Typed rows the session's own runner recorded (U9). Empty on the ladder.
     pub observations: SessionObservations,
+    /// The book this session inherited, as it stood at mount time (U12). `None` on the
+    /// ladder, which has no book.
+    ///
+    /// Captured into the run because the live `rehearsal/book.json` is rewritten by the
+    /// teardown and keeps only still-held legs: the leg an exit closed has already been
+    /// dropped from it when a report runs, taking its `entered_under` with it.
+    pub inherited_book: Option<crate::runner::live_daily::RehearsalBook>,
 }
 
 
@@ -1181,6 +1188,32 @@ fn stage_and_finalize(
     dq.held_symbol_gaps = gaps;
     dq.rehearsal_divergences = divergences;
     dq.observations.extend(notes);
+    // U12. The mount-time book, captured before the teardown rewrites the live one. This is
+    // the only place a finished run can learn which run OPENED a leg it closed, so it is
+    // written on the rehearsal lane unconditionally — including for an empty book, whose
+    // emptiness is itself the answer ("every exit this session closed a leg it opened").
+    //
+    // FAIL-SOFT, and placed here rather than beside the manifest for the same reason
+    // `write_session_observation` below is: this is a supplementary artifact on a session
+    // that has ALREADY traded a real account and already torn down. Propagating a write
+    // error with `?` would abort ahead of the always-emit tail, so `data_quality.json`
+    // would never be written and `finalize` would never rename `.tmp-<run_id>` — trading
+    // the whole run's realized P&L and decision evidence for a file that only makes a
+    // LATER report more precise. Worse, the error reaches `run_live_session`'s caller in
+    // `live_daily::mount`, which then skips the KTD11 book update, so the next mount
+    // refuses on a stale stamp too. A missing capture degrades one report; an aborted
+    // finalize strands a session nobody can re-run.
+    if let Some(book) = &ctx.inherited_book {
+        if let Err(e) = writer.write_inherited_book(book) {
+            dq.observations.push(format!(
+                "inherited-book.json was NOT written ({}) — this run's exits cannot be \
+                 attributed to the run that opened their legs, so `report rehearsal` must \
+                 treat their provenance as unestablished rather than as this run's",
+                nautilus_ls::scrub::scrub_secrets(&e.to_string())
+            ));
+        }
+    }
+
     // A live DAILY session writes `observation.json` too (U8): one session row, exit
     // attribution, risk capital from the filled quantity. FAIL-SOFT, unlike the backtest's
     // R25 refusal — a backtest with no return-on-risk is a run worth discarding and

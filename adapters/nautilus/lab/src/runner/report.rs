@@ -2821,3 +2821,527 @@ mod tests {
         assert!(err.to_string().contains("1 exits without mfe_r"), "{err}");
     }
 }
+
+// ===========================================================================
+// `report rehearsal` — U12 item 3 (R26; KTD2, KTD12)
+// ===========================================================================
+
+/// How a closed trade's OPENING leg is attributed (KTD2's leg-level label).
+///
+/// The distinction the paper stage needs is not "when did this exit happen" but "under what
+/// label was the leg it closed OPENED" — a leg entered during a rehearsal produced no
+/// evidence, so its exit cannot enter a paper-stage row no matter when it lands (R28).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LegAttribution {
+    /// The inherited book did not carry this symbol, so the leg opened in THIS run.
+    ThisRun,
+    /// Inherited, opened under a run the registry proves was a rehearsal.
+    Rehearsal(String),
+    /// Inherited, opened under a run that was not a rehearsal.
+    Run(String),
+    /// Inherited, but the opening run cannot be resolved — an adoption id (a leg admitted
+    /// from the broker by `--rehearsal-book adopt`, whose real provenance nothing records),
+    /// or a run id with no readable manifest.
+    Unattributable(String),
+}
+
+impl LegAttribution {
+    /// Whether a paper-stage row must EXCLUDE this exit (R28).
+    ///
+    /// Fail closed: an unattributable leg is excluded too. The alternative — counting a leg
+    /// whose provenance nothing records — silently admits rehearsal-entered exits into the
+    /// prospective comparison, which is the one thing R28 exists to prevent.
+    #[must_use]
+    pub fn excluded_from_paper_stage(&self) -> bool {
+        matches!(self, Self::Rehearsal(_) | Self::Unattributable(_))
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::ThisRun => "opened this session".to_string(),
+            Self::Rehearsal(r) => format!("entered under rehearsal {r}"),
+            Self::Run(r) => format!("entered under {r}"),
+            Self::Unattributable(r) => format!("UNATTRIBUTABLE ({r})"),
+        }
+    }
+}
+
+/// One closed trade, costed and attributed.
+#[derive(Debug, Clone)]
+pub struct RehearsalExit {
+    /// The KST session the trade CLOSED on — the date its P&L belongs to, matching
+    /// `RunObservation`'s own convention.
+    pub session_date: NaiveDate,
+    /// Bare shcode (the live path writes symbols without the venue suffix).
+    pub symbol: String,
+    pub attribution: LegAttribution,
+    /// Realized P&L as the live path booked it: zero-cost, but carrying REAL slippage,
+    /// because these are real fills.
+    pub gross_realized_pnl: f64,
+    /// The modeled statutory + brokerage cost of this trade's fills.
+    pub modeled_cost: f64,
+    /// `gross_realized_pnl - modeled_cost`.
+    pub net_realized_pnl: f64,
+    /// `qty x (entry - stop)`, `None` on a vintage with no entry-risk join.
+    pub risk_capital: Option<f64>,
+    /// Whether this trade opened on a leg CARRIED IN from a previous session — its entry is
+    /// a synthetic seed fill, not an execution, so no entry-side cost is charged here.
+    pub carried_in: bool,
+}
+
+/// One session row, on the net basis (R26).
+#[derive(Debug, Clone)]
+pub struct RehearsalSessionRow {
+    pub session_date: NaiveDate,
+    /// Trades counted in this row.
+    pub closes: u32,
+    /// Trades this row EXCLUDED (paper-stage runs only).
+    pub excluded_closes: u32,
+    /// Counted trades carrying NO entry-risk join. Any one of these makes `net_ror` `None`.
+    pub unjoined_closes: u32,
+    pub net_realized_pnl: f64,
+    pub risk_capital: f64,
+    /// `net_realized_pnl / risk_capital`, and `None` unless EVERY counted trade carried a
+    /// risk join — a partial denominator against a whole numerator inflates the ratio.
+    pub net_ror: Option<f64>,
+}
+
+/// `report rehearsal`'s inputs.
+#[derive(Debug, Clone)]
+pub struct RehearsalConfig {
+    pub data_home: PathBuf,
+    /// REQUIRED. There is no default: `latest_finalized_run` deliberately partitions
+    /// rehearsals out, so a defaulted lookup could never resolve one.
+    pub run_id: String,
+    /// The transaction-cost rate artifact (`lab/config/transaction-costs.json`).
+    pub cost_config: PathBuf,
+}
+
+/// What `report rehearsal` produced.
+#[derive(Debug, Clone)]
+pub struct RehearsalOutcome {
+    pub run_id: String,
+    /// Whether the run is a rehearsal (`false` means a paper-stage run).
+    pub rehearsal: bool,
+    pub rows: Vec<RehearsalSessionRow>,
+    pub exits: Vec<RehearsalExit>,
+    /// Trades with no entry-risk join — counted, never silently zeroed into a denominator.
+    pub unjoined_risk_trades: u32,
+    pub lines: Vec<String>,
+}
+
+/// Resolve the file the cost rates come from.
+///
+/// The committed artifact is the default, mirroring [`margin::frozen_margin_path`]; the
+/// backtest path's `LS_BT_COST_CONFIG` overrides it so one run and one report can be costed
+/// from the same rates.
+#[must_use]
+pub fn frozen_cost_config_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("config/transaction-costs.json")
+}
+
+/// Read the book this run INHERITED, as captured at mount time.
+///
+/// Absent is not an error: a pre-U12 rehearsal run predates the artifact, and every exit in
+/// one is then reported as [`LegAttribution::ThisRun`] — which the report says out loud
+/// rather than passing off as an attribution it did not make.
+fn read_inherited_book(
+    run_dir: &Path,
+) -> anyhow::Result<Option<crate::runner::live_daily::RehearsalBook>> {
+    let path = run_dir.join(crate::artifacts::INHERITED_BOOK_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+    let book: crate::runner::live_daily::RehearsalBook = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))?;
+    // The same version gate `RehearsalBook::load` applies, and for the same reason: a past
+    // bump changed what a field MEANS (v1 stored each leg's entry as a positional session
+    // ordinal), not just its shape, so serde can deserialize a foreign book into today's
+    // struct and succeed while every value is misread. Here that would feed wrong
+    // `entered_under` labels into R28's exclusion — the one decision this artifact exists
+    // to make — with no error at all. Refuse instead.
+    if book.version != crate::runner::live_daily::BOOK_VERSION {
+        anyhow::bail!(
+            "{} is version {} and this binary reads version {} — refusing rather than \
+             attributing exits from fields it may be misreading. The run's exits cannot be \
+             attributed by this binary; report them with one that writes version {}",
+            path.display(),
+            book.version,
+            crate::runner::live_daily::BOOK_VERSION,
+            book.version
+        );
+    }
+    Ok(Some(book))
+}
+
+/// Attribute one inherited leg's `entered_under` by asking the registry what that run was.
+///
+/// The manifest is the authority for the rehearsal label (KTD2), so this resolves the id
+/// rather than pattern-matching it — an `adopt-` prefix is recognised only as the reason a
+/// lookup cannot succeed, never as evidence about what the leg was.
+fn attribute_entered_under(data_home: &Path, entered_under: &str) -> LegAttribution {
+    match read_manifest(data_home, entered_under) {
+        Ok(m) if m.is_rehearsal() => LegAttribution::Rehearsal(entered_under.to_string()),
+        Ok(_) => LegAttribution::Run(entered_under.to_string()),
+        Err(_) => LegAttribution::Unattributable(entered_under.to_string()),
+    }
+}
+
+/// Build the rehearsal's own session rows (U12 item 3; R26).
+///
+/// # What "net" means here, and why it is not the backtest's "net"
+///
+/// A backtest fills at bar prices with zero slippage, so modeling statutory costs is the
+/// whole of its cost story. These are REAL fills: slippage is already inside
+/// `realized_pnl`, and what is missing is only the deterministic term — commission on both
+/// sides plus the sell-side transaction tax, a published rate times a known notional. The
+/// live assembly seam deliberately writes `performance.json` zero-cost (the rung-1
+/// expectation band was frozen from a zero-cost distribution), so this report applies the
+/// rates itself at read time and touches no artifact.
+///
+/// # The KRW staging guard
+///
+/// Like `report sample`, the printed lines carry net RoR and never a KRW P&L: a rehearsal
+/// produces no evidence, and a KRW figure invites reading one as a profitability result.
+/// The KRW numbers stay on [`RehearsalOutcome`] for a caller that has a reason, and the
+/// run's own `observation.json` is where the operator's TURN-LOG figure comes from.
+///
+/// # Errors
+///
+/// On an unknown or unreadable run, a run that is neither a rehearsal nor a paper stage, an
+/// unreadable cost artifact, or a run with no closed trades.
+pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcome> {
+    let run_id = cfg.run_id.clone();
+    let manifest = read_manifest(&cfg.data_home, &run_id)?;
+    let paper_stage = manifest.paper_stage == Some(true);
+    let rehearsal = manifest.is_rehearsal();
+
+    // The mirror of `report sample`'s refusal (KTD2). That one refuses a rehearsal because a
+    // governance report may not read one; this one refuses everything else, because a
+    // backtest run has no session the paper lane ever traded and no book to attribute
+    // against — costing its trades here would dress a backtest up as a live comparison.
+    if !rehearsal && !paper_stage {
+        anyhow::bail!(
+            "run {run_id} is neither a paper rehearsal nor a paper-stage run (manifest \
+             rehearsal={:?}, paper_stage={:?}) — `report rehearsal` reports the sessions the \
+             paper lane actually traded, and a backtest run has neither real fills to cost nor \
+             an inherited book to attribute exits against. A backtest run's distribution comes \
+             from `report sample` or `report paired`",
+            manifest.rehearsal,
+            manifest.paper_stage
+        );
+    }
+
+    let costs = {
+        let cfgd = crate::strategy::orb::TransactionCostConfig::load(&cfg.cost_config)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        crate::strategy::orb::TransactionCostModel {
+            commission_rate_per_side: cfgd.commission_rate_per_side,
+            sell_tax_rate: cfgd.sell_tax_rate,
+        }
+    };
+
+    let run_dir = cfg.data_home.join("runs").join(&run_id);
+    let performance: PerformanceReport = {
+        let path = run_dir.join(PERFORMANCE_FILE);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+        serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))?
+    };
+
+    let inherited = read_inherited_book(&run_dir)?;
+    let mut attribution_of: BTreeMap<String, LegAttribution> = BTreeMap::new();
+    if let Some(book) = &inherited {
+        for leg in &book.legs {
+            attribution_of.insert(
+                leg.shcode.clone(),
+                attribute_entered_under(&cfg.data_home, &leg.entered_under),
+            );
+        }
+    }
+
+    let records = performance.trades.len();
+    let closed: Vec<_> = performance.trades.iter().filter(|t| t.ts_closed.is_some()).collect();
+    // A session that closed nothing is NOT an error here, unlike in `report sample` — which
+    // is nothing but a realized distribution, so an empty one really is a refusal there.
+    //
+    // This report has two more sections that need no realized row at all, and one of them is
+    // the reason it exists: on a TRADING-HALT day the live lane keeps its position and
+    // typically closes nothing, and R26 requires that divergence class to be shown. Bailing
+    // before the renderer meant the class was unprintable on exactly the day it describes.
+    // The first attended sessions have the same shape by construction — a
+    // `--stop-before-orders` session submits nothing, the next only enters, and the hold runs
+    // 16 sessions — so a refusal would make the verb unusable on every run it will see before
+    // the holdout. An empty realized set is a session state, and a nonzero exit is reserved
+    // for input and I/O failure.
+    let mut exits = Vec::with_capacity(closed.len());
+    for t in &closed {
+        // The live path writes bare shcodes; the backtest path appends a venue suffix. The
+        // book is shcode-keyed, so normalize before joining (the crate's own idiom).
+        let symbol = t.symbol.split('.').next().unwrap_or(&t.symbol).to_string();
+        // Cost only the fills that were EXECUTIONS. A leg carried in from a previous
+        // session enters this run's ledger as a synthetic BUY at the prior close
+        // (`pnl::seed_book_legs`), for which no order was ever sent and no commission was
+        // ever charged — charging one here would understate the leg's net P&L by a
+        // commission leg and, worse, make the printed figure move with the PRIOR CLOSE,
+        // a number no execution ever touched. The entry-side cost of such a leg was
+        // incurred in the run that opened it and belongs to that run's rows.
+        let mut carried_in = false;
+        let modeled_cost: f64 = t
+            .fills
+            .iter()
+            .filter(|f| {
+                let synthetic = f.trade_id.starts_with(crate::runner::pnl::SEED_FILL_PREFIX);
+                carried_in |= synthetic;
+                !synthetic
+            })
+            .map(|f| costs.fill_cost(f.side.eq_ignore_ascii_case("SELL"), f.qty * f.price))
+            .sum();
+        exits.push(RehearsalExit {
+            session_date: kst_date_of(UnixNanos::from(t.ts_closed.unwrap_or(t.ts_opened))),
+            attribution: attribution_of.get(&symbol).cloned().unwrap_or(LegAttribution::ThisRun),
+            symbol,
+            gross_realized_pnl: t.realized_pnl,
+            modeled_cost,
+            net_realized_pnl: t.realized_pnl - modeled_cost,
+            risk_capital: t.risk_capital,
+            carried_in,
+        });
+    }
+    exits.sort_by(|a, b| (a.session_date, &a.symbol).cmp(&(b.session_date, &b.symbol)));
+
+    // A rehearsal row excludes nothing — the whole run is no-evidence, so partitioning it
+    // would imply the remainder is admissible. A paper-stage row excludes the exits R28
+    // names, and reports what it excluded rather than quietly shrinking.
+    let mut by_session: BTreeMap<NaiveDate, RehearsalSessionRow> = BTreeMap::new();
+    for e in &exits {
+        let row = by_session.entry(e.session_date).or_insert(RehearsalSessionRow {
+            session_date: e.session_date,
+            closes: 0,
+            excluded_closes: 0,
+            unjoined_closes: 0,
+            net_realized_pnl: 0.0,
+            risk_capital: 0.0,
+            net_ror: None,
+        });
+        if paper_stage && e.attribution.excluded_from_paper_stage() {
+            row.excluded_closes += 1;
+            continue;
+        }
+        row.closes += 1;
+        row.net_realized_pnl += e.net_realized_pnl;
+        // Counted only AFTER the exclusion test: a trade that reached no row must not be
+        // described as one that did.
+        match e.risk_capital {
+            Some(rc) => row.risk_capital += rc,
+            None => row.unjoined_closes += 1,
+        }
+    }
+    for row in by_session.values_mut() {
+        // A row is computable only when EVERY trade it counted carried a risk join. The
+        // numerator is all of them; letting the denominator hold only some inflates the one
+        // statistic this report prints. The rest of the crate already holds this contract
+        // for the same quantity — `PerformanceReport::dominance_fold` clears `all_have_risk`
+        // on the first unjoined closed trade, and `RunObservation::build` refuses with
+        // `ReturnOnRiskUnavailable` (R25) — so a report that answered anyway would be the
+        // outlier, not the strict one.
+        row.net_ror = (row.closes > 0 && row.unjoined_closes == 0 && row.risk_capital > 0.0)
+            .then(|| row.net_realized_pnl / row.risk_capital);
+    }
+    let rows: Vec<_> = by_session.into_values().collect();
+    // Only trades that reached a row (R28-excluded ones are reported as excluded, not as
+    // unjoined).
+    let unjoined_risk_trades: u32 = rows.iter().map(|r| r.unjoined_closes).sum();
+
+    let lines =
+        render_rehearsal(cfg, &manifest, &rows, &exits, &costs, inherited.is_some(), records);
+    Ok(RehearsalOutcome { run_id, rehearsal, rows, exits, unjoined_risk_trades, lines })
+}
+
+/// Render the report's lines. Split from [`report_rehearsal`] so the arithmetic is testable
+/// without asserting on prose.
+#[allow(clippy::too_many_arguments)]
+fn render_rehearsal(
+    cfg: &RehearsalConfig,
+    manifest: &Manifest,
+    rows: &[RehearsalSessionRow],
+    exits: &[RehearsalExit],
+    costs: &crate::strategy::orb::TransactionCostModel,
+    had_inherited_book: bool,
+    record_count: usize,
+) -> Vec<String> {
+    let run_id = &manifest.run_id;
+    let paper_stage = manifest.paper_stage == Some(true);
+    let label = if manifest.is_rehearsal() { "REHEARSAL" } else { "PAPER STAGE" };
+    let mut lines = Vec::new();
+
+    lines.push(format!(
+        "report rehearsal: run {run_id} [{label}] (strategy v{}, catalog {})",
+        manifest.strategy_version, manifest.catalog_fingerprint
+    ));
+    lines.push(format!(
+        "  costs applied at read time: commission {:.5}/side, sell tax {:.4} (from {})",
+        costs.commission_rate_per_side,
+        costs.sell_tax_rate,
+        cfg.cost_config.display()
+    ));
+    lines.push(
+        "  basis: these are REAL fills, so slippage is already inside realized P&L; what is \
+         applied here is the deterministic statutory + brokerage term the live artifact \
+         deliberately books at zero."
+            .to_string(),
+    );
+    if manifest.is_rehearsal() {
+        lines.push(
+            "  NO EVIDENCE: a rehearsal runs outside the ladder with no dispatch chain and its \
+             sessions count toward no rung's N. These rows are driver observation only."
+                .to_string(),
+        );
+    }
+
+    lines.push(format!("session rows — net basis (R26){}:", if paper_stage { ", R28-excluded" } else { "" }));
+    if rows.is_empty() {
+        // Say which session state this is, rather than leaving a blank section the reader
+        // has to interpret. The divergence classes below still print — on a halt day they
+        // are the whole point of the run.
+        lines.push(format!(
+            "  no realized row: this run closed nothing ({} trade record(s) in \
+             {PERFORMANCE_FILE}). That is a session state, not a fault — a held position \
+             under a trading halt, a `--stop-before-orders` session, and an entry inside its \
+             16-session hold all look like this. The divergence classes below still apply, \
+             and the holdings are in the run's observation and decision artifacts.",
+            record_count
+        ));
+    }
+    for r in rows {
+        lines.push(format!(
+            "  {}  closes {:<3} net RoR {}{}",
+            r.session_date,
+            r.closes,
+            // Each `n/a` states the reason it is actually n/a. A row whose exits were all
+            // excluded under R28 has nothing wrong with its risk join, and an operator sent
+            // to look for a data-quality problem that is not there loses the time twice.
+            match r.net_ror {
+                Some(v) => format!("{v:+.6}"),
+                None if r.closes == 0 && r.excluded_closes > 0 =>
+                    "n/a (every exit excluded)".to_string(),
+                None if r.unjoined_closes > 0 => format!(
+                    "n/a ({} of {} counted exit(s) carry no risk join)",
+                    r.unjoined_closes,
+                    r.closes
+                ),
+                None => "n/a (no risk capital)".to_string(),
+            },
+            if r.excluded_closes > 0 {
+                format!("  | EXCLUDED {} exit(s)", r.excluded_closes)
+            } else {
+                String::new()
+            }
+        ));
+    }
+    let unjoined: u32 = rows.iter().map(|r| r.unjoined_closes).sum();
+    if unjoined > 0 {
+        lines.push(format!(
+            "  {unjoined} counted exit(s) carry NO entry-risk join. A row containing one has \
+             NO net RoR at all — not a partial one: the numerator would hold every trade's \
+             P&L while the denominator held only some, which inflates the ratio. This matches \
+             `dominance_fold` and `RunObservation::build` (R25), which refuse the same \
+             statistic on the same artifact."
+        ));
+    }
+    let carried: usize = exits.iter().filter(|e| e.carried_in).count();
+    if carried > 0 {
+        lines.push(format!(
+            "  {carried} exit(s) closed a leg CARRIED IN from an earlier session. Only their \
+             sell side is costed here — the entry was a synthetic seed fill, not an execution, \
+             so its entry-side cost was incurred by the run that opened the leg."
+        ));
+    }
+
+    // Leg attribution (KTD2). Always shown, because "nothing was excluded" is a finding and
+    // an empty section reads as one.
+    lines.push("leg attribution — what opened the leg each exit closed (KTD2):".to_string());
+    if !had_inherited_book {
+        lines.push(format!(
+            "  no {} in this run — a PRE-U12 vintage. Every exit below is reported as \
+             `opened this session` because the leg labels were never captured, NOT because \
+             they were checked and found to be this run's.",
+            crate::artifacts::INHERITED_BOOK_FILE
+        ));
+    }
+    let mut by_attribution: BTreeMap<String, Vec<&RehearsalExit>> = BTreeMap::new();
+    for e in exits {
+        by_attribution.entry(e.attribution.label()).or_default().push(e);
+    }
+    for (what, group) in &by_attribution {
+        let excluded = paper_stage && group[0].attribution.excluded_from_paper_stage();
+        lines.push(format!(
+            "  {:<44} {} exit(s){}",
+            what,
+            group.len(),
+            if excluded { "  — EXCLUDED from the rows above (R28)" } else { "" }
+        ));
+    }
+    if paper_stage {
+        lines.push(
+            "  R28: a leg entered under a rehearsal produced no evidence, so its exit cannot \
+             enter a paper-stage row whenever it lands. An UNATTRIBUTABLE leg is excluded on \
+             the same rule, fail closed."
+                .to_string(),
+        );
+    }
+
+    // KTD12 — the halt-day divergence class, kept as its own section because the BACKTEST
+    // aborts where the live lane holds. Counting these rows with the others would erase the
+    // one comparison they exist to make possible.
+    let dq: Option<crate::artifacts::data_quality::DataQualityReport> = std::fs::read_to_string(
+        cfg.data_home.join("runs").join(run_id).join(crate::artifacts::DATA_QUALITY_FILE),
+    )
+    .ok()
+    .and_then(|t| serde_json::from_str(&t).ok());
+    lines.push("divergence classes (KTD12, KTD4):".to_string());
+    match &dq {
+        None => lines.push(format!(
+            "  {} is absent or unreadable — the divergence classes cannot be reported for this \
+             run, which is NOT the same as their being empty.",
+            crate::artifacts::DATA_QUALITY_FILE
+        )),
+        Some(dq) => {
+            lines.push(format!(
+                "  halt-day holds (held_symbol_gaps): {} row(s) — the live lane KEPT the \
+                 position where the backtest policy ABORTS. This is the divergence class, not \
+                 a fault.",
+                dq.held_symbol_gaps.len()
+            ));
+            for g in &dq.held_symbol_gaps {
+                lines.push(format!("    {} {}", g.session_date, g.instrument_id));
+            }
+            let decision_vs_close = dq
+                .rehearsal_divergences
+                .iter()
+                .filter(|d| {
+                    matches!(
+                        d.kind,
+                        crate::artifacts::data_quality::RehearsalDivergenceKind::DecisionVsClose
+                    )
+                })
+                .count();
+            let unfilled = dq.rehearsal_divergences.len() - decision_vs_close;
+            lines.push(format!(
+                "  decision-vs-close (KTD4): {decision_vs_close} row(s) | unfilled entries: \
+                 {unfilled} row(s)"
+            ));
+        }
+    }
+
+    lines.push(
+        "KRW P&L is deliberately not printed (the `report sample` staging guard): a rehearsal \
+         is not a profitability result. The run's observation.json carries the KRW figure the \
+         runbook asks the operator to log."
+            .to_string(),
+    );
+    lines
+}

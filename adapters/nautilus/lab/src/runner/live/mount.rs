@@ -1437,6 +1437,8 @@ pub(crate) fn run_mount() -> anyhow::Result<ExitCode> {
         trading_date: today.clone(),
         // The ladder's runner records none of the rehearsal row types.
         observations: crate::runner::live::shared::SessionObservations::new(),
+        // The ladder holds no book: it starts flat and ends flat.
+        inherited_book: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let outcome = runtime.block_on(run_live_session(

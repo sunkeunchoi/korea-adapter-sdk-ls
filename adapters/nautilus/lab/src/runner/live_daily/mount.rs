@@ -301,6 +301,10 @@ pub async fn prepare_rehearsal(
         symbols,
         trading_date,
         observations: observations.clone(),
+        // U12. Captured HERE, from the probed book, not read back at finalize: by then the
+        // teardown has rewritten `rehearsal/book.json` and the legs this session closed are
+        // gone from it, `entered_under` with them.
+        inherited_book: Some(book.clone()),
     };
 
     let day = DayLoop {

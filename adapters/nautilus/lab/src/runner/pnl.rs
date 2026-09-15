@@ -213,6 +213,17 @@ pub struct BookLeg {
 /// Returns the number of legs seeded. Zero-quantity legs are skipped (a t0424 zero-balance
 /// row reads as an open holding otherwise — see
 /// `docs/solutions/logic-errors/t0424-zero-balance-row-reads-as-open-holding.md`).
+/// The trade-id prefix that marks a fill as SYNTHETIC — a carried-in book leg injected by
+/// [`seed_book_legs`], not an execution the gateway ever reported.
+///
+/// A constant rather than a literal because it is read in two places that must never drift:
+/// the seed writes it, and a cost-aware consumer must recognise it. `FillRecord` (the
+/// artifact shape) carries no `price_approximated` flag — that lives on the ledger's own
+/// observation and does not survive into `performance.json` — so this prefix is the ONLY
+/// discriminator a later reader has. Anything that prices, charges, or counts fills as
+/// executions must skip these; they have no notional anyone traded.
+pub const SEED_FILL_PREFIX: &str = "SEED-";
+
 pub fn seed_book_legs(ledger: &Mutex<FillLedger>, legs: &[BookLeg], observed_ns: u64) -> usize {
     let mut guard = ledger.lock().unwrap_or_else(|e| e.into_inner());
     let mut seeded = 0;
@@ -227,7 +238,7 @@ pub fn seed_book_legs(ledger: &Mutex<FillLedger>, legs: &[BookLeg], observed_ns:
             // among `price_approximated_fills`, which is the true statement.
             price_approximated: true,
             // A scheme that cannot collide with an `execno` or a `POLL-…` synthetic.
-            trade_id: TradeId::new(&format!("SEED-{}-{observed_ns}", leg.symbol)),
+            trade_id: TradeId::new(&format!("{SEED_FILL_PREFIX}{}-{observed_ns}", leg.symbol)),
             observed_ns,
         });
         seeded += 1;

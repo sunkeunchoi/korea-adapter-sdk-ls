@@ -283,6 +283,51 @@ renamed. A leftover `.tmp-` directory **is** the aborted-run marker.
 | `observation.json` | the session row, in `RunObservation` shape (fail-soft: a failure here becomes a data-quality line, never a lost run) |
 | `decisions.jsonl` | what the strategy decided, and why |
 | `data_quality.json` | `held_symbol_gaps`, `rehearsal_divergences` (`DecisionVsClose`, `UnfilledEntry`), notes, teardown retries, `hard_stopped` |
+| `inherited-book.json` | the book this session **inherited**, captured at mount time — the only record of which run opened each leg (see below) |
+
+### Read the session rows
+
+```sh
+LS_DATA_HOME=$R/data/rehearsal-daily \
+  ./target/debug/lab-research report rehearsal --run <run-id>
+```
+
+The run is **never defaulted** — the latest-finalized lookup deliberately partitions
+rehearsals out, so a default would resolve a different run than you meant.
+
+It applies `lab/config/transaction-costs.json` at read time and prints **net** session rows.
+Note what "net" means here: these are real fills, so slippage is already inside the realized
+P&L; what the report adds is the deterministic statutory + brokerage term, which the live
+artifact deliberately books at zero. It also prints the halt-day divergence class (KTD12)
+separately from the rows, because the backtest **aborts** where the live lane **holds** — and
+that comparison is the whole reason the class is typed.
+
+Like `report sample`, it prints net RoR and never a KRW P&L. The KRW figure the runbook asks
+you to log is in the run's `observation.json`.
+
+**A session that closed nothing still reports.** That is the normal shape of a halt day, of a
+`--stop-before-orders` session, and of an entry still inside its 16-session hold — so it is
+the shape of every session before the first exit. You get a "no realized row" line and the
+divergence classes below it; a nonzero exit means input or I/O failure, never an empty
+session.
+
+Two things the rows will not do, both deliberate:
+
+- **A row containing an exit with no entry-risk join has no net RoR at all** — not a partial
+  one. The numerator would hold every trade's P&L while the denominator held only some, which
+  inflates the ratio. `dominance_fold` and `RunObservation::build` (R25) refuse the same
+  statistic on the same artifact; the row says how many exits were unjoined.
+- **A leg carried in from an earlier session is costed on its sell side only.** Its entry is a
+  synthetic seed fill, not an execution — no order was sent and no commission was charged — so
+  the entry-side cost belongs to the run that opened the leg.
+
+> **Why `inherited-book.json` exists.** `rehearsal/book.json` is live: the teardown rewrites
+> it from the broker's snapshot and keeps only what is still held, so the leg an exit closed
+> — and its `entered_under` label — is **gone** from it by the time any report runs. The
+> mount-time capture inside the run is the only place that label survives. After the holdout
+> CLEARs, it is what lets a paper-stage row exclude the exits of rehearsal-entered legs
+> (R28); a run written before this artifact existed reports every exit as "opened this
+> session" and **says so**, rather than passing the absence off as a check.
 
 A rehearsal writes **no** tracking sidecar and produces no rung evidence — the ladder-only tail is
 deliberately skipped.
