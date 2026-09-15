@@ -112,6 +112,36 @@ agent preflight + post-session read is **[`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.
 > (unarmable pre-registration, missing keepalive, zero-size head, empty universe, build failure)
 > exits 71 with the dispatch intact.
 
+## Paper rehearsal (daily resolution, live, attended)
+
+The daily-resolution strategy runs on the paper lane under the same safety envelope as a mount but
+with **no dispatch chain at all** — nothing is consumed, nothing is appended, and its sessions count
+toward no rung's `N`. A rehearsal exists to falsify the **driver**, not to earn evidence. It trades a
+clone of the frozen judgment home (`data/rehearsal-daily`, made once by
+[`../scripts/rehearsal-bootstrap.sh`](../scripts/rehearsal-bootstrap.sh)), holds positions overnight,
+and labels every artifact `rehearsal: true` so no governance report can read one as evidence (KTD2).
+
+| command | who | gate | what |
+|---|---|---|---|
+| `../scripts/session-morning.sh` (`LS_SM_PROFILE=daily-rehearsal`) | agent | offline | advance the rehearsal catalog and resolve the daily universe by 15:10; never runs `lab-live` |
+| `--rehearse-daily` | operator | nonce, attended, **paper-only** | **run** the session: prechecks → `node.run` → 15:20 decision → 15:30 auction → 15:33 fail-closed teardown → finalize (exit 0 clean / 66 not-paper / 71 pre-build refusal / 72 abnormal) |
+| `--rehearse-daily --stop-before-orders` | operator | same | resolve and record the decision, deliver no bar, submit nothing |
+| `--rehearsal-clear-trip --why <text>` | operator | nonce, attended | clear every standing trip in `rehearsal/trips.jsonl` (0 / 71 / 77 — no paper interlock) |
+| `--rehearsal-book adopt [--why <text>]` | operator | nonce, attended, **paper-only** | cancel all resting orders and rewrite `rehearsal/book.json` from the account (0 / 66 / 71 / 77); **refused 09:00–15:40 KST** |
+
+The clock, the breaker and the deposit floor come from
+[`config/rehearsal-envelope.json`](config/rehearsal-envelope.json) — an **operational** file, not a
+governance artifact: a rehearsal re-bases nothing, so the ladder's `config/preregistration.json` is
+untouched by this lane. State lives in `<data_home>/rehearsal/`: `book.json` (the broker-confirmed
+book, rewritten only by a confirming teardown), `trips.jsonl` (the gate the next mount reads), and
+`book-adoptions.jsonl`.
+
+> ⚠️ While a rehearsal is running, the lane's **flat-gate harness must stand down** — above all
+> `make paper-reset`, which would liquidate the inherited book. See the runbook's Preconditions.
+
+Run the operator sequence from **[`RUNBOOK-rehearsal-daily.md`](RUNBOOK-rehearsal-daily.md)**, the
+rehearsal's single entry document; `RUNBOOK-rung1.md` stays the ladder path and does not cover it.
+
 ## Turning the loop (backtest)
 
 1. **Backfill data** (adapter README: probe → bounded minute backfill → accumulate).
