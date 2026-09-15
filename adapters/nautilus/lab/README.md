@@ -28,6 +28,14 @@ Runs live beside the catalog under one data home:
                                     #   captured at mount time. The live rehearsal/book.json
                                     #   keeps only still-held legs, so this is the only record
                                     #   of which run opened a leg an exit closed (U12/KTD2)
+                                    #   Shape: RehearsalBook — version (refused if foreign,
+                                    #   like the live loader), session_date, run_id,
+                                    #   ordinal_epoch, legs[] each carrying shcode, quantity,
+                                    #   entry_price, stop_price, prior_close, entry_date,
+                                    #   entered_under (the run that OPENED the leg) and
+                                    #   opening_order_id. Written fail-soft: its absence is
+                                    #   reported as unestablished provenance, never as a
+                                    #   checked-and-clean result
   analysis.md                       # YOU write this (see below) — it co-locates here
 <data>/decisions/decisions.jsonl    # cross-run agent-decision registry (append-only;
                                     #   intent-bearing Research-policy envelopes — never

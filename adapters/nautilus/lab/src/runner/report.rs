@@ -2884,6 +2884,9 @@ pub struct RehearsalExit {
     pub net_realized_pnl: f64,
     /// `qty x (entry - stop)`, `None` on a vintage with no entry-risk join.
     pub risk_capital: Option<f64>,
+    /// Whether this trade opened on a leg CARRIED IN from a previous session — its entry is
+    /// a synthetic seed fill, not an execution, so no entry-side cost is charged here.
+    pub carried_in: bool,
 }
 
 /// One session row, on the net basis (R26).
@@ -2894,9 +2897,12 @@ pub struct RehearsalSessionRow {
     pub closes: u32,
     /// Trades this row EXCLUDED (paper-stage runs only).
     pub excluded_closes: u32,
+    /// Counted trades carrying NO entry-risk join. Any one of these makes `net_ror` `None`.
+    pub unjoined_closes: u32,
     pub net_realized_pnl: f64,
     pub risk_capital: f64,
-    /// `net_realized_pnl / risk_capital`; `None` when no counted trade carried a risk join.
+    /// `net_realized_pnl / risk_capital`, and `None` unless EVERY counted trade carried a
+    /// risk join — a partial denominator against a whole numerator inflates the ratio.
     pub net_ror: Option<f64>,
 }
 
@@ -2948,8 +2954,25 @@ fn read_inherited_book(
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
-    let book = serde_json::from_str(&text)
+    let book: crate::runner::live_daily::RehearsalBook = serde_json::from_str(&text)
         .map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))?;
+    // The same version gate `RehearsalBook::load` applies, and for the same reason: a past
+    // bump changed what a field MEANS (v1 stored each leg's entry as a positional session
+    // ordinal), not just its shape, so serde can deserialize a foreign book into today's
+    // struct and succeed while every value is misread. Here that would feed wrong
+    // `entered_under` labels into R28's exclusion — the one decision this artifact exists
+    // to make — with no error at all. Refuse instead.
+    if book.version != crate::runner::live_daily::BOOK_VERSION {
+        anyhow::bail!(
+            "{} is version {} and this binary reads version {} — refusing rather than \
+             attributing exits from fields it may be misreading. The run's exits cannot be \
+             attributed by this binary; report them with one that writes version {}",
+            path.display(),
+            book.version,
+            crate::runner::live_daily::BOOK_VERSION,
+            book.version
+        );
+    }
     Ok(Some(book))
 }
 
@@ -3052,19 +3075,28 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
     }
 
     let mut exits = Vec::with_capacity(closed.len());
-    let mut unjoined_risk_trades = 0u32;
     for t in &closed {
         // The live path writes bare shcodes; the backtest path appends a venue suffix. The
         // book is shcode-keyed, so normalize before joining (the crate's own idiom).
         let symbol = t.symbol.split('.').next().unwrap_or(&t.symbol).to_string();
+        // Cost only the fills that were EXECUTIONS. A leg carried in from a previous
+        // session enters this run's ledger as a synthetic BUY at the prior close
+        // (`pnl::seed_book_legs`), for which no order was ever sent and no commission was
+        // ever charged — charging one here would understate the leg's net P&L by a
+        // commission leg and, worse, make the printed figure move with the PRIOR CLOSE,
+        // a number no execution ever touched. The entry-side cost of such a leg was
+        // incurred in the run that opened it and belongs to that run's rows.
+        let mut carried_in = false;
         let modeled_cost: f64 = t
             .fills
             .iter()
+            .filter(|f| {
+                let synthetic = f.trade_id.starts_with(crate::runner::pnl::SEED_FILL_PREFIX);
+                carried_in |= synthetic;
+                !synthetic
+            })
             .map(|f| costs.fill_cost(f.side.eq_ignore_ascii_case("SELL"), f.qty * f.price))
             .sum();
-        if t.risk_capital.is_none() {
-            unjoined_risk_trades += 1;
-        }
         exits.push(RehearsalExit {
             session_date: kst_date_of(UnixNanos::from(t.ts_closed.unwrap_or(t.ts_opened))),
             attribution: attribution_of.get(&symbol).cloned().unwrap_or(LegAttribution::ThisRun),
@@ -3073,6 +3105,7 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
             modeled_cost,
             net_realized_pnl: t.realized_pnl - modeled_cost,
             risk_capital: t.risk_capital,
+            carried_in,
         });
     }
     exits.sort_by(|a, b| (a.session_date, &a.symbol).cmp(&(b.session_date, &b.symbol)));
@@ -3086,6 +3119,7 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
             session_date: e.session_date,
             closes: 0,
             excluded_closes: 0,
+            unjoined_closes: 0,
             net_realized_pnl: 0.0,
             risk_capital: 0.0,
             net_ror: None,
@@ -3096,14 +3130,30 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
         }
         row.closes += 1;
         row.net_realized_pnl += e.net_realized_pnl;
-        row.risk_capital += e.risk_capital.unwrap_or(0.0);
+        // Counted only AFTER the exclusion test: a trade that reached no row must not be
+        // described as one that did.
+        match e.risk_capital {
+            Some(rc) => row.risk_capital += rc,
+            None => row.unjoined_closes += 1,
+        }
     }
     for row in by_session.values_mut() {
-        row.net_ror = (row.risk_capital > 0.0).then(|| row.net_realized_pnl / row.risk_capital);
+        // A row is computable only when EVERY trade it counted carried a risk join. The
+        // numerator is all of them; letting the denominator hold only some inflates the one
+        // statistic this report prints. The rest of the crate already holds this contract
+        // for the same quantity — `PerformanceReport::dominance_fold` clears `all_have_risk`
+        // on the first unjoined closed trade, and `RunObservation::build` refuses with
+        // `ReturnOnRiskUnavailable` (R25) — so a report that answered anyway would be the
+        // outlier, not the strict one.
+        row.net_ror = (row.closes > 0 && row.unjoined_closes == 0 && row.risk_capital > 0.0)
+            .then(|| row.net_realized_pnl / row.risk_capital);
     }
     let rows: Vec<_> = by_session.into_values().collect();
+    // Only trades that reached a row (R28-excluded ones are reported as excluded, not as
+    // unjoined).
+    let unjoined_risk_trades: u32 = rows.iter().map(|r| r.unjoined_closes).sum();
 
-    let lines = render_rehearsal(cfg, &run_id, &manifest, &rows, &exits, &costs, unjoined_risk_trades, inherited.is_some());
+    let lines = render_rehearsal(cfg, &manifest, &rows, &exits, &costs, inherited.is_some());
     Ok(RehearsalOutcome { run_id, rehearsal, rows, exits, unjoined_risk_trades, lines })
 }
 
@@ -3112,14 +3162,13 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
 #[allow(clippy::too_many_arguments)]
 fn render_rehearsal(
     cfg: &RehearsalConfig,
-    run_id: &str,
     manifest: &Manifest,
     rows: &[RehearsalSessionRow],
     exits: &[RehearsalExit],
     costs: &crate::strategy::orb::TransactionCostModel,
-    unjoined_risk_trades: u32,
     had_inherited_book: bool,
 ) -> Vec<String> {
+    let run_id = &manifest.run_id;
     let paper_stage = manifest.paper_stage == Some(true);
     let label = if manifest.is_rehearsal() { "REHEARSAL" } else { "PAPER STAGE" };
     let mut lines = Vec::new();
@@ -3154,9 +3203,19 @@ fn render_rehearsal(
             "  {}  closes {:<3} net RoR {}{}",
             r.session_date,
             r.closes,
+            // Each `n/a` states the reason it is actually n/a. A row whose exits were all
+            // excluded under R28 has nothing wrong with its risk join, and an operator sent
+            // to look for a data-quality problem that is not there loses the time twice.
             match r.net_ror {
                 Some(v) => format!("{v:+.6}"),
-                None => "n/a (no risk join)".to_string(),
+                None if r.closes == 0 && r.excluded_closes > 0 =>
+                    "n/a (every exit excluded)".to_string(),
+                None if r.unjoined_closes > 0 => format!(
+                    "n/a ({} of {} counted exit(s) carry no risk join)",
+                    r.unjoined_closes,
+                    r.closes
+                ),
+                None => "n/a (no risk capital)".to_string(),
             },
             if r.excluded_closes > 0 {
                 format!("  | EXCLUDED {} exit(s)", r.excluded_closes)
@@ -3165,11 +3224,22 @@ fn render_rehearsal(
             }
         ));
     }
-    if unjoined_risk_trades > 0 {
+    let unjoined: u32 = rows.iter().map(|r| r.unjoined_closes).sum();
+    if unjoined > 0 {
         lines.push(format!(
-            "  {unjoined_risk_trades} closed trade(s) carry NO entry-risk join — they are \
-             counted in `closes` but contribute nothing to the RoR denominator, so a row whose \
-             trades are all unjoined reads `n/a` rather than a divide-by-zero."
+            "  {unjoined} counted exit(s) carry NO entry-risk join. A row containing one has \
+             NO net RoR at all — not a partial one: the numerator would hold every trade's \
+             P&L while the denominator held only some, which inflates the ratio. This matches \
+             `dominance_fold` and `RunObservation::build` (R25), which refuse the same \
+             statistic on the same artifact."
+        ));
+    }
+    let carried: usize = exits.iter().filter(|e| e.carried_in).count();
+    if carried > 0 {
+        lines.push(format!(
+            "  {carried} exit(s) closed a leg CARRIED IN from an earlier session. Only their \
+             sell side is costed here — the entry was a synthetic seed fill, not an execution, \
+             so its entry-side cost was incurred by the run that opened the leg."
         ));
     }
 

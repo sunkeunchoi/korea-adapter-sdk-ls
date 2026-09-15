@@ -305,6 +305,16 @@ that comparison is the whole reason the class is typed.
 Like `report sample`, it prints net RoR and never a KRW P&L. The KRW figure the runbook asks
 you to log is in the run's `observation.json`.
 
+Two things the rows will not do, both deliberate:
+
+- **A row containing an exit with no entry-risk join has no net RoR at all** — not a partial
+  one. The numerator would hold every trade's P&L while the denominator held only some, which
+  inflates the ratio. `dominance_fold` and `RunObservation::build` (R25) refuse the same
+  statistic on the same artifact; the row says how many exits were unjoined.
+- **A leg carried in from an earlier session is costed on its sell side only.** Its entry is a
+  synthetic seed fill, not an execution — no order was sent and no commission was charged — so
+  the entry-side cost belongs to the run that opened the leg.
+
 > **Why `inherited-book.json` exists.** `rehearsal/book.json` is live: the teardown rewrites
 > it from the broker's snapshot and keeps only what is still held, so the leg an exit closed
 > — and its `entered_under` label — is **gone** from it by the time any report runs. The

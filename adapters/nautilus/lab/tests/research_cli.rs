@@ -4847,3 +4847,387 @@ mod report_rehearsal {
         let _ = Path::new("");
     }
 }
+
+// ===========================================================================
+// `report rehearsal` — the PR #326 review fixes (#1, #2, #5, #7, #9)
+// ===========================================================================
+
+mod report_rehearsal_review_fixes {
+    use std::path::{Path, PathBuf};
+
+    use nautilus_ls_lab::artifacts::performance::{FillRecord, PerformanceReport, TradeRecord};
+    use nautilus_ls_lab::artifacts::{RunSource, INHERITED_BOOK_FILE, PERFORMANCE_FILE};
+    use nautilus_ls_lab::params::OrbParams;
+    use nautilus_ls_lab::runner::live_daily::{RehearsalBook, RehearsalBookLeg, BOOK_VERSION};
+    use nautilus_ls_lab::runner::pnl::SEED_FILL_PREFIX;
+    use nautilus_ls_lab::runner::report::{report_rehearsal, RehearsalConfig};
+    use tempfile::tempdir;
+
+    use super::*;
+
+    const COMMISSION: f64 = 0.001;
+    const SELL_TAX: f64 = 0.01;
+
+    fn cost_file(dir: &Path) -> PathBuf {
+        let path = dir.join("transaction-costs.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 1,
+                "commission_rate_per_side": COMMISSION,
+                "sell_tax_rate": SELL_TAX,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        path
+    }
+
+    fn at(day: u32) -> u64 {
+        Utc.with_ymd_and_hms(2026, 6, day, 6, 30, 0).unwrap().timestamp_nanos_opt().unwrap() as u64
+    }
+
+    /// A closed round trip whose BUY leg is the synthetic seed a carried-in leg produces.
+    /// `pnl::seed_book_legs` stamps exactly this trade-id shape at the PRIOR close.
+    fn carried_in_trade(shcode: &str) -> TradeRecord {
+        TradeRecord {
+            symbol: shcode.to_string(),
+            entry_side: "BUY".to_string(),
+            quantity: 10.0,
+            avg_px_open: 1_000.0,
+            avg_px_close: Some(1_100.0),
+            realized_pnl: 1_000.0,
+            ts_opened: at(1),
+            ts_closed: Some(at(2)),
+            fills: vec![
+                FillRecord {
+                    ts_event: at(1),
+                    side: "BUY".to_string(),
+                    qty: 10.0,
+                    price: 1_000.0,
+                    trade_id: format!("{SEED_FILL_PREFIX}{shcode}-{}", at(1)),
+                    commission: 0.0,
+                },
+                FillRecord {
+                    ts_event: at(2),
+                    side: "SELL".to_string(),
+                    qty: 10.0,
+                    price: 1_100.0,
+                    trade_id: format!("S-{shcode}"),
+                    commission: 0.0,
+                },
+            ],
+            risk_capital: Some(500.0),
+            realized_r: Some(2.0),
+        }
+    }
+
+    /// A normal executed round trip, optionally with no entry-risk join.
+    fn executed_trade(shcode: &str, risk_capital: Option<f64>) -> TradeRecord {
+        TradeRecord {
+            symbol: shcode.to_string(),
+            entry_side: "BUY".to_string(),
+            quantity: 10.0,
+            avg_px_open: 1_000.0,
+            avg_px_close: Some(1_100.0),
+            realized_pnl: 1_000.0,
+            ts_opened: at(2),
+            ts_closed: Some(at(2)),
+            fills: vec![
+                FillRecord {
+                    ts_event: at(2),
+                    side: "BUY".to_string(),
+                    qty: 10.0,
+                    price: 1_000.0,
+                    trade_id: format!("B-{shcode}"),
+                    commission: 0.0,
+                },
+                FillRecord {
+                    ts_event: at(2),
+                    side: "SELL".to_string(),
+                    qty: 10.0,
+                    price: 1_100.0,
+                    trade_id: format!("S-{shcode}"),
+                    commission: 0.0,
+                },
+            ],
+            risk_capital,
+            realized_r: risk_capital.map(|rc| 1_000.0 / rc),
+        }
+    }
+
+    fn write_run(
+        data_home: &Path,
+        run_id: &str,
+        rehearsal: Option<bool>,
+        paper_stage: Option<bool>,
+        trades: Vec<TradeRecord>,
+    ) {
+        let run_dir = data_home.join("runs").join(run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let mut params = OrbParams::default();
+        params.strategy_version = 35;
+        let manifest = Manifest {
+            run_id: run_id.to_string(),
+            source: RunSource::Backtest,
+            strategy_id: "orb".to_string(),
+            strategy_version: 35,
+            params,
+            data_range: DataRange { start: "20260601".to_string(), end: "20260630".to_string() },
+            catalog_fingerprint: "cf".to_string(),
+            universe_hash: "uh".to_string(),
+            strategy_code_hash: "ch".to_string(),
+            lab_src_fingerprint: None,
+            checkpoint_hash: None,
+            universe_metadata_hash: None,
+            dispatch: None,
+            daily_params: None,
+            rehearsal,
+            paper_stage,
+            created_utc: "2026-06-01T00:00:00+00:00".to_string(),
+        };
+        std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
+            .unwrap();
+        let perf =
+            PerformanceReport { trades, equity_curve: Vec::new(), summary: BTreeMap::new() };
+        std::fs::write(run_dir.join(PERFORMANCE_FILE), serde_json::to_string(&perf).unwrap())
+            .unwrap();
+    }
+
+    fn cfg(data_home: &Path, run_id: &str, costs: PathBuf) -> RehearsalConfig {
+        RehearsalConfig {
+            data_home: data_home.to_path_buf(),
+            run_id: run_id.to_string(),
+            cost_config: costs,
+        }
+    }
+
+    // --- Review finding #5 ---------------------------------------------------------------
+
+    /// A carried-in leg's synthetic seed BUY is NOT an execution, so no buy-side commission
+    /// is charged for it. Only the real sell is costed.
+    ///
+    ///   sell 10 @ 1,100 -> (0.001 + 0.01) x 11,000 = 121.0   <- the whole cost
+    ///   a synthetic buy at the prior close would have added 0.001 x 10,000 = 10.0
+    #[test]
+    fn a_carried_in_leg_is_not_charged_a_commission_for_its_synthetic_entry() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "r-seed", Some(true), Some(false), vec![carried_in_trade("005930")]);
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-seed", costs)).unwrap();
+
+        let e = &out.exits[0];
+        assert!(e.carried_in, "the seed fill marks this exit as carried in");
+        assert!(
+            (e.modeled_cost - 121.0).abs() < 1e-9,
+            "only the real sell is costed, got {}",
+            e.modeled_cost
+        );
+        assert!(
+            (e.net_realized_pnl - 879.0).abs() < 1e-9,
+            "net is gross minus the sell-side cost only, got {}",
+            e.net_realized_pnl
+        );
+        assert!(
+            out.lines.join("\n").contains("CARRIED IN"),
+            "and the report says so: {:?}",
+            out.lines
+        );
+    }
+
+    /// An ordinary executed round trip is still charged both sides.
+    #[test]
+    fn an_executed_round_trip_is_still_charged_both_sides() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-exec",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0))],
+        );
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-exec", costs)).unwrap();
+
+        assert!(!out.exits[0].carried_in);
+        assert!(
+            (out.exits[0].modeled_cost - 131.0).abs() < 1e-9,
+            "buy 10.0 + sell 121.0, got {}",
+            out.exits[0].modeled_cost
+        );
+    }
+
+    // --- Review finding #7 ---------------------------------------------------------------
+
+    /// A row mixing risk-joined and unjoined trades has NO net RoR — not a partial one.
+    /// Numerator over every trade against a denominator over only some inflates the ratio,
+    /// and `dominance_fold` / `RunObservation::build` refuse the same statistic.
+    #[test]
+    fn a_row_mixing_joined_and_unjoined_trades_refuses_to_compute_net_ror() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-mixed",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0)), executed_trade("000660", None)],
+        );
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-mixed", costs)).unwrap();
+
+        let row = &out.rows[0];
+        assert_eq!(row.closes, 2, "both trades are counted");
+        assert_eq!(row.unjoined_closes, 1);
+        assert!(
+            row.net_ror.is_none(),
+            "a partial denominator must refuse, not answer: got {:?}",
+            row.net_ror
+        );
+        let text = out.lines.join("\n");
+        assert!(text.contains("1 of 2 counted exit(s) carry no risk join"), "{text}");
+        assert!(text.contains("inflates the ratio"), "{text}");
+    }
+
+    /// A fully joined row still computes.
+    #[test]
+    fn a_fully_joined_row_still_computes_net_ror() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-joined",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0)), executed_trade("000660", Some(500.0))],
+        );
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-joined", costs)).unwrap();
+
+        let row = &out.rows[0];
+        assert_eq!(row.unjoined_closes, 0);
+        // (1000 - 131) x 2 / 1000 = 1.738
+        assert!((row.net_ror.unwrap() - 1.738).abs() < 1e-9, "{:?}", row.net_ror);
+    }
+
+    // --- Review finding #9 ---------------------------------------------------------------
+
+    /// A row whose exits were ALL excluded under R28 says so, instead of blaming the risk
+    /// join — which was fine.
+    #[test]
+    fn an_all_excluded_row_states_exclusion_not_a_missing_risk_join() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "opener-rehearsal", Some(true), Some(false), vec![]);
+        write_run(
+            dir.path(),
+            "stage-excl",
+            Some(false),
+            Some(true),
+            vec![executed_trade("005930", Some(500.0))],
+        );
+        let book = RehearsalBook {
+            version: BOOK_VERSION,
+            session_date: "2026-06-01".to_string(),
+            run_id: "prior".to_string(),
+            ordinal_epoch: "2010-01-04".to_string(),
+            legs: vec![RehearsalBookLeg {
+                shcode: "005930".to_string(),
+                quantity: 10,
+                entry_price: 1_000.0,
+                stop_price: 950.0,
+                prior_close: 1_000,
+                entry_date: "2026-06-01".to_string(),
+                entered_under: "opener-rehearsal".to_string(),
+                opening_order_id: "BOOK-005930-2026-06-01".to_string(),
+            }],
+        };
+        std::fs::write(
+            dir.path().join("runs").join("stage-excl").join(INHERITED_BOOK_FILE),
+            serde_json::to_string(&book).unwrap(),
+        )
+        .unwrap();
+
+        let out = report_rehearsal(&cfg(dir.path(), "stage-excl", costs)).unwrap();
+
+        let row = &out.rows[0];
+        assert_eq!(row.closes, 0);
+        assert_eq!(row.excluded_closes, 1);
+        assert_eq!(row.unjoined_closes, 0, "an excluded exit is not an unjoined one");
+        let text = out.lines.join("\n");
+        assert!(text.contains("n/a (every exit excluded)"), "{text}");
+        assert!(
+            !text.contains("carry no risk join"),
+            "it must not blame the risk join: {text}"
+        );
+    }
+
+    // --- Review finding #2 ---------------------------------------------------------------
+
+    /// A foreign-version captured book is REFUSED, not deserialized into today's meaning.
+    /// A past bump changed what a field means, so serde can succeed while every value is
+    /// misread — and the misread would feed R28's exclusion.
+    #[test]
+    fn a_foreign_version_inherited_book_is_refused() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-foreign",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0))],
+        );
+        let mut raw = serde_json::to_value(RehearsalBook {
+            version: BOOK_VERSION,
+            session_date: "2026-06-01".to_string(),
+            run_id: "prior".to_string(),
+            ordinal_epoch: "2010-01-04".to_string(),
+            legs: vec![],
+        })
+        .unwrap();
+        raw["version"] = serde_json::json!(BOOK_VERSION + 1);
+        std::fs::write(
+            dir.path().join("runs").join("r-foreign").join(INHERITED_BOOK_FILE),
+            raw.to_string(),
+        )
+        .unwrap();
+
+        let err = report_rehearsal(&cfg(dir.path(), "r-foreign", costs)).unwrap_err().to_string();
+
+        assert!(err.contains(&format!("is version {}", BOOK_VERSION + 1)), "{err}");
+        assert!(err.contains("refusing rather than attributing"), "{err}");
+    }
+
+    /// The current version still loads.
+    #[test]
+    fn the_current_version_inherited_book_still_loads() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-current",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0))],
+        );
+        let book = RehearsalBook {
+            version: BOOK_VERSION,
+            session_date: "2026-06-01".to_string(),
+            run_id: "prior".to_string(),
+            ordinal_epoch: "2010-01-04".to_string(),
+            legs: vec![],
+        };
+        std::fs::write(
+            dir.path().join("runs").join("r-current").join(INHERITED_BOOK_FILE),
+            serde_json::to_string(&book).unwrap(),
+        )
+        .unwrap();
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-current", costs)).unwrap();
+        assert!(!out.lines.join("\n").contains("PRE-U12 vintage"), "the book was present");
+        let _ = Path::new("");
+    }
+}

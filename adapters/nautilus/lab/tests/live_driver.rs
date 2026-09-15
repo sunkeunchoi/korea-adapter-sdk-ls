@@ -1398,3 +1398,60 @@ async fn an_inherited_book_is_captured_into_the_run_verbatim() {
     );
     assert_eq!(written.session_date, "2026-06-01", "captured verbatim, not re-stamped");
 }
+
+/// The inherited-book write is FAIL-SOFT: a failure must not abort `stage_and_finalize`
+/// ahead of the always-emit tail.
+///
+/// Proven in two halves, because the driver cannot be made to fail this one write on demand
+/// — `RunWriter::new` refuses a pre-existing staging dir (the aborted-run guard), and
+/// `serde_json` serializes a non-finite float as `null` rather than erroring, so neither the
+/// filesystem nor the value can be rigged through the public entry point.
+///
+/// Half one, here: the error is real and producible at the seam.
+/// Half two, below: the call site does not propagate it.
+#[test]
+fn a_blocked_inherited_book_path_makes_the_write_fail() {
+    use nautilus_ls_lab::artifacts::{RunWriter, INHERITED_BOOK_FILE};
+
+    let home = tempdir().unwrap();
+    let writer = RunWriter::new(home.path(), "20260725T010000Z-live-orb-v34").unwrap();
+    // Occupy the artifact's own path with a directory, which `fs::write` cannot overwrite.
+    let staged = home.path().join("runs").join(".tmp-20260725T010000Z-live-orb-v34");
+    std::fs::create_dir_all(staged.join(INHERITED_BOOK_FILE)).unwrap();
+
+    let err = writer.write_inherited_book(&serde_json::json!({"version": 2})).unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("directory")
+            || err.to_string().to_lowercase().contains("is a directory"),
+        "the write fails with a real io error: {err}"
+    );
+}
+
+/// Half two: `stage_and_finalize` must handle that error, never propagate it.
+///
+/// A source-scan guard, in the shape this repo already uses for `report paired`. The
+/// behavioral test is unreachable (see above), and the thing worth protecting is one
+/// character: a `?` here aborts before `data_quality.json` is written and before `finalize`
+/// renames `.tmp-`, stranding a session that already traded a real paper account and
+/// skipping the next mount's book stamp. The neighbouring `write_session_observation` is
+/// fail-soft for exactly this reason.
+#[test]
+fn the_inherited_book_write_is_not_propagated_with_a_question_mark() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runner/live/shared.rs"),
+    )
+    .unwrap();
+    assert!(
+        src.contains("if let Err(e) = writer.write_inherited_book(book)"),
+        "the call must be handled, not propagated"
+    );
+    assert!(
+        !src.contains("writer.write_inherited_book(book)?"),
+        "a `?` on this write aborts ahead of the always-emit tail"
+    );
+    assert!(
+        src.contains("inherited-book.json was NOT written"),
+        "and the failure must reach the run's observations, so a later report does not read \
+         the absence as a checked result"
+    );
+}
