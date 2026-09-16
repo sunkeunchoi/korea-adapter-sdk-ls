@@ -4,26 +4,36 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
-## Open lineage (STANDING) — currently open: NONE; ORB CLOSED 2026-08-10, declared 2026-08-11
+## Open lineage (STANDING) — currently open: NONE; ORB CLOSED 2026-08-10, declared 2026-08-11; daily-resolution-v1 STOOD DOWN 2026-09-16 (never opened)
 
 Canonical answer to "which strategy lineage is open right now?" — the committed state
 behind the one-lineage-at-a-time gate (CONCEPTS.md "Strategy lineage": exactly one
 lineage is open at a time). Same shape as the head-lineage block below: dated entries
-record decisions; this block pins the current state. Edited only when a lineage opens
-or closes.
+record decisions; this block pins the current state. Edited only when a lineage opens,
+closes, or **stands down** — the third case was added 2026-09-16, because a
+[[Lineage stand-down]] is neither an opening nor a closure and the previous wording
+would have forbidden recording one here.
 
 - **Currently open: NONE.** The ORB lineage is **CLOSED** under the pre-registered
   Lineage-closure rule (CONCEPTS.md), as of the arm-C stand-down (2026-08-10). The
   rule evaluation and the admissibility basis live in the closure-declaration entry —
-  the newest dated entry below: "Turn — ORB lineage closure (governance axis) …
+  the dated entry below: "Turn — ORB lineage closure (governance axis) …
   (2026-08-11)".
-- **The successor daily-resolution lineage is NOT open yet.** It opens only when its
-  pre-registration freezes (P6 of the 2026-08-10 scoping ladder, queue
-  `next-lineage-preregistration-artifact`). Until that freeze, no governed strategy
-  turn may run.
-- The successor's pre-registration freeze cites THIS block as its "exactly one
-  lineage is open" proof; the freeze commit updates this block to name the newly
-  open lineage.
+- **The successor `daily-resolution-v1` is STOOD DOWN (2026-09-16) and was never
+  opened.** Its terms froze 2026-08-15; the pre-turn admissibility re-check refused to
+  open it 2026-09-15; the operator's governed decision withdrew it 2026-09-16. This is a
+  **[[Lineage stand-down]]**, not a Lineage closure — closure weighs the frozen threshold
+  against the best net RoR a lineage has produced, and this one produced none, so that
+  rule was never evaluated and is not what this says. The disposition, the re-entry
+  condition, and the measurements live in the dated entry below: "Governance —
+  `daily-resolution-v1` lineage STAND-DOWN … (2026-09-16)", and in
+  `config/LINEAGE-PREREGISTRATION.md` § Stand-down.
+- **No lineage is open, so no governed strategy turn may run.** The next opening is a
+  **new pre-registration** under a different hypothesis (queue
+  `daily-lineage-reentry-new-preregistration`), which will cite THIS block as its
+  "exactly one lineage is open" proof and update it in the same commit. The staged
+  replacement text prepared inside the 2026-08-15 freeze entry below is **retired** by
+  the stand-down and must not be applied.
 
 ## Head lineage (STANDING) — post-#118 real-data head = v34; pin `LS_TURN_EXPECT_VERSION=34` (2026-07-24)
 
@@ -80,6 +90,105 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparisons are unaffected by v34's #118 "RED" *power*-label — a KEEP is a relative
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
+
+## Governance — `daily-resolution-v1` lineage **STAND-DOWN** recorded: the hypothesis is withdrawn without ever having been opened; this is a Lineage stand-down and **not** a Lineage closure; the frozen terms and `lineage-preregistration.json` are left byte-identical as the historical record; re-entry is defined arithmetically and requires a NEW pre-registration (2026-09-16) — decision map [#330](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/330) / ticket [#331](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/331), queue `daily-lineage-post-refuse-disposition`
+
+- **Verdict.** `daily-resolution-v1` is **STOOD DOWN** as of 2026-09-16. Its terms froze
+  2026-08-15, the pre-turn admissibility re-check refused to open it 2026-09-15 (the entry
+  directly below), and the operator's governed decision is to withdraw the hypothesis rather
+  than re-register it. The standing block above keeps reading `currently open: NONE` — the
+  slot was never occupied — and now names the withdrawn lineage beside it.
+- **This is a [[Lineage stand-down]], not a Lineage closure, and the distinction is
+  load-bearing.** Closure (CONCEPTS.md) evaluates the frozen sample-margin threshold at the
+  obtainable-sample ceiling against **the best net RoR the lineage has ever produced**;
+  `daily-resolution-v1` never opened and produced none, so that rule was never evaluated and
+  nothing here should be read as its verdict. The practical difference: a closure "cannot be
+  reopened by acquiring data", whereas this stand-down explicitly can be re-evaluated if the
+  admitted supply changes — see the re-entry condition below. The word alone cannot carry
+  this: every closure in this log is also worded "STANDS DOWN" (the ORB arm-C entry of
+  2026-08-10), so `CONCEPTS.md` now defines **Lineage stand-down** as a term of its own and
+  that definition, not this entry's wording, is the canon.
+- **Why stand-down and not amendment (the operator choice, argued and recorded).** The
+  suspend-vs-amend convention
+  (`docs/solutions/conventions/suspend-vs-amend-frozen-governance-artifacts.md`) re-derives an
+  invalidated frozen value only when the re-derived value has a **consumer**. Re-derived
+  honestly at this lineage's own measured dispersion, the required holdout is **7,779
+  sessions** against the **1,566**-session holdout this freeze partitions and a **2,460**-session
+  `S_max` — and the trade model's 2,802 is short too. A re-registration under the same
+  hypothesis would therefore name a holdout **3.2× the entire ceiling**: no powered judgment
+  could ever consume it, so the amendment's only function would be to make an unreachable
+  judgment look governed. That is a stand-down wearing amendment clothes, and the convention
+  says to record the stand-down instead.
+- **What actually failed was the transported standard error, not the hypothesis.** All three
+  terms `rederivation_trigger` (4) names *lowered* the projection: measured ICC **0.125** against
+  the frozen 0.327, participation **1.000** at target, **7.757** entries per session against a
+  target of 8. The bar moved on the single term the freeze inherited from a different lineage —
+  per-trade net-r sd **1.885** against ORB v35's **0.642**, a 4.97× variance ratio that the
+  16-session hold under a 1.5×ATR(1) stop produces and that no amount of ORB history predicts.
+  The sd term outweighed the other three by 8.6×. This is why the re-entry condition forbids
+  transporting a dispersion estimate a second time, and why the stand-down is not evidence
+  against daily-resolution strategies as a class.
+- **The frozen file is deliberately untouched.** `config/lineage-preregistration.json` stays
+  byte-identical and still hashes
+  **`0ecd9d1163075edc28336035f511807e192b5d5c780e09340841ee81794b3dd4`** — every existing
+  citation of that hash remains valid, and the frozen terms stand as the historical record of
+  what was registered before the data was seen. No band was re-derived, no number was patched,
+  no bar was lowered, and no other candidate run was re-checked against these terms. The two
+  gates in `config/LINEAGE-PREREGISTRATION.md` are untouched: gate 1 fired correctly and this
+  entry is what followed it.
+- **The staged opening block below is RETIRED and must not be applied.** The 2026-08-15 freeze
+  entry carries a prepared replacement for the standing block ("### Staged replacement text for
+  the standing block (apply in the OPENING commit, not here)", whose text opens the lineage as
+  `currently open: daily-resolution-v1, opened <DATE>`). No opening commit will consume it. Its
+  bytes are left in place because this log is history rather than a status board — the same
+  discipline that leaves the frozen JSON alone — but it is dead text as of this entry, and the
+  next opening will write a fresh block naming a **different** hypothesis.
+- **Re-entry condition (the unblock).** A **new pre-registration act** declares a hypothesis
+  whose required holdout — re-derived at **that hypothesis's own measured per-trade
+  dispersion**, never transported from another lineage — is at most the holdout of the supply
+  **admitted** under the supply-admission contract then in force (being decided as ticket
+  [#332](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/332); until it exists, no
+  re-entry arithmetic can be evaluated, because "how many sessions exist" is not the same
+  question as "how many sessions are admitted as testable supply"). The same hypothesis may
+  return **only** through that arithmetic and only as a new pre-registration. Explicitly
+  refused: lowering the bar, patching the frozen JSON, re-running the re-check against a
+  different candidate run under these terms, and reaching a new freeze by re-inspecting this
+  one. Parked as queue `daily-lineage-reentry-new-preregistration`.
+- **The paper rehearsal continues as driver falsification only, within a finite scope.** A
+  [[Paper rehearsal]] falsifies the *driver*, never the strategy: `rehearsal: true`,
+  `paper_stage: false`, no dispatch release, counts toward no rung. Under this stand-down the
+  prospective paper stage can never open, so `RUNBOOK-rehearsal-daily.md`'s "if the judgment
+  FAILs" section — which premised the rehearsal's session cap on a U6 FAIL entry that will now
+  never be written — is re-premised on **this** entry instead. **No cap number is declared**,
+  because under a stand-down no session can produce lineage evidence at all; what is declared is
+  a finite **scope**: the remaining rehearsal work is exactly U12 items 2 and 4 of plan
+  2026-09-08-1215 — one observation-only session (`--stop-before-orders`), two order-submitting
+  sessions, and one unaided recovery drill (`--rehearsal-clear-trip` plus `--rehearsal-book
+  adopt`). Any rehearsal session beyond that scope requires a new queued act, not this entry's
+  authority.
+- **Doc sweep (this dispatch).** The stand-down is recorded where the next operator will look,
+  per the convention's "recorded, never implied" discipline: this entry and the standing block
+  above; `config/LINEAGE-PREREGISTRATION.md` (a dated status blockquote accumulated below the
+  2026-09-15 one, plus a new § Stand-down); `CONCEPTS.md` (the new **Lineage stand-down** term);
+  `RUNBOOK-rehearsal-daily.md` (top banner, the now-unreachable paper-stage transition, and the
+  re-premised FAIL section); `README.md` § Paper rehearsal; `RUNBOOK-rung1.md` and
+  `RUNG1-PREFLIGHT.md` (the re-entry banners, whose route through a `daily-resolution-v1`
+  certified head is now unreachable); and the queue. Until this dispatch the 2026-09-15 refusal
+  existed in exactly three places — this log, the pre-registration companion, and one queue row
+  — and in **no runbook at all**, so an operator reading only the rehearsal runbook would have
+  found a live "if the judgment CLEARs" path to a paper stage that cannot open.
+- **Queue.** `daily-lineage-post-refuse-disposition` is unblocked and closed by this entry — its
+  unblock condition was precisely "the operator takes the governed decision in a TURN-LOG entry
+  … and A2 records it". `daily-lineage-reentry-new-preregistration` is added and parked on the
+  re-entry condition above. `daily-lineage-holdout-judgment` (U6) is superseded by it: this
+  lineage will never be judged, and a successor hypothesis will declare its own judgment item.
+  `rung1-ladder-reentry-daily-certified-head` is superseded by
+  `rung1-ladder-reentry-certified-head-next-lineage`, because its premise is in its title — the
+  ladder's re-entry can no longer route through *this* lineage's certified head.
+  `rehearsal-attended-sessions-and-acceptance` is superseded by a successor row that carries the
+  driver-falsification-only constraint and the finite scope **in its own notes**: that constraint
+  previously existed only in the disposition row's notes, the queue has no verb that edits notes,
+  and closing that row would have deleted the only place an operator could read it.
 
 ## Re-check — the pre-turn admissibility re-check ran ONCE on the U4 selected run and **REFUSED TO OPEN** the daily lineage: at this lineage's own measured clustering the hurdle is 0.080530 against the registered effect 0.048546, and the holdout would need 7,779 sessions where 1,566 exist (S_max 2,460); the standing block stays `currently open: NONE`, the bar is not lowered, no other candidate is re-checked, and `rederivation_trigger` (4) FIRES (2026-09-15) — plan 2026-09-08-1215 U5 (R2, R8, R9), queue `daily-lineage-recheck-and-opening-commit`
 

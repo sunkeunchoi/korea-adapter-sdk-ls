@@ -40,6 +40,18 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 > pre-registration freezes at P6, queue `next-lineage-preregistration-artifact`). The fresh
 > re-registration (v3+) and the step-3 literal moves described above still apply once that
 > head exists.
+>
+> **SUCCESSOR STOOD DOWN — RE-ENTRY RE-PREMISED AGAIN — 2026-09-16** (TURN-LOG 2026-09-16
+> governance entry; `config/LINEAGE-PREREGISTRATION.md` § Stand-down). The successor named
+> above, **`daily-resolution-v1`, never opened**: its pre-turn admissibility re-check refused on
+> 2026-09-15 (required holdout 7,779 sessions against 1,566, `S_max` 2,460) and the governed
+> decision **stood the lineage down** rather than re-registering it — a Lineage stand-down, not a
+> closure. `rung1-ladder-reentry-daily-certified-head` is therefore superseded by
+> `rung1-ladder-reentry-certified-head-next-lineage`, waiting on a certified head from whichever
+> lineage opens next and on **its own** frozen hurdle; that opening is blocked on a new
+> pre-registration (queue `daily-lineage-reentry-new-preregistration`). This preflight stays
+> PARKED throughout, and step 3's SHA-256 citation is still valid — every stand-down in this
+> chain has left its frozen artifact byte-identical.
 
 > **The agent NEVER drives `--genesis`, `--dispatch`, `--mount`, `--escalate`, `--reregister`, or
 > `--clear-killswitch`.** Those are nonce-gated, attended, and refuse loudly in a no-TTY shell

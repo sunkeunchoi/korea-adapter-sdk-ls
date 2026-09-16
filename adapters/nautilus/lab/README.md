@@ -126,6 +126,16 @@ agent preflight + post-session read is **[`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.
 
 ## Paper rehearsal (daily resolution, live, attended)
 
+**LINEAGE STOOD DOWN 2026-09-16:** `daily-resolution-v1` was withdrawn without ever having been
+opened — the pre-turn admissibility re-check refused it on 2026-09-15 (required holdout 7,779
+sessions against 1,566, `S_max` 2,460), and the governed decision is a stand-down rather than a
+re-registration. This is a **Lineage stand-down** (CONCEPTS.md), not a Lineage closure: the lineage
+produced no net RoR for the closure rule to weigh. No holdout judgment will run and the prospective
+paper stage never opens, so rehearsals are **driver falsification only** and bounded to U12 items 2
+and 4 — see `RUNBOOK-rehearsal-daily.md` and `config/LINEAGE-PREREGISTRATION.md` § Stand-down.
+Re-entry requires a new pre-registration whose required holdout, re-derived at its own measured
+dispersion, fits the admitted supply.
+
 The daily-resolution strategy runs on the paper lane under the same safety envelope as a mount but
 with **no dispatch chain at all** — nothing is consumed, nothing is appended, and its sessions count
 toward no rung's `N`. A rehearsal exists to falsify the **driver**, not to earn evidence. It trades a

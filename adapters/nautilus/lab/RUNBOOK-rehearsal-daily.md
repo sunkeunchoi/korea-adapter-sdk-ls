@@ -16,6 +16,16 @@ profile. Companion: [`README.md`](README.md) § Paper rehearsal.
 > the mount cutoff, and a pre-build book probe. A rehearsal exists to falsify the **driver**, not
 > to earn evidence.
 
+> 🛑 **LINEAGE STOOD DOWN — 2026-09-16: there is no holdout judgment coming, and no paper stage.**
+> `daily-resolution-v1` was withdrawn without ever having been opened (TURN-LOG entry "Governance —
+> `daily-resolution-v1` lineage STAND-DOWN … (2026-09-16)"; `config/LINEAGE-PREREGISTRATION.md`
+> § Stand-down). Rehearsal sessions remain authorized, but **only as driver falsification** —
+> `rehearsal: true`, `paper_stage: false`, no rung evidence, ever — and only within the finite scope
+> the stand-down entry declares: **U12 items 2 and 4** of plan `2026-09-08-1215` (one
+> observation-only session, two order-submitting sessions, one unaided recovery drill). A session
+> beyond that scope needs a new queued act. [§ After the holdout judgment](#after-the-holdout-judgment)
+> is read under this banner: its CLEAR branch is unreachable.
+
 > ⚠️ **`make next` cannot see this.** The work queue's attended-chain display does not know the
 > `daily-rehearsal` profile (plan § Documentation). Until that integration lands, this runbook and
 > the rehearsal ledgers under `<data_home>/rehearsal/` are the only status surface.
@@ -512,7 +522,16 @@ It belongs in the TURN-LOG, and it waits for the judgment.
 
 ## After the holdout judgment
 
+> **UNREACHABLE AS OF 2026-09-16 — kept as the registered procedure, not as live guidance.**
+> `daily-resolution-v1` is stood down and was never opened, so no holdout judgment will be run
+> against it: neither branch below can fire. The section stays because the procedure was
+> pre-registered and a successor lineage will need it again, and because deleting a registered
+> procedure to reflect a disposition is the edit this log's discipline refuses. The live rule for
+> today's rehearsal is the § Stand-down re-premise at the end of this section.
+
 ### If the judgment CLEARs — the paper-stage transition
+
+*(Unreachable under the 2026-09-16 stand-down; `paper_stage` never opens for this lineage.)*
 
 1. **Declare the divergence ceiling first**, in the TURN-LOG, **before** the first paper-stage
    session: the ratio of (fill price − decision price) to the stop width, above which a session is
@@ -525,6 +544,9 @@ It belongs in the TURN-LOG, and it waits for the judgment.
 
 ### If the judgment FAILs — driver falsification only
 
+*(Also unreachable under the 2026-09-16 stand-down — a judgment that never runs cannot FAIL. Kept as
+the registered procedure; superseded for today by the § Stand-down re-premise below.)*
+
 There is no certified head and the ladder path does not open. The rehearsal may continue, but its
 purpose narrows to **falsifying the driver**, and it runs under a **session-count cap**.
 
@@ -535,6 +557,28 @@ in the TURN-LOG along with the narrowed purpose (plan `:487`). This runbook's ru
 - Raising the cap afterward is a **new pre-registration act**, not an amendment — the same standard
   that governs re-judging a holdout.
 - Until the FAIL entry exists, there is no cap and no authorization to rely on one.
+
+### Under the 2026-09-16 stand-down — the live rule
+
+**This is the clause in force.** The cap rule above waited on a U6 FAIL entry that will now never be
+written, which would have left it permanently vacuous ("until the FAIL entry exists, there is no
+cap"). It is re-premised on the stand-down entry instead — TURN-LOG "Governance —
+`daily-resolution-v1` lineage STAND-DOWN … (2026-09-16)".
+
+- **No cap number is declared, and none is needed.** A cap bounds the accumulation of sessions that
+  earn no evidence. Under a stand-down *no* session can produce lineage evidence — there is no
+  registered effect left to compare against — so what bounds the lane is a finite scope, not a count.
+- **The authorized scope is exactly U12 items 2 and 4** of plan `2026-09-08-1215`: one
+  observation-only session (`--stop-before-orders`, recording what t8407's price field means between
+  15:20 and 15:30, plus the deposit), two order-submitting sessions (the second of which probes the
+  opening book to prove the paper account held overnight and that a restored leg reaches `on_bar`),
+  and one unaided recovery drill (`--rehearsal-clear-trip` and `--rehearsal-book adopt` run from this
+  runbook alone). Each session gets a TURN-LOG entry with its divergence.
+- **A rehearsal session beyond that scope is a new queued act**, not something this runbook
+  authorizes. Queue: `rehearsal-attended-sessions-and-acceptance-stand-down`.
+- **Nothing here becomes evidence about the strategy**, whatever the sessions show. A session that
+  suggests the strategy is wrong is still only a finding to record, and there is no longer a judgment
+  for it to wait for.
 
 ---
 
