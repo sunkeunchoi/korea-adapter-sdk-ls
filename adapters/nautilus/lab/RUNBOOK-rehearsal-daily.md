@@ -111,11 +111,16 @@ the daily profile's defaults. It advances the rehearsal catalog and resolves the
 
 ```sh
 cd adapters/nautilus
+LS_TRADING_ENV=paper \
 LS_SM_PROFILE=daily-rehearsal \
 LS_SM_SESSION_DATE=<the PREVIOUS trading session> \
 LS_SM_MOUNT_DATE=<today> \
   ./scripts/session-morning.sh --dry-run     # print the resolved sequence, zero traffic
 ```
+
+> `LS_TRADING_ENV=paper` is required by the **morning chain too**, not only by the mount: the
+> script refuses to resolve against a live lane and exits `64` without it (`session-morning.sh`,
+> the paper-interlock check) — even on `--dry-run`.
 
 > ⚠️ **Always pass `LS_SM_SESSION_DATE`.** Its default is a hardcoded stale literal. A run against
 > the default ingests nothing useful and the step [11] watermark row will NO-GO — the watermark
@@ -364,7 +369,7 @@ deposit, and anything the run's `data_quality.json` flagged.
 | `LS_SM_MOUNT_DATE` | morning chain | yes | today |
 | `LS_SM_DATA_HOME` | morning chain | no | must be ABSOLUTE if set; defaults to `data/rehearsal-daily` |
 | `LS_SM_INGEST_BY` / `LS_SM_UNIVERSE_BY` | morning chain | no | default 15:00 / 15:10 |
-| `LS_TRADING_ENV` | mount, adopt | **yes**, `paper` | mount → 66; `--rehearsal-clear-trip` does **not** read it |
+| `LS_TRADING_ENV` | morning chain, mount, adopt | **yes**, `paper` | morning chain → 64 (also on `--dry-run`); mount → 66; `--rehearsal-clear-trip` does **not** read it |
 | `LS_DISPATCH_NONCE` | mount, both recovery verbs | **yes** | `date +%s`; TTL 600 s, max future skew 60 s |
 | `LS_DATA_HOME` | mount, both recovery verbs | **yes** | the rehearsal home, ABSOLUTE |
 | `LS_REHEARSAL_ENVELOPE` | mount | **yes** | `lab/config/rehearsal-envelope.json` |
