@@ -82,7 +82,6 @@
 //! JSON is its only write.
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
@@ -90,13 +89,10 @@ use chrono_tz::Asia::Seoul;
 
 use nautilus_ls::calendar::LoadedCalendar;
 
-use crate::dispatch::chain::{ChainStatus, DispatchChain};
 use crate::dispatch::checks::date_fact_from_view;
 use crate::queue::sequences::{
-    ingest_sequence, ladder_sequence, read_sequences, turn_sequence, SequenceKind, SequenceReport,
-    SequenceStores,
+    read_sequences, SequenceKind, SequenceReport, SequenceStores,
 };
-use crate::trials::TrialsLedger;
 use crate::queue::window::{
     derive_window, ClosedReason, DateEvidence, NextBoundary, UnknownReason, WindowReport,
     WindowState,
@@ -117,15 +113,15 @@ pub const NOW_UNIX_ENV: &str = "LS_NEXT_NOW_UNIX";
 /// `.gate-run/state.json` exists at the repo root.
 pub const GATE_STATUS_FILE_ENV: &str = "LS_GATE_STATUS_FILE";
 
-/// Probe-report path override (tests point this at a tempdir so a probe run
-/// never writes into the real repo). Unset → the tracked-location default,
-/// `<repo root>/queue/probe-report.json` (next to the queue file, KTD2/KTD5).
-pub const PROBE_REPORT_PATH_ENV: &str = "LS_PROBE_REPORT_PATH";
+mod probe;
+mod verbs;
 
-/// The tracked probe-report file, relative to the repo root.
-pub const PROBE_REPORT_RELPATH: &str = "queue/probe-report.json";
+pub use probe::{PROBE_REPORT_PATH_ENV, PROBE_REPORT_RELPATH};
 
-/// A usage string enumerating the valid subcommands (KTD3).
+/// A usage string enumerating the valid subcommands (KTD3). It stays in the
+/// parent rather than moving beside the verbs that cite it, because `dispatch`
+/// and `list` cite it too: keeping it here avoids the parent importing its own
+/// CLI contract back out of a child.
 const USAGE: &str = "usage: lab-next [report] | probe | list [--all] | add --id <id> --title <t> --window <open-attended|closed|any> [--event <name> [--artifact <path>]] [--deadline <rfc3339>] [--sequence <name>] [--note <text>] [--ref <path>]... | done <id> | supersede <id> --by <id> | priority <id> | priority --clear | block <id> --until <condition> | unblock <id>";
 
 /// The CLI entry point: install scrub, emit the mandatory calendar startup
@@ -152,14 +148,14 @@ fn dispatch() -> anyhow::Result<ExitCode> {
     match args.first().map(String::as_str) {
         None => run_report(&[]),
         Some("report") => run_report(&args[1..]),
-        Some("probe") => run_probe(&args[1..]),
+        Some("probe") => probe::run_probe(&args[1..]),
         Some("list") => run_list(&args[1..]),
-        Some("add") => run_add(&args[1..]),
-        Some("done") => run_done(&args[1..]),
-        Some("supersede") => run_supersede(&args[1..]),
-        Some("priority") => run_priority(&args[1..]),
-        Some("block") => run_block(&args[1..]),
-        Some("unblock") => run_unblock(&args[1..]),
+        Some("add") => verbs::run_add(&args[1..]),
+        Some("done") => verbs::run_done(&args[1..]),
+        Some("supersede") => verbs::run_supersede(&args[1..]),
+        Some("priority") => verbs::run_priority(&args[1..]),
+        Some("block") => verbs::run_block(&args[1..]),
+        Some("unblock") => verbs::run_unblock(&args[1..]),
         Some(other) => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
 }
@@ -691,249 +687,6 @@ pub fn parse_gate_status(text: &str) -> Option<SequenceReport> {
     })
 }
 
-// ===========================================================================
-// U6 — the resume probe (R14; KTD5). See the module doc for the verdict rule.
-// ===========================================================================
-
-/// One probed sequence: either all three checks held (store readable, stage
-/// derivable, resume printable), or the store was absent/unreadable and the
-/// failure names exactly what is missing.
-enum ProbeOutcome {
-    /// The store read; the derived stage and resume command are noted.
-    Ok { stage: String, resume: String },
-    /// The store is absent or unreadable — resumability is not demonstrated.
-    Fail { missing: String },
-}
-
-fn probe_fail(missing: impl Into<String>) -> ProbeOutcome {
-    ProbeOutcome::Fail { missing: missing.into() }
-}
-
-/// `probe` (U6): probe the four R10 sequences against the current
-/// environment's real stores, print one verdict line each plus the summary
-/// line, and write the summary JSON atomically. Exit 0 = all pass, 1 otherwise
-/// (a failing leg is a verdict, never an error — the probe itself must not
-/// crash on a fresh environment).
-fn run_probe(rest: &[String]) -> anyhow::Result<ExitCode> {
-    if !rest.is_empty() {
-        anyhow::bail!("probe takes no arguments, got {rest:?}\n{USAGE}");
-    }
-    let now = report_now();
-    let stores = SequenceStores::from_env();
-    let probed: [(&str, ProbeOutcome); 4] = [
-        ("turn", probe_turn(&stores)),
-        ("ladder", probe_ladder(&stores, now)),
-        ("ingest", probe_ingest(&stores)),
-        ("gate-run", probe_gate()),
-    ];
-
-    let mut all_pass = true;
-    let mut rows: Vec<serde_json::Value> = Vec::new();
-    for (sequence, outcome) in &probed {
-        match outcome {
-            ProbeOutcome::Ok { stage, resume } => {
-                println!("ok[{sequence}] stage: {stage}; resume: {resume}");
-                rows.push(serde_json::json!({
-                    "sequence": sequence,
-                    "verdict": "ok",
-                    "stage": stage,
-                    "resume": resume,
-                }));
-            }
-            ProbeOutcome::Fail { missing } => {
-                all_pass = false;
-                println!("FAIL[{sequence}] missing: {missing}");
-                rows.push(serde_json::json!({
-                    "sequence": sequence,
-                    "verdict": "fail",
-                    "missing": missing,
-                }));
-            }
-        }
-    }
-
-    let report = serde_json::json!({
-        "version": 1,
-        "probed_utc": now.to_rfc3339_opts(SecondsFormat::Secs, true),
-        "sequences": rows,
-        "all_pass": all_pass,
-    });
-    let path = probe_report_path()?;
-    write_probe_report(&path, &report)?;
-    println!("probe: {} — report {}", if all_pass { "PASS" } else { "FAIL" }, path.display());
-    Ok(if all_pass { ExitCode::SUCCESS } else { ExitCode::FAILURE })
-}
-
-/// The probe-report path: [`PROBE_REPORT_PATH_ENV`] overrides; otherwise the
-/// tracked repo-root location next to the queue file.
-fn probe_report_path() -> anyhow::Result<PathBuf> {
-    match std::env::var(PROBE_REPORT_PATH_ENV).ok().filter(|s| !s.trim().is_empty()) {
-        Some(p) => Ok(PathBuf::from(p)),
-        None => Ok(crate::queue::repo_root()?.join(PROBE_REPORT_RELPATH)),
-    }
-}
-
-/// Persist the probe report atomically: sibling tmp file, then rename over the
-/// target (the queue's tmp+rename idiom) — the probe's ONLY write.
-fn write_probe_report(path: &Path, report: &serde_json::Value) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!("mkdir {}: {e}", parent.display()))?;
-    }
-    // PID-suffixed tmp (the gate-run.sh `tmp-$$` idiom): two concurrent
-    // writers must never clobber each other's staging file.
-    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(report)?))
-        .map_err(|e| anyhow::anyhow!("write probe report tmp {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| anyhow::anyhow!("commit probe report {}: {e}", path.display()))
-}
-
-/// The turn leg (KTD7). An in-flight turn (aborted residue or a stage log) is
-/// readable state via [`turn_sequence`]. With no in-flight turn, readability
-/// is demonstrated by the trials ledger: readable → ok ("no in-flight turn" IS
-/// a derivable stage, with the recorded next one-shot invocation as the resume
-/// command); absent or unreadable → FAIL naming it.
-fn probe_turn(stores: &SequenceStores) -> ProbeOutcome {
-    if let Some(report) = turn_sequence(stores) {
-        return ProbeOutcome::Ok { stage: report.stage, resume: report.resume };
-    }
-    let Some(path) = stores.trials_ledger.as_deref() else {
-        return probe_fail(
-            "no trials ledger configured, and no stage log or aborted-run residue anywhere",
-        );
-    };
-    if !path.exists() {
-        return probe_fail(format!(
-            "trials ledger {} absent (and no stage log or aborted-run residue)",
-            path.display()
-        ));
-    }
-    match TrialsLedger::new(path).read_all() {
-        Ok(records) => match records.last() {
-            Some(last) => ProbeOutcome::Ok {
-                stage: format!(
-                    "no in-flight turn — trials ledger readable, last look candidate '{}' verdict '{}'",
-                    last.candidate, last.verdict
-                ),
-                resume: format!(
-                    "LS_TURN_CANDIDATE={} lab-research turn governed  # one-shot: re-runs from the top (KTD7)",
-                    last.candidate
-                ),
-            },
-            None => ProbeOutcome::Ok {
-                stage: "no in-flight turn — trials ledger readable (no looks recorded)".to_string(),
-                resume: "lab-research turn governed (set LS_TURN_CANDIDATE=<slug>; one-shot — re-runs from the top, KTD7)"
-                    .to_string(),
-            },
-        },
-        Err(e) => {
-            probe_fail(format!("trials ledger {} present but unreadable: {e}", path.display()))
-        }
-    }
-}
-
-/// The ladder leg. The chain file must exist and read; whatever the chain
-/// machinery then says — an in-flight prep, the rung-0 fail-closed verdict on
-/// a defective chain, or a valid chain at rest — is readable state (ok).
-fn probe_ladder(stores: &SequenceStores, now: DateTime<Utc>) -> ProbeOutcome {
-    let Some(home) = stores.data_home.as_deref() else {
-        return probe_fail("LS_DATA_HOME not configured — dispatch/chain.jsonl unreachable");
-    };
-    let chain_path = home.join("dispatch").join("chain.jsonl");
-    if !chain_path.exists() {
-        return probe_fail(format!("dispatch chain {} absent", chain_path.display()));
-    }
-    // In-flight (including the defective fail-closed verdict): readable state.
-    if let Some(report) = ladder_sequence(home, now) {
-        return ProbeOutcome::Ok { stage: report.stage, resume: report.resume };
-    }
-    // Chain present but no prep in flight (at rest, or the last prep
-    // completed): still readable state — derive the stage from the chain
-    // itself. `open` cannot mkdir here: the chain file's dir exists.
-    match DispatchChain::open(home) {
-        Ok(chain) => {
-            let state = chain.load();
-            match state.status {
-                ChainStatus::Defective(why) => ProbeOutcome::Ok {
-                    // Unreachable via ladder_sequence in practice; kept so a
-                    // defect can never read as "at rest".
-                    stage: format!("fail-closed rung 0 — chain defective: {why}"),
-                    resume: "repair by epoch rollover: lab-live --reregister (attended)".to_string(),
-                },
-                _ => ProbeOutcome::Ok {
-                    stage: format!(
-                        "chain readable — authorizes rung {}; no session prep in flight",
-                        state.authorized_rung
-                    ),
-                    resume: "start a new prep: lab-live --dispatch (RUNBOOK-rung1.md)".to_string(),
-                },
-            }
-        }
-        Err(e) => probe_fail(format!(
-            "dispatch chain {} present but unreadable: {e}",
-            chain_path.display()
-        )),
-    }
-}
-
-/// The ingest leg. The checkpoint must exist AND parse — [`ingest_sequence`]
-/// reports an unreadable checkpoint as a row (correct for the entry report),
-/// but for the probe present-but-unreadable is a FAILURE, so parse here first.
-fn probe_ingest(stores: &SequenceStores) -> ProbeOutcome {
-    let Some(home) = stores.data_home.as_deref() else {
-        return probe_fail(
-            "LS_DATA_HOME not configured — catalog/ingest-checkpoint.json unreachable",
-        );
-    };
-    let path = home.join("catalog").join("ingest-checkpoint.json");
-    if !path.exists() {
-        return probe_fail(format!("ingest checkpoint {} absent", path.display()));
-    }
-    let parsed = std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| e.to_string()));
-    if let Err(e) = parsed {
-        return probe_fail(format!(
-            "ingest checkpoint {} present but unreadable: {e}",
-            path.display()
-        ));
-    }
-    match ingest_sequence(home) {
-        Some(report) => ProbeOutcome::Ok { stage: report.stage, resume: report.resume },
-        // Unreachable (the file exists), but never let it read as a pass.
-        None => probe_fail(format!("ingest checkpoint {} vanished mid-probe", path.display())),
-    }
-}
-
-/// The gate leg, via the same mechanism as the report ([`GATE_STATUS_FILE_ENV`]
-/// override, else the real script when `.gate-run/state.json` exists). Absent
-/// or unreadable state → FAIL naming it; readable `--status` output → ok,
-/// whether in flight, green (`next=none`), or recorded-but-nothing-done.
-fn probe_gate() -> ProbeOutcome {
-    let text = match resolve_gate_status() {
-        Ok(t) => t,
-        Err(missing) => return probe_fail(missing),
-    };
-    if let Some(report) = parse_gate_status(&text) {
-        return ProbeOutcome::Ok { stage: report.stage, resume: report.resume };
-    }
-    // Readable but not in-flight: gate green, or recorded with nothing done.
-    match text.lines().find_map(|l| l.strip_prefix("next=")).map(str::trim) {
-        Some("none") => ProbeOutcome::Ok {
-            stage: "gate state readable — all steps done (gate green)".to_string(),
-            resume: "make gate-run (a fresh run re-verifies against the current tree)".to_string(),
-        },
-        Some(step) => ProbeOutcome::Ok {
-            stage: format!(
-                "gate state readable — no steps done (fresh or fully invalidated); next step {step}"
-            ),
-            resume: format!("make gate-run (runs from {step})"),
-        },
-        None => probe_fail("gate --status output unparseable (no next= line)"),
-    }
-}
-
 /// `list [--all]`: the actionable view (R9); `--all` appends the done / stale /
 /// superseded history sections.
 fn run_list(rest: &[String]) -> anyhow::Result<ExitCode> {
@@ -983,156 +736,6 @@ fn run_list(rest: &[String]) -> anyhow::Result<ExitCode> {
         for item in &stale {
             println!("{} (deadline passed)", render(item));
         }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// `add`: create one item, declaring its completion signal at creation (R8).
-fn run_add(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let mut id = None;
-    let mut title = None;
-    let mut window = None;
-    let mut event = None;
-    let mut artifact = None;
-    let mut deadline = None;
-    let mut sequence = None;
-    let mut note = None;
-    let mut refs = Vec::new();
-
-    let mut it = rest.iter();
-    while let Some(arg) = it.next() {
-        let mut value = |flag: &str| -> anyhow::Result<String> {
-            it.next().cloned().ok_or_else(|| anyhow::anyhow!("{flag} requires a value\n{USAGE}"))
-        };
-        match arg.as_str() {
-            "--id" => id = Some(value("--id")?),
-            "--title" => title = Some(value("--title")?),
-            "--window" => window = Some(Window::parse(&value("--window")?)?),
-            "--event" => event = Some(value("--event")?),
-            "--artifact" => artifact = Some(value("--artifact")?),
-            "--deadline" => deadline = Some(value("--deadline")?),
-            "--sequence" => sequence = Some(value("--sequence")?),
-            "--note" => note = Some(value("--note")?),
-            "--ref" => refs.push(value("--ref")?),
-            other => anyhow::bail!("unknown add argument {other:?}\n{USAGE}"),
-        }
-    }
-    let id = id.ok_or_else(|| anyhow::anyhow!("add requires --id\n{USAGE}"))?;
-    let title = title.ok_or_else(|| anyhow::anyhow!("add requires --title\n{USAGE}"))?;
-    let window = window.ok_or_else(|| anyhow::anyhow!("add requires --window\n{USAGE}"))?;
-    if artifact.is_some() && event.is_none() {
-        anyhow::bail!("--artifact needs --event (the artifact witnesses a named tool event)");
-    }
-    let completion = match event {
-        Some(event) => CompletionSignal::ToolEvent { event, artifact },
-        None => CompletionSignal::Explicit,
-    };
-
-    let mut item = QueueItem::new(&id, &title, window, completion, Utc::now().to_rfc3339());
-    item.deadline = deadline;
-    item.sequence = sequence;
-    item.notes = note;
-    item.refs = refs;
-
-    let queue = Queue::from_env()?;
-    queue.add(item)?;
-    println!("added: {id} [{}] {title}", window.tag());
-    Ok(ExitCode::SUCCESS)
-}
-
-/// `done <id>` (R8/R9): complete, or refuse with a reconcile flag when the
-/// declared completion artifact is absent or empty (KTD6 — a hygiene refusal
-/// exits non-zero without being an error).
-fn run_done(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let [id] = rest else {
-        anyhow::bail!("done takes exactly one <id>\n{USAGE}");
-    };
-    let queue = Queue::from_env()?;
-    match queue.done(id, &Utc::now().to_rfc3339())? {
-        TransitionOutcome::Completed => {
-            println!("done: {id}");
-            Ok(ExitCode::SUCCESS)
-        }
-        TransitionOutcome::Reconcile(flag) => {
-            println!("reconcile: {id} — {flag}");
-            Ok(ExitCode::FAILURE)
-        }
-    }
-}
-
-/// `supersede <id> --by <id>` (R9): record the replacement, or refuse with a
-/// reconcile flag when the superseder is not yet in the queue (KTD6).
-fn run_supersede(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let (id, by) = match rest {
-        [id, flag, by] if flag == "--by" => (id, by),
-        other => anyhow::bail!("supersede takes <id> --by <id>, got {other:?}\n{USAGE}"),
-    };
-    let queue = Queue::from_env()?;
-    match queue.supersede(id, by)? {
-        TransitionOutcome::Completed => {
-            println!("superseded: {id} by {by}");
-            Ok(ExitCode::SUCCESS)
-        }
-        TransitionOutcome::Reconcile(flag) => {
-            println!("reconcile: {id} — {flag}");
-            Ok(ExitCode::FAILURE)
-        }
-    }
-}
-
-/// `priority <id>` | `priority --clear` (R20): move the single-item priority
-/// marker, or leave no holder. Setting it clears every other holder, so the
-/// store converges to exactly one even when it arrived with several (KTD6).
-fn run_priority(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let target = match rest {
-        [flag] if flag == "--clear" => None,
-        [id] if !id.starts_with("--") => Some(id.as_str()),
-        other => anyhow::bail!("priority takes <id> or --clear, got {other:?}\n{USAGE}"),
-    };
-    let queue = Queue::from_env()?;
-    let cleared = match target {
-        Some(id) => {
-            let cleared = queue.set_priority(id)?;
-            println!("priority: {id}");
-            cleared
-        }
-        None => {
-            let cleared = queue.clear_priority()?;
-            println!("priority: none");
-            cleared
-        }
-    };
-    if !cleared.is_empty() {
-        println!("cleared: {}", cleared.join(", "));
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// `block <id> --until <condition>` (R5/R20): record the blocked state with the
-/// act that would unblock it. The condition is mandatory — a blocked item that
-/// names no reachable act is refused by the store (R24).
-fn run_block(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let (id, condition) = match rest {
-        [id, flag, condition] if flag == "--until" => (id, condition),
-        other => anyhow::bail!("block takes <id> --until <condition>, got {other:?}\n{USAGE}"),
-    };
-    let queue = Queue::from_env()?;
-    queue.block(id, condition)?;
-    println!("blocked: {id} — until {condition}");
-    Ok(ExitCode::SUCCESS)
-}
-
-/// `unblock <id>` (R20): clear the blocked state. Unblocking an item that is not
-/// blocked is a reported no-op, mirroring `done`'s idempotence.
-fn run_unblock(rest: &[String]) -> anyhow::Result<ExitCode> {
-    let [id] = rest else {
-        anyhow::bail!("unblock takes exactly one <id>\n{USAGE}");
-    };
-    let queue = Queue::from_env()?;
-    if queue.unblock(id)? {
-        println!("unblocked: {id}");
-    } else {
-        println!("unblocked: {id} (was not blocked)");
     }
     Ok(ExitCode::SUCCESS)
 }
