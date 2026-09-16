@@ -4714,8 +4714,13 @@ mod report_rehearsal {
 
     // --- Honesty about what was and was not checked ---------------------------------------
 
-    /// A pre-U12 run carries no captured book. Every exit then reads `opened this session`,
-    /// and the report must say that is an ABSENCE of labels rather than a finding about them.
+    /// A pre-U12 run carries no captured book, so every exit's provenance is UNESTABLISHED
+    /// and the report says so in the caveat too.
+    ///
+    /// This used to assert `ThisRun`, and the prose caveat did all the honesty on its own
+    /// while the VALUE still claimed a conclusion. `ThisRun` means "a book was read and did
+    /// not carry this symbol" — with no book there is nothing to be absent from, so the
+    /// label has moved to where the caveat always was.
     #[test]
     fn a_pre_u12_vintage_says_the_book_was_never_captured() {
         let dir = tempdir().unwrap();
@@ -4725,7 +4730,7 @@ mod report_rehearsal {
 
         let out = report_rehearsal(&cfg(dir.path(), "rehearse-3", costs)).unwrap();
 
-        assert_eq!(out.exits[0].attribution, LegAttribution::ThisRun);
+        assert_eq!(out.exits[0].attribution, LegAttribution::Unestablished);
         let text = out.lines.join("\n");
         assert!(text.contains("PRE-U12 vintage"), "{text}");
         assert!(text.contains("NOT because"), "it must not pass absence off as a check: {text}");
@@ -4867,7 +4872,7 @@ mod report_rehearsal_review_fixes {
     use nautilus_ls_lab::params::OrbParams;
     use nautilus_ls_lab::runner::live_daily::{RehearsalBook, RehearsalBookLeg, BOOK_VERSION};
     use nautilus_ls_lab::runner::pnl::SEED_FILL_PREFIX;
-    use nautilus_ls_lab::runner::report::{report_rehearsal, RehearsalConfig};
+    use nautilus_ls_lab::runner::report::{report_rehearsal, LegAttribution, RehearsalConfig};
     use tempfile::tempdir;
 
     use super::*;
@@ -5284,5 +5289,154 @@ mod report_rehearsal_review_fixes {
         let out = report_rehearsal(&cfg(dir.path(), "r-current", costs)).unwrap();
         assert!(!out.lines.join("\n").contains("PRE-U12 vintage"), "the book was present");
         let _ = Path::new("");
+    }
+
+    // --- Review finding #3 — the shcode key has no lifecycle discriminator ----------------
+
+    fn inherited_leg(shcode: &str, entered_under: &str) -> RehearsalBookLeg {
+        RehearsalBookLeg {
+            shcode: shcode.to_string(),
+            quantity: 10,
+            entry_price: 1_000.0,
+            stop_price: 950.0,
+            prior_close: 1_000,
+            entry_date: "2026-06-01".to_string(),
+            entered_under: entered_under.to_string(),
+            opening_order_id: format!("BOOK-{shcode}-2026-06-01"),
+        }
+    }
+
+    fn write_book(data_home: &Path, run_id: &str, legs: Vec<RehearsalBookLeg>) {
+        let book = RehearsalBook {
+            version: BOOK_VERSION,
+            session_date: "2026-06-01".to_string(),
+            run_id: "prior".to_string(),
+            ordinal_epoch: "2010-01-04".to_string(),
+            legs,
+        };
+        std::fs::write(
+            data_home.join("runs").join(run_id).join(INHERITED_BOOK_FILE),
+            serde_json::to_string(&book).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Two closed trades for ONE inherited shcode are REFUSED, never silently mislabelled.
+    ///
+    /// The attribution map is keyed by bare shcode with no sequence, timestamp, or position
+    /// id, so the second exit would be stamped with the FIRST's provenance: a leg this run
+    /// opened, reported as entered under the previous one.
+    ///
+    /// Today's live path cannot reach that state — the take is snapshotted before any bar
+    /// and excludes every held symbol, every inherited leg is held, exactly one bar per
+    /// symbol is delivered, and `on_bar` returns after the exit branch rather than falling
+    /// through to entry. But nothing ASSERTS it, and three sites are already written for the
+    /// opposite world: `pnl::session_trades` emits one record per position LIFECYCLE and
+    /// explicitly recycles the leg, `live_daily/book.rs` encodes a freshly-entered-leg-wins
+    /// rule for exactly this collision, and the day loop filters seed fills as
+    /// "belt-and-braces for a book that re-entered a symbol it had exited earlier the same
+    /// session". Delivering a second bar per symbol, recomputing the take after bars, or a
+    /// session-end flatten would each make it reachable with no compile error.
+    ///
+    /// So the report refuses. A `BTreeMap` get would never complain.
+    #[test]
+    fn two_closed_trades_for_one_inherited_symbol_are_refused_not_mislabelled() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "opener", Some(true), Some(false), vec![]);
+        write_run(
+            dir.path(),
+            "r-twice",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0)), executed_trade("005930", Some(500.0))],
+        );
+        write_book(dir.path(), "r-twice", vec![inherited_leg("005930", "opener")]);
+
+        let err = report_rehearsal(&cfg(dir.path(), "r-twice", costs)).unwrap_err().to_string();
+
+        assert!(err.contains("005930"), "the refusal must name the symbol: {err}");
+        assert!(
+            err.contains("lifecycle"),
+            "the refusal must name what the key is missing: {err}"
+        );
+    }
+
+    /// The same shape on a symbol the book does NOT carry is fine: both exits closed legs
+    /// this run opened, so one label is the honest answer for both. The guard is about the
+    /// inherited key colliding, not about duplicate symbols as such.
+    #[test]
+    fn two_closed_trades_for_an_uninherited_symbol_are_reported_normally() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "opener-2", Some(true), Some(false), vec![]);
+        write_run(
+            dir.path(),
+            "r-twice-free",
+            Some(true),
+            Some(false),
+            vec![executed_trade("000660", Some(500.0)), executed_trade("000660", Some(500.0))],
+        );
+        write_book(dir.path(), "r-twice-free", vec![inherited_leg("005930", "opener-2")]);
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-twice-free", costs)).unwrap();
+
+        assert_eq!(out.exits.len(), 2, "both exits are reported");
+        for e in &out.exits {
+            assert_eq!(e.attribution, LegAttribution::ThisRun, "the book does not carry 000660");
+        }
+    }
+
+    // --- Review finding #6 — absence of a book is not a conclusion about a leg ------------
+
+    /// With NO inherited book, provenance is UNESTABLISHED — not "opened this session".
+    ///
+    /// `ThisRun`'s whole test is the ABSENCE of the symbol from a book that WAS read. With
+    /// no book at all there is nothing to be absent from, so defaulting to `ThisRun` turns
+    /// an absence of evidence into a conclusion — and on a paper stage that fails OPEN on
+    /// the strictly larger case while the documented `Unattributable` case fails closed.
+    #[test]
+    fn with_no_inherited_book_every_exit_is_unestablished_not_this_run() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(
+            dir.path(),
+            "r-nobook",
+            Some(true),
+            Some(false),
+            vec![executed_trade("005930", Some(500.0))],
+        );
+        // No inherited-book.json written.
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-nobook", costs)).unwrap();
+
+        assert_eq!(out.exits[0].attribution, LegAttribution::Unestablished);
+        assert!(
+            out.exits[0].attribution.excluded_from_paper_stage(),
+            "unestablished provenance fails CLOSED, like Unattributable"
+        );
+    }
+
+    /// A book that WAS read and does not carry the symbol still yields `ThisRun`. That is a
+    /// CONCLUSION, not an assumption: the take excludes every held name, so a symbol absent
+    /// from the book that nonetheless traded must have opened here.
+    #[test]
+    fn a_symbol_absent_from_a_present_book_is_still_attributed_to_this_run() {
+        let dir = tempdir().unwrap();
+        let costs = cost_file(dir.path());
+        write_run(dir.path(), "opener-3", Some(true), Some(false), vec![]);
+        write_run(
+            dir.path(),
+            "r-present-book",
+            Some(true),
+            Some(false),
+            vec![executed_trade("000660", Some(500.0))],
+        );
+        write_book(dir.path(), "r-present-book", vec![inherited_leg("005930", "opener-3")]);
+
+        let out = report_rehearsal(&cfg(dir.path(), "r-present-book", costs)).unwrap();
+
+        assert_eq!(out.exits[0].attribution, LegAttribution::ThisRun);
+        assert!(!out.exits[0].attribution.excluded_from_paper_stage());
     }
 }
