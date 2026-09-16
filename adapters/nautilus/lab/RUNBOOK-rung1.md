@@ -35,6 +35,20 @@ watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessio
 > lineage's** certified head to clear **its own** frozen margin (the P6 pre-registration
 > artifact, queue `next-lineage-preregistration-artifact`). The fresh re-registration (v3+)
 > and the attended-session choreography below are unchanged.
+>
+> **SUCCESSOR STOOD DOWN — RE-ENTRY RE-PREMISED AGAIN — 2026-09-16** (TURN-LOG 2026-09-16
+> governance entry; `config/LINEAGE-PREREGISTRATION.md` § Stand-down). The successor the
+> 2026-08-11 banner pointed at, **`daily-resolution-v1`, never opened and is now stood down** —
+> its pre-turn admissibility re-check refused on 2026-09-15 (required holdout 7,779 sessions
+> against 1,566 and an `S_max` of 2,460), and the governed decision withdrew the hypothesis
+> rather than re-registering it. So the ladder's re-entry can no longer wait on *that* lineage's
+> certified head: `rung1-ladder-reentry-daily-certified-head` is superseded by
+> `rung1-ladder-reentry-certified-head-next-lineage`, which waits for a certified head from
+> **whichever lineage actually opens next**, clearing **its own** frozen hurdle. That opening is
+> itself blocked on a new pre-registration (queue `daily-lineage-reentry-new-preregistration`).
+> Note what did **not** change: this is a Lineage stand-down, not a closure, so nothing here
+> re-judges ORB and the 2026-07-31 ladder stand-down above still stands on its own grounds. The
+> fresh re-registration (v3+) and the choreography below remain unchanged.
 
 > **Head v35 — cost-aware re-measurement of the v34 identity.** The documented head is **v35**
 > (`strategy_code_hash 7571abef…`, run `20260731T023138Z-backtest-orb-v35` — the

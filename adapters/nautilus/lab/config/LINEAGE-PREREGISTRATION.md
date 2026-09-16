@@ -26,6 +26,57 @@ admissibility re-check clearing — see [§ The two gates](#the-two-gates).
 > TURN-LOG entry "Re-check — … REFUSED TO OPEN … (2026-09-15)"; what happens next is the queued
 > governed decision `daily-lineage-post-refuse-disposition`.
 
+> **Status 2026-09-16: that governed decision was taken — `daily-resolution-v1` is STOOD DOWN.**
+> The hypothesis is withdrawn without ever having been opened. This is a
+> [[Lineage stand-down]] (CONCEPTS.md), **not** a [[Lineage closure]]: closure weighs the
+> frozen threshold against the best net RoR the lineage has produced, and this lineage
+> produced none. Everything below is unchanged and the JSON's bytes and content hash
+> (`0ecd9d11…`) are untouched — the terms stand as the historical record of what was frozen.
+> See [§ Stand-down](#stand-down--2026-09-16-recorded-withdrawal-terms-unchanged) for the
+> disposition and the re-entry condition, and the TURN-LOG entry
+> "Governance — daily-resolution-v1 lineage STAND-DOWN … (2026-09-16)".
+
+---
+
+## Stand-down — 2026-09-16 (recorded withdrawal; terms unchanged)
+
+**The lineage is withdrawn.** `daily-resolution-v1` was frozen on 2026-08-15 and never
+opened; the pre-turn admissibility re-check refused to open it on 2026-09-15, and the
+operator's governed decision on 2026-09-16 is to stand it down rather than re-register it.
+The standing block in [`../TURN-LOG.md`](../TURN-LOG.md) still reads `currently open: NONE`,
+because this slot was never occupied — the stand-down names the withdrawn hypothesis
+beside it rather than freeing anything.
+
+**Disposition: stand-down, not amendment.** The suspend-vs-amend convention
+(`docs/solutions/conventions/suspend-vs-amend-frozen-governance-artifacts.md`) re-derives a
+stale frozen value only when the re-derived value has a consumer. Here it has none: re-derived
+honestly at this lineage's own measured dispersion, the required holdout is **7,779 sessions**
+against a **1,566**-session holdout and a **2,460**-session `S_max` — a freeze naming a holdout
+3.2× the entire ceiling authorizes no powered judgment, so an amendment's only function would be
+to make an unreachable judgment look governed.
+
+**What failed was the transported standard error, not the hypothesis.** All three terms the
+`rederivation_trigger` names *lowered* the projection — measured ICC 0.125 against the frozen
+0.327, participation 1.000 at target, 7.757 entries per session against a target of 8. The bar
+moved on the one term the freeze inherited from another lineage: per-trade net-r sd **1.885**
+against ORB v35's **0.642**, an 8.6× term that the 16-session hold under a 1.5×ATR(1) stop
+produces and that no amount of ORB history predicts. This is why the re-entry condition below
+forbids transporting a dispersion estimate a second time.
+
+**Re-entry condition.** A new pre-registration act declares a hypothesis whose required holdout,
+re-derived at **that hypothesis's own measured per-trade dispersion** — never transported from
+another lineage — is at most the holdout of the supply admitted under the supply-admission
+contract then in force. The same hypothesis may return only through that arithmetic, and only as
+a new pre-registration; it is never reached by re-checking this freeze. Lowering the bar,
+patching the JSON, and re-running the re-check against a different candidate run under these
+terms are all refused. The parked queue item is
+`daily-lineage-reentry-new-preregistration`.
+
+**What this stand-down does not do.** It does not close the lineage, does not change a single
+frozen term, does not open the prospective paper stage (`paper_stage` stays false), and does not
+select a successor hypothesis. The [paper rehearsal](../RUNBOOK-rehearsal-daily.md) continues as
+driver falsification only.
+
 ---
 
 ## Why freeze at all
