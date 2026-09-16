@@ -2843,17 +2843,34 @@ pub enum LegAttribution {
     /// from the broker by `--rehearsal-book adopt`, whose real provenance nothing records),
     /// or a run id with no readable manifest.
     Unattributable(String),
+    /// NO inherited book was captured for this run, so nothing establishes where any leg
+    /// opened.
+    ///
+    /// Distinct from [`Self::ThisRun`], and the distinction is the whole point:
+    /// `ThisRun` is a CONCLUSION — a book was read, it did not carry this symbol, and the
+    /// take excludes every held name, so a symbol absent from the book that nonetheless
+    /// traded must have opened here. This variant is the ABSENCE of the evidence that
+    /// conclusion rests on. Folding the two together reads an unchecked run as a checked
+    /// one, which is the repo's standing prohibition on treating unknown as a finding.
+    Unestablished,
 }
 
 impl LegAttribution {
     /// Whether a paper-stage row must EXCLUDE this exit (R28).
     ///
-    /// Fail closed: an unattributable leg is excluded too. The alternative — counting a leg
-    /// whose provenance nothing records — silently admits rehearsal-entered exits into the
-    /// prospective comparison, which is the one thing R28 exists to prevent.
+    /// Fail closed: an unattributable leg is excluded too, and so is one whose provenance was
+    /// never established at all. The alternative — counting a leg whose provenance nothing
+    /// records — silently admits rehearsal-entered exits into the prospective comparison,
+    /// which is the one thing R28 exists to prevent.
+    ///
+    /// [`Self::Unestablished`] is excluded for the same reason and is the LARGER case: a run
+    /// with no captured book has no attribution for ANY of its exits, so counting them would
+    /// admit a whole run on the strength of a check that never ran. Excluding only the
+    /// documented `Unattributable` case while defaulting the no-book case to
+    /// [`Self::ThisRun`] failed open on exactly the bigger hole.
     #[must_use]
     pub fn excluded_from_paper_stage(&self) -> bool {
-        matches!(self, Self::Rehearsal(_) | Self::Unattributable(_))
+        matches!(self, Self::Rehearsal(_) | Self::Unattributable(_) | Self::Unestablished)
     }
 
     fn label(&self) -> String {
@@ -2862,6 +2879,7 @@ impl LegAttribution {
             Self::Rehearsal(r) => format!("entered under rehearsal {r}"),
             Self::Run(r) => format!("entered under {r}"),
             Self::Unattributable(r) => format!("UNATTRIBUTABLE ({r})"),
+            Self::Unestablished => "provenance UNESTABLISHED (no inherited book)".to_string(),
         }
     }
 }
@@ -2981,6 +2999,14 @@ fn read_inherited_book(
 /// The manifest is the authority for the rehearsal label (KTD2), so this resolves the id
 /// rather than pattern-matching it — an `adopt-` prefix is recognised only as the reason a
 /// lookup cannot succeed, never as evidence about what the leg was.
+/// The bare shcode a symbol joins on. The live path writes symbols without the venue
+/// suffix; the backtest path appends one. The inherited book is shcode-keyed, so both the
+/// duplicate-lifecycle guard and the per-exit join normalize through here rather than each
+/// spelling the split out — two copies of a join key is how they drift apart.
+fn bare_shcode(symbol: &str) -> &str {
+    symbol.split('.').next().unwrap_or(symbol)
+}
+
 fn attribute_entered_under(data_home: &Path, entered_under: &str) -> LegAttribution {
     match read_manifest(data_home, entered_under) {
         Ok(m) if m.is_rehearsal() => LegAttribution::Rehearsal(entered_under.to_string()),
@@ -3065,6 +3091,40 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
 
     let records = performance.trades.len();
     let closed: Vec<_> = performance.trades.iter().filter(|t| t.ts_closed.is_some()).collect();
+
+    // The attribution map is keyed by bare shcode and nothing else — no sequence, no
+    // timestamp, no position id. A SECOND closed trade for an INHERITED symbol would
+    // therefore be stamped with the first's provenance: a leg this run opened, reported as
+    // entered under the previous one, and (on a paper stage) excluded with it.
+    //
+    // Today's live path cannot produce that state. The take is snapshotted before any bar
+    // and filters out every held symbol, every inherited leg is seeded as held, exactly one
+    // bar per symbol is delivered, and the strategy returns after its exit branch rather
+    // than falling through to entry. But that invariant is EMERGENT — nothing asserts it,
+    // and three sites are written for the opposite world: `pnl::session_trades` emits one
+    // record per position lifecycle and explicitly recycles the leg, `live_daily::book`
+    // encodes a freshly-entered-leg-wins rule for exactly this collision, and the day loop
+    // filters seed fills as belt-and-braces for a same-session re-entry. Delivering a second
+    // bar per symbol, recomputing the take after bars, or adding a session-end flatten would
+    // each make it reachable with no compile error.
+    //
+    // So refuse. The alternative is a `BTreeMap::get` that never complains and a printed
+    // label the map cannot justify.
+    let mut closes_per_symbol: BTreeMap<&str, usize> = BTreeMap::new();
+    for t in &closed {
+        *closes_per_symbol.entry(bare_shcode(&t.symbol)).or_default() += 1;
+    }
+    for (symbol, n) in &closes_per_symbol {
+        if *n > 1 && attribution_of.contains_key(*symbol) {
+            anyhow::bail!(
+                "{symbol} closed {n} trades in this run and is also carried by the inherited \
+                 book: leg attribution is keyed by shcode alone, with no lifecycle \
+                 discriminator, so the second exit would be labelled with the first's \
+                 provenance. Refusing rather than mislabelling — attribution needs a \
+                 per-lifecycle key before a run of this shape can be reported."
+            );
+        }
+    }
     // A session that closed nothing is NOT an error here, unlike in `report sample` — which
     // is nothing but a realized distribution, so an empty one really is a refusal there.
     //
@@ -3081,7 +3141,7 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
     for t in &closed {
         // The live path writes bare shcodes; the backtest path appends a venue suffix. The
         // book is shcode-keyed, so normalize before joining (the crate's own idiom).
-        let symbol = t.symbol.split('.').next().unwrap_or(&t.symbol).to_string();
+        let symbol = bare_shcode(&t.symbol).to_string();
         // Cost only the fills that were EXECUTIONS. A leg carried in from a previous
         // session enters this run's ledger as a synthetic BUY at the prior close
         // (`pnl::seed_book_legs`), for which no order was ever sent and no commission was
@@ -3102,7 +3162,16 @@ pub fn report_rehearsal(cfg: &RehearsalConfig) -> anyhow::Result<RehearsalOutcom
             .sum();
         exits.push(RehearsalExit {
             session_date: kst_date_of(UnixNanos::from(t.ts_closed.unwrap_or(t.ts_opened))),
-            attribution: attribution_of.get(&symbol).cloned().unwrap_or(LegAttribution::ThisRun),
+            // No book at all is not a finding about this leg — it is the absence of the
+            // check. Only a book that WAS read and did not carry the symbol licenses
+            // `ThisRun`, because only then does the take's exclude-every-held-name rule
+            // make "it opened here" a conclusion.
+            attribution: match &inherited {
+                Some(_) => {
+                    attribution_of.get(&symbol).cloned().unwrap_or(LegAttribution::ThisRun)
+                }
+                None => LegAttribution::Unestablished,
+            },
             symbol,
             gross_realized_pnl: t.realized_pnl,
             modeled_cost,
