@@ -231,6 +231,7 @@ pub async fn prepare_rehearsal(
     // (e) The account. One SDK for the probe AND the session (see `resolve_probe_sdk`).
     let (sdk, lane_hash, adapter_cfg) = resolve_probe_sdk(&inputs.lane_env_path)?;
     let probe = probe_book(&sdk, book, envelope.min_deposit_krw).await?;
+    let deposit_krw = probe.deposit_krw;
     let book = probe.book;
 
     // (f) The instruments. An UNCACHED instrument makes nautilus skip reconciliation
@@ -305,6 +306,9 @@ pub async fn prepare_rehearsal(
         // teardown has rewritten `rehearsal/book.json` and the legs this session closed are
         // gone from it, `entered_under` with them.
         inherited_book: Some(book.clone()),
+        // The figure the pre-mount probe gated on, carried to the artifacts so the operator
+        // can log it from the run rather than from a second account read.
+        deposit_krw: Some(deposit_krw),
     };
 
     let day = DayLoop {

@@ -247,10 +247,14 @@ and its gap rows recorded, and **before** any synthetic bar is delivered — so 
 **nothing**. It then waits out the session to `session_end_kst`, heartbeating normally.
 
 Use it to observe what t8407's `price` field **means** between 15:20 and 15:30 (the last continuous
-trade, or the auction's expected clearing price) without trading on it. The flag does **not** change
-the exit code: it is a recorded non-failure, so the run finalizes `0` if the teardown confirmed the
-book and there was no hard stop. Note that `closes` stays empty, so every held leg lands in
-`stale_basis` and keeps the previous session's day basis — expected, and reported.
+trade, or the auction's expected clearing price) without trading on it. The session still waits
+out the auction and reads the post-auction price, so the observation lands as typed rows: one
+`DecisionVsClose` row per quoted symbol in `data_quality.json`, marked `TAKEN` or `HELD` and
+"observed only", with the decision price and the post-auction close — `report rehearsal` prints
+them. (Session 1 of 2026-09-17 ran before this: it returned at the decision and recorded nothing
+but a note, so its question is unanswered.) The flag does **not** change the exit code: it is a
+recorded non-failure, so the run finalizes `0` if the teardown confirmed the book and there was no
+hard stop.
 
 ### Exit codes — `lab-live --rehearse-daily`
 
@@ -293,9 +297,9 @@ renamed. A leftover `.tmp-` directory **is** the aborted-run marker.
 |---|---|
 | `manifest.json` | `rehearsal: true`, `paper_stage: false` — the typed labels (KTD2) |
 | `performance.json` | realized P&L and per-trade risk capital |
-| `observation.json` | the session row, in `RunObservation` shape (fail-soft: a failure here becomes a data-quality line, never a lost run) |
-| `decisions.jsonl` | what the strategy decided, and why |
-| `data_quality.json` | `held_symbol_gaps`, `rehearsal_divergences` (`DecisionVsClose`, `UnfilledEntry`), notes, teardown retries, `hard_stopped` |
+| `observation.json` | the session row, in `RunObservation` shape — written **only once the run has a `return_on_risk`**, i.e. after its first exit with risk capital. Every session before that (a `--stop-before-orders` session, a halt day, an entry inside its 16-session hold) has **no** `observation.json` by design, and a `no observation written` note in `data_quality.json` says so |
+| `decisions.jsonl` | what the strategy decided, and why — **empty** on a `--stop-before-orders` session, because no bar reached the strategy |
+| `data_quality.json` | `pre_mount_deposit_krw` (the D+2 deposit the probe gated on — **the deposit figure to log**), `held_symbol_gaps`, `rehearsal_divergences` (`DecisionVsClose` — one row per decided symbol, `TAKEN`/`HELD`, decision price and post-auction close; `UnfilledEntry`), notes, teardown retries, `hard_stopped` |
 | `inherited-book.json` | the book this session **inherited**, captured at mount time — the only record of which run opened each leg (see below) |
 
 ### Read the session rows
@@ -315,8 +319,9 @@ artifact deliberately books at zero. It also prints the halt-day divergence clas
 separately from the rows, because the backtest **aborts** where the live lane **holds** — and
 that comparison is the whole reason the class is typed.
 
-Like `report sample`, it prints net RoR and never a KRW P&L. The KRW figure the runbook asks
-you to log is in the run's `observation.json`.
+Like `report sample`, it prints net RoR and never a KRW P&L. The **deposit** the runbook asks
+you to log is `data_quality.json`'s `pre_mount_deposit_krw`, and the report prints it; a KRW
+P&L figure exists only in `observation.json`, once that file exists (see the table above).
 
 **A session that closed nothing still reports.** That is the normal shape of a halt day, of a
 `--stop-before-orders` session, and of an entry still inside its 16-session hold — so it is

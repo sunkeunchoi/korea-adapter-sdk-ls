@@ -904,6 +904,12 @@ async fn a_throttled_decision_read_records_no_decision_without_tripping() {
 /// `--stop-before-orders`: the decision is resolved and RECORDED, and not one bar reaches
 /// the node — so the strategy emits nothing. This is how the 15:20-to-15:30 meaning of
 /// t8407's `price` is observed without trading on it.
+///
+/// The observation has to LAND, typed: session 1 of 2026-09-17 returned at the decision and
+/// left nothing but a note, so the run could not answer its own question. The branch now
+/// runs the post-auction read and writes one `DecisionVsClose` row per quoted symbol —
+/// taken and held alike, flagged observation-only — and the note names its KST times
+/// rather than unix seconds the write-time scrub would redact to `***`.
 #[tokio::test]
 async fn stop_before_orders_records_the_decision_and_delivers_no_bar() {
     let server = MockServer::start().await;
@@ -916,6 +922,8 @@ async fn stop_before_orders_records_the_decision_and_delivers_no_bar() {
 
     let (mut loop_cfg, mut rig) = day_rig(&server.uri(), &["005930"]);
     loop_cfg.stop_before_orders = true;
+    let decision_unix = loop_cfg.decision_unix;
+    let auction_end_unix = loop_cfg.auction_end_unix;
     let outcome = loop_cfg.run().await.expect("the session ends normally");
 
     assert!(outcome.stopped_before_orders);
@@ -925,11 +933,59 @@ async fn stop_before_orders_records_the_decision_and_delivers_no_bar() {
         rig.signals.current().is_some(),
         "but the decision context WAS published — the decision is recorded"
     );
-    let (_, _, notes) = rig.observations.snapshot();
+    // The post-auction read still ran: the closes are this session's own observation.
+    assert_eq!(outcome.closes.get(&id("005930")), Some(&61_000));
+    assert_eq!(outcome.closes.get(&id("000660")), Some(&62_000));
+
+    let (_, divergences, notes) = rig.observations.snapshot();
+    let note = notes
+        .iter()
+        .find(|n| n.contains("--stop-before-orders"))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    let decision_kst = nautilus_ls_lab::runner::live_daily::kst_hhmm(decision_unix);
+    let auction_kst = nautilus_ls_lab::runner::live_daily::kst_hhmm(auction_end_unix);
     assert!(
-        notes.iter().any(|n| n.contains("--stop-before-orders")),
-        "{notes:?}"
+        note.contains(&format!("Between {decision_kst} and {auction_kst} KST")),
+        "the note names KST wall-clock times, not unix seconds: {note}"
     );
+    assert!(
+        !note.contains(&decision_unix.to_string()),
+        "a unix timestamp in a note is scrubbed to *** at write time: {note}"
+    );
+    assert_eq!(
+        nautilus_ls::scrub::scrub_secrets(note),
+        *note,
+        "the note must survive the write-time scrub unchanged"
+    );
+
+    // One typed row per QUOTED symbol — the held one and the taken one — each carrying the
+    // decision price and the post-auction price, and saying no order went out.
+    let mut rows: Vec<_> = divergences
+        .iter()
+        .filter(|d| d.kind == RehearsalDivergenceKind::DecisionVsClose)
+        .collect();
+    rows.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
+    assert_eq!(rows.len(), 2, "{divergences:?}");
+    assert_eq!(rows[0].instrument_id, "000660.XKRX");
+    assert_eq!(rows[0].decision_price, Some(62_000));
+    assert_eq!(rows[0].realized_price, Some(62_000));
+    assert!(rows[0].detail.starts_with("TAKEN:"), "{}", rows[0].detail);
+    assert_eq!(rows[1].instrument_id, "005930.XKRX");
+    assert_eq!(rows[1].decision_price, Some(61_000));
+    assert!(rows[1].detail.starts_with("HELD:"), "{}", rows[1].detail);
+    for r in &rows {
+        assert!(r.detail.contains("observed only"), "{}", r.detail);
+        assert!(r.detail.contains("no order sent"), "{}", r.detail);
+    }
+}
+
+/// `kst_hhmm` renders the session clock the way the runbook states it.
+#[test]
+fn kst_hhmm_renders_the_session_clock_in_kst() {
+    // 2026-09-17 15:20:00 KST == 06:20:00 UTC.
+    let decision = Utc.with_ymd_and_hms(2026, 9, 17, 6, 20, 0).unwrap().timestamp();
+    assert_eq!(nautilus_ls_lab::runner::live_daily::kst_hhmm(decision), "15:20");
+    assert_eq!(nautilus_ls_lab::runner::live_daily::kst_hhmm(decision + 10 * 60), "15:30");
 }
 
 /// The session's OWN entries must survive into the book, with the stop that makes them

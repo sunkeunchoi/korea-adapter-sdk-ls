@@ -681,6 +681,10 @@ pub struct LiveSessionContext {
     /// teardown and keeps only still-held legs: the leg an exit closed has already been
     /// dropped from it when a report runs, taking its `entered_under` with it.
     pub inherited_book: Option<crate::runner::live_daily::RehearsalBook>,
+    /// The D+2 deposit the rehearsal's pre-mount probe read (integer KRW), mirrored onto the
+    /// data-quality report as `pre_mount_deposit_krw`. `None` on the ladder, which gates on
+    /// its own preflight and records no book.
+    pub deposit_krw: Option<i64>,
 }
 
 
@@ -1188,6 +1192,10 @@ fn stage_and_finalize(
     dq.held_symbol_gaps = gaps;
     dq.rehearsal_divergences = divergences;
     dq.observations.extend(notes);
+    // The one KRW figure the runbook asks for on EVERY session, typed so the scrub cannot
+    // eat it and so it exists on a session that closed nothing (which writes no
+    // observation.json).
+    dq.pre_mount_deposit_krw = ctx.deposit_krw;
     // U12. The mount-time book, captured before the teardown rewrites the live one. This is
     // the only place a finished run can learn which run OPENED a leg it closed, so it is
     // written on the rehearsal lane unconditionally — including for an empty book, whose
