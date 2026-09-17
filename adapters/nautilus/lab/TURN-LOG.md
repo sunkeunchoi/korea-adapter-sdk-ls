@@ -91,6 +91,63 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Probe — daily paper REHEARSAL session 1 of 3 (`--stop-before-orders`): **clean, exit 0** — the driver mounted, resolved the 15:20 decision (8 quoted, 8 taken), delivered no bar, submitted nothing, and tore down with the book confirmed; but the observation this session exists to make is NOT in any artifact (2026-09-17)
+
+- **Scope.** U12 item 2, session 1, under the 2026-09-16 stand-down: `rehearsal: true`,
+  `paper_stage: false`, driver falsification only, no rung evidence. Queue
+  `rehearsal-attended-sessions-and-acceptance-stand-down`.
+- **How it ran — a recorded bypass.** The operator DELEGATED the mount to the agent. It ran
+  from the machine-local `data/rehearsal-daily/automation/mount-session1.sh` under
+  `script -q /dev/null` (a pseudo-TTY for the stdin-TTY attendance gate) with
+  `LS_DISPATCH_NONCE` minted at 14:50:03 and the keepalive touched automatically every 30 s.
+  Both attended gates of plan `2026-09-08-1215` R3 were therefore satisfied mechanically, not by
+  an operator at the terminal. Accepted for an observation-only session that submits nothing;
+  not to be reused for sessions 2 or 3.
+- **Morning chain.** GO at 11:08 KST (`LS_SM_PROFILE=daily-rehearsal`, session 2026-09-16,
+  mount 2026-09-17): calendar activated through 2026-09-16, 352/352 daily watermarks, universe
+  352 ranked / 345 tradable under `momentum_12x1`, book empty and unstamped. The 09:23 run was
+  killed at 163/352 by a `launchctl bootout` of the agent that had started it (an agent unload
+  kills its children and leaves a stale `catalog/.ls-ingest.lock`); the same-day re-run failed
+  step [5] with a 0-entry diff because the calendar was already activated, fixed by restoring
+  `state/krx.calendar.json.archive-20260917` (the first run's pre-refresh copy) and re-running.
+- **Session.** Mount 14:50:03, every pre-build gate passed, node up 14:50:42 (0 open orders,
+  0 positions reconciled). Stop 15:33:01, `lab-live` exit 0 at 15:33:24. Run
+  `20260917T055006Z-live-daily-ms-v0`: `teardown_retries=0 canceled=true book_confirmed=true
+  trip=None gateway_dispatches_recorded=3`. `rehearsal/book.json` rewritten, 0 legs, stamped
+  2026-09-17. No `.tmp-` marker, no `trips.jsonl`.
+- **Deposit / flatness (credential-free witness, `make r32-hold-verify`, 15:39 KST).**
+  `held=no rows=[] cash=[sunamt=499976355 sunamt1=499976355 tappamt=0]
+  deposit=[mnyordableamt=499976355 dps=499976355 d2dps=499976355]` — identical to the
+  pre-session read of 2026-09-16 18:3x KST.
+- **Divergence.** None measurable: `decisions.jsonl` is 0 bytes (no bar, so no strategy
+  decision), `held_symbol_gaps` 0, `rehearsal_divergences` 0, `report rehearsal --run` prints
+  "no realized row" and exits 0.
+- **Findings (driver falsification — what the lane is for).**
+  1. **The `--stop-before-orders` branch returns before Phase 4** (`live_daily/day_loop.rs`),
+     so `outcome.decision_prices` and `outcome.taken` are never persisted (they feed only the
+     divergence rows and the book basis on the trading path) and `read_closes` never runs. The
+     question this session was declared to answer — what t8407 `price` means between 15:20 and
+     15:30 — cannot be answered from the run; the 8 quotes left with the process. Fix before
+     session 2: persist decision prices + the take, and still read the 15:30 closes, in that
+     branch. Queue: `rehearsal-stop-before-orders-persist-decision-observation`.
+  2. The stop-before-orders note formats `decision_unix`/`auction_end_unix` where its text says
+     "KST", and `scrub::scrub_secrets` redacts any 6+-digit run, so the artifact reads
+     "Between *** and *** KST". The same rule (20+ alphanumeric) turns the run id into `***` in
+     the "no observation written" note.
+  3. **No `observation.json` for a run that closed nothing** — by design (no
+     `return_on_risk`), yet `RUNBOOK-rehearsal-daily.md` Step 4 and `report rehearsal`'s footer
+     both send the operator to it for the KRW figure, and the deposit is recorded nowhere in the
+     run. Every session before the first exit has this shape.
+  4. `manifest.json` carries the legacy ORB `params` block (`strategy_id: "orb"`,
+     `stop_atr_mult 2.0`) beside the real `daily_params`; `catalog_fingerprint` is empty.
+  5. Teardown logged `ERROR Timed out (10s) waiting for engines to disconnect —
+     DataEngine.check_disconnected() == false`; the finalize was clean, cost +20 s.
+  6. Startup: `No mass status available from LS-EXEC` — the adapter has no mass-status
+     handler, so reconciliation initialised 0 orders / 0 positions from nothing. Fine on a flat
+     book; session 3's opening-book probe is where this matters.
+- **Not evidence about the strategy.** Nothing here counts toward any rung's N, and no session
+  count is consumed under the stand-down's finite scope (sessions remaining: 2 and 3, item 4).
+
 ## Governance — `daily-resolution-v1` lineage **STAND-DOWN** recorded: the hypothesis is withdrawn without ever having been opened; this is a Lineage stand-down and **not** a Lineage closure; the frozen terms and `lineage-preregistration.json` are left byte-identical as the historical record; re-entry is defined arithmetically and requires a NEW pre-registration (2026-09-16) — decision map [#330](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/330) / ticket [#331](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/331), queue `daily-lineage-post-refuse-disposition`
 
 - **Verdict.** `daily-resolution-v1` is **STOOD DOWN** as of 2026-09-16. Its terms froze
