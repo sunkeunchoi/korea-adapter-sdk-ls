@@ -246,6 +246,8 @@ fn ctx_with(
         observations: SessionObservations::new(),
         // U12's field. The ladder holds no book.
         inherited_book: None,
+        // The ladder records no pre-mount deposit.
+        deposit_krw: None,
     }
 }
 

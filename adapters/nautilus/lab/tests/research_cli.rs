@@ -4756,6 +4756,9 @@ mod report_rehearsal {
             realized_price: Some(1_100),
             detail: "decided 15:20, filled 15:30".to_string(),
         }];
+        // The one KRW figure the operator logs every session, typed so it survives the scrub
+        // and exists on a session that closed nothing.
+        dq.pre_mount_deposit_krw = Some(499_976_355);
         std::fs::write(
             dir.path().join("runs").join("rehearse-4").join(DATA_QUALITY_FILE),
             serde_json::to_string(&dq).unwrap(),
@@ -4767,6 +4770,14 @@ mod report_rehearsal {
         assert!(text.contains("halt-day holds (held_symbol_gaps): 1 row(s)"), "{text}");
         assert!(text.contains("000660.XKRX"), "{text}");
         assert!(text.contains("decision-vs-close (KTD4): 1 row(s)"), "{text}");
+        // The rows themselves are printed, not only counted — a `--stop-before-orders`
+        // session has nothing else to show — and so is the deposit.
+        assert!(text.contains("005930.XKRX  decision      1000  close      1100"), "{text}");
+        assert!(text.contains("pre-mount D+2 deposit (t0424 sunamt1): 499976355 KRW"), "{text}");
+        assert!(
+            !text.contains("observation.json carries the KRW figure"),
+            "the footer must not send the operator to a file a no-exit run never writes: {text}"
+        );
     }
 
     /// An absent data_quality.json is reported as unreadable, never as "no divergences".
@@ -4797,6 +4808,9 @@ mod report_rehearsal {
         let text = out.lines.join("\n");
         assert!(text.contains("no realized row: this run closed nothing"), "{text}");
         assert!(text.contains("not a fault"), "{text}");
+        // No data_quality.json was written for this fixture, so the deposit line says so
+        // rather than inventing a zero.
+        assert!(text.contains("NOT the same as their being empty"), "{text}");
     }
 
     /// The staging guard: net RoR is printed, a KRW P&L never is.

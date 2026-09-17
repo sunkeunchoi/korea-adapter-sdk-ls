@@ -389,7 +389,20 @@ pub(crate) fn write_session_observation(
         ranking_signal: signal.name(),
         ranking_signal_is_placeholder: signal.is_placeholder(),
     })
-    .map_err(|e| format!("no observation written: {e}"))?;
+    .map_err(|e| match e {
+        // The run id is this run's own name and adds nothing here — and it is a 20+
+        // alphanumeric token, which the write-time scrub turns into `***`. Say what the
+        // operator needs instead: that this is the expected shape before the first exit.
+        ObservationError::ReturnOnRiskUnavailable { .. } => "no observation written: this run \
+             has no return_on_risk — it closed nothing, or a closed trade lacks risk_capital. \
+             That is the expected shape of every session before the first exit (a \
+             --stop-before-orders session, a halt day, an entry inside its hold): the frozen \
+             verdict statistic is Σrealized/Σrisk_capital and an observation.json would report a \
+             P&L number under a verdict that names a risk-normalized one. The session's figures \
+             are in data_quality.json (pre_mount_deposit_krw, the decision_vs_close rows)"
+            .to_string(),
+        other => format!("no observation written: {other}"),
+    })?;
     writer
         .write_observation(&observation)
         .map_err(|e| format!("observation could not be staged: {e}"))

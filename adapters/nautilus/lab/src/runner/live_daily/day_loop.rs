@@ -326,19 +326,32 @@ impl DayLoop {
             // The decision IS recorded (the signals were published and the marks observed);
             // what does not happen is the bar delivery that would make the strategy act on
             // it. Nothing has been submitted, so there is nothing to cancel.
+            //
+            // What this mode exists to observe — what t8407's `price` means between the
+            // decision and the auction clear — is a PAIR of reads, and the second one is the
+            // post-auction close. Session 1 of 2026-09-17 returned here before Phase 4, so
+            // `decision_prices` and the take left with the process and the run could not
+            // answer its own question. The branch now runs the same post-auction read the
+            // trading path runs and writes the same typed rows, flagged observation-only;
+            // the only thing it still skips is the bar delivery.
             outcome.stopped_before_orders = true;
             self.observations.note(format!(
                 "--stop-before-orders: the {} decision was resolved and recorded ({} symbol(s) \
                  quoted, {} taken) and NO synthetic bar was delivered, so the strategy emitted \
                  no order. Between {} and {} KST the t8407 `price` is the last continuous trade \
                  or the auction's expected clearing price, and this mode is how that is observed \
-                 without trading on it",
+                 without trading on it — see this run's decision_vs_close rows, which carry the \
+                 {} price and the post-auction close for every quoted symbol",
                 self.session_date,
                 quotes.len(),
                 taken.len(),
-                self.decision_unix,
-                self.auction_end_unix
+                kst_hhmm(self.decision_unix),
+                kst_hhmm(self.auction_end_unix),
+                kst_hhmm(self.decision_unix),
             ));
+            self.wait_out(self.auction_end_unix, &wanted).await;
+            outcome.closes = self.read_closes(&outcome).await;
+            self.record_close_divergence(&outcome);
             self.wait_out(self.session_end_unix, &wanted).await;
             return Ok(outcome);
         }
@@ -570,23 +583,67 @@ impl DayLoop {
         }
     }
 
+    ///
+    /// One row per DECIDED symbol, whether or not the post-auction read produced its close:
+    /// the decision price is this session's own observation and is not dropped because the
+    /// second read failed — the row then carries `realized_price: None` and says so. Under
+    /// `--stop-before-orders` the rows are the whole point of the session, so they are
+    /// written with the same shape and flagged observation-only: no order was sent, so the
+    /// "realized" price is the auction's close as t8407 reports it, not a fill.
     fn record_close_divergence(&self, outcome: &DayOutcome) {
-        for (id, decision_price) in &outcome.decision_prices {
-            let Some(close) = outcome.closes.get(id).copied() else { continue };
+        let taken: BTreeSet<InstrumentId> = outcome.taken.iter().copied().collect();
+        let mut ids: Vec<&InstrumentId> = outcome.decision_prices.keys().collect();
+        ids.sort();
+        for id in ids {
+            let decision_price = outcome.decision_prices[id];
+            let role = if taken.contains(id) { "TAKEN" } else { "HELD" };
+            let how = if outcome.stopped_before_orders {
+                "observed only (--stop-before-orders), no order sent"
+            } else {
+                "cleared in the closing auction"
+            };
+            let (realized, detail) = match outcome.closes.get(id).copied() {
+                Some(close) => (
+                    Some(close),
+                    format!(
+                        "{role}: decided on the {} bar at {decision_price} KRW, {how}; the \
+                         post-auction t8407 price read {close} KRW ({:+.3}%)",
+                        self.session_date,
+                        (close - decision_price) as f64 / decision_price as f64 * 100.0
+                    ),
+                ),
+                None => (
+                    None,
+                    format!(
+                        "{role}: decided on the {} bar at {decision_price} KRW, {how}; the \
+                         post-auction close read produced no row for it, so the divergence is \
+                         unmeasured for this symbol",
+                        self.session_date
+                    ),
+                ),
+            };
             self.observations.divergence(RehearsalDivergence {
                 kind: RehearsalDivergenceKind::DecisionVsClose,
                 instrument_id: id.to_string(),
-                decision_price: Some(*decision_price),
-                realized_price: Some(close),
-                detail: format!(
-                    "decided on the {} bar at {decision_price} KRW, cleared in the closing \
-                     auction at {close} KRW ({:+.3}%)",
-                    self.session_date,
-                    (close - decision_price) as f64 / *decision_price as f64 * 100.0
-                ),
+                decision_price: Some(decision_price),
+                realized_price: realized,
+                detail,
             });
         }
     }
+}
+
+/// A unix instant as a KST wall-clock `HH:MM`, for the human-readable notes.
+///
+/// The notes are scrubbed at write time and the scrub redacts any 6+-digit run, so a raw
+/// unix timestamp in a note lands in the artifact as `***` — which is exactly what session 1
+/// of 2026-09-17 recorded where it promised KST times.
+#[must_use]
+pub fn kst_hhmm(unix: i64) -> String {
+    let kst = chrono::FixedOffset::east_opt(9 * 3600).expect("+09:00 is a valid offset");
+    chrono::DateTime::<chrono::Utc>::from_timestamp(unix, 0)
+        .map(|t| t.with_timezone(&kst).format("%H:%M").to_string())
+        .unwrap_or_else(|| "??:??".to_string())
 }
 
 /// Count proven trading sessions in `[SESSION_ORDINAL_EPOCH, through]`, and report the last

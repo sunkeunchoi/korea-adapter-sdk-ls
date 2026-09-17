@@ -3031,8 +3031,11 @@ fn attribute_entered_under(data_home: &Path, entered_under: &str) -> LegAttribut
 ///
 /// Like `report sample`, the printed lines carry net RoR and never a KRW P&L: a rehearsal
 /// produces no evidence, and a KRW figure invites reading one as a profitability result.
-/// The KRW numbers stay on [`RehearsalOutcome`] for a caller that has a reason, and the
-/// run's own `observation.json` is where the operator's TURN-LOG figure comes from.
+/// The KRW numbers stay on [`RehearsalOutcome`] for a caller that has a reason. The one
+/// KRW figure the runbook asks the operator to log every session — the pre-mount D+2
+/// deposit — is typed on `data_quality.json` (`pre_mount_deposit_krw`) and IS printed,
+/// because it is an account reading, not a result. `observation.json` exists only once the
+/// run has a `return_on_risk`, i.e. after its first exit with risk capital.
 ///
 /// # Errors
 ///
@@ -3403,13 +3406,42 @@ fn render_rehearsal(
                 "  decision-vs-close (KTD4): {decision_vs_close} row(s) | unfilled entries: \
                  {unfilled} row(s)"
             ));
+            // Every decided symbol's pair, in the artifact's order. A `--stop-before-orders`
+            // session has ONLY these rows to show for itself, so they are printed rather than
+            // counted; a row with no realized price says the close read produced nothing.
+            for d in dq.rehearsal_divergences.iter().filter(|d| {
+                matches!(
+                    d.kind,
+                    crate::artifacts::data_quality::RehearsalDivergenceKind::DecisionVsClose
+                )
+            }) {
+                lines.push(format!(
+                    "    {:<12} decision {:>9}  close {:>9}  {}",
+                    d.instrument_id,
+                    d.decision_price.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+                    d.realized_price.map(|p| p.to_string()).unwrap_or_else(|| "unread".into()),
+                    d.detail
+                ));
+            }
+            match dq.pre_mount_deposit_krw {
+                Some(krw) => lines.push(format!(
+                    "  pre-mount D+2 deposit (t0424 sunamt1): {krw} KRW — the figure the runbook \
+                     asks the operator to log; an account reading, not a result"
+                )),
+                None => lines.push(
+                    "  pre-mount D+2 deposit: not recorded on this artifact (a run written before \
+                     the field existed, or not a rehearsal) — read it with `make r32-hold-verify`"
+                        .to_string(),
+                ),
+            }
         }
     }
 
     lines.push(
         "KRW P&L is deliberately not printed (the `report sample` staging guard): a rehearsal \
-         is not a profitability result. The run's observation.json carries the KRW figure the \
-         runbook asks the operator to log."
+         is not a profitability result. observation.json exists only once the run has a \
+         return_on_risk (after its first exit with risk capital); before that the session's \
+         figures are the deposit and the decision_vs_close rows above, from data_quality.json."
             .to_string(),
     );
     lines

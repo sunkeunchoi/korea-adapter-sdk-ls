@@ -1439,6 +1439,8 @@ pub(crate) fn run_mount() -> anyhow::Result<ExitCode> {
         observations: crate::runner::live::shared::SessionObservations::new(),
         // The ladder holds no book: it starts flat and ends flat.
         inherited_book: None,
+        // The ladder's preflight gates the deposit itself and records none.
+        deposit_krw: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let outcome = runtime.block_on(run_live_session(

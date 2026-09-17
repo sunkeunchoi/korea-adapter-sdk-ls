@@ -142,6 +142,13 @@ pub struct DataQualityReport {
     /// Free-form observations (scrubbed at write time — the one free-text carrier).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observations: Vec<String>,
+    /// The D+2 deposit (t0424 `sunamt1`, integer KRW) the rehearsal's pre-mount probe read
+    /// and gated on. TYPED because it is the one figure the runbook asks the operator to log
+    /// every session, and a note cannot carry it: the write-time scrub redacts any 6+-digit
+    /// run, so a deposit in free text would land as `***`. `None` on the ladder, on a
+    /// backtest, and on a pre-field artifact — absent, not zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_mount_deposit_krw: Option<i64>,
 }
 
 /// One held symbol that produced no usable bar this session (U9, KTD12).
@@ -217,6 +224,7 @@ impl DataQualityReport {
             held_symbol_gaps: Vec::new(),
             rehearsal_divergences: Vec::new(),
             observations: Vec::new(),
+            pre_mount_deposit_krw: None,
         }
     }
 
