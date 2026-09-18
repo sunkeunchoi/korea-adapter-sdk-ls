@@ -585,7 +585,19 @@ cap"). It is re-premised on the stand-down entry instead — TURN-LOG "Governanc
   and one unaided recovery drill (`--rehearsal-clear-trip` and `--rehearsal-book adopt` run from this
   runbook alone). Each session gets a TURN-LOG entry with its divergence.
 - **A rehearsal session beyond that scope is a new queued act**, not something this runbook
-  authorizes. Queue: `rehearsal-attended-sessions-and-acceptance-stand-down`.
+  authorizes. Queue: `rehearsal-attended-sessions-delegated-mount-stand-down` (superseded
+  `rehearsal-attended-sessions-and-acceptance-stand-down` on 2026-09-18).
+- **Recorded bypasses of the attendance gate (dated).** "Never runs unattended" (§ What this lane
+  will never do) is the design rule and stays. Two sessions were nonetheless mounted by
+  **delegation** — the operator delegated the mount to the agent's machine-local driver, which
+  supplies the stdin TTY through a pseudo-terminal, mints the nonce itself and feeds the keepalive
+  automatically — each as a recorded exception scoped to one session: session 1 (2026-09-17,
+  observation-only; TURN-LOG Probe entry, accepted after the fact because nothing was submitted)
+  and session 2 (2026-09-18, order-submitting; TURN-LOG "Governance — paper REHEARSAL session 2
+  mount **DELEGATED** …", recorded **before** the mount). Nothing else is bypassed: the interlock,
+  the nonce TTL, every pre-build precheck, the breaker, the trip sink and the fail-closed teardown
+  run as under an operator; a trip that fires stands until `--rehearsal-clear-trip`. Session 3
+  needs its own recorded decision before any driver mounts it.
 - **Nothing here becomes evidence about the strategy**, whatever the sessions show. A session that
   suggests the strategy is wrong is still only a finding to record, and there is no longer a judgment
   for it to wait for.

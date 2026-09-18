@@ -91,6 +91,59 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — paper REHEARSAL session 2 mount **DELEGATED** to the agent under the recorded R3 bypass: an ORDER-SUBMITTING session will mount with a pseudo-TTY, a driver-minted nonce and an automatic keepalive; recorded BEFORE the act; scope is session 2 only (2026-09-18) — plan `2026-09-08-1215` U12 item 2, queue `rehearsal-attended-sessions-delegated-mount-stand-down`
+
+- **Decision (the operator's, 2026-09-18 morning, before the morning chain and before any
+  mount).** Session 2 of the daily paper REHEARSAL — the first session that submits real paper
+  orders — is mounted by the agent's driver, not by the operator at a terminal. The agent offered
+  two routes: the design's own (operator mounts from a real terminal, agent reads the run
+  afterwards) and delegation with a governance act recorded first. The operator chose delegation.
+- **What the bypass is, precisely.** `RUNBOOK-rehearsal-daily.md` § "What this lane will never do"
+  says the lane **never runs unattended**, and plan R3/R12 gate the mount on a stdin TTY plus a
+  fresh nonce (exit 77) and on the operator keepalive dead-man (90 s). The driver
+  `data/rehearsal-daily/automation/mount-session2.sh` (machine-local, gitignored; sha256
+  `0b2d868d0bd28f9ceba108aaa2087967283586d18c07c29f201e4e4c748a9ea2`) satisfies all three
+  mechanically: `script -q /dev/null` supplies the pseudo-TTY, `LS_DISPATCH_NONCE` is minted at the
+  mount instant, and the keepalive is touched every 30 s. It is the session 1 driver
+  (`mount-session1.sh`, sha256 `2780c5489a4a3cfce92bd19d251ebfdfbc822670a7f3e1394d628d868a07a00e`)
+  minus `--stop-before-orders`, plus two driver-side refusals that leave no node built (no universe
+  file for the day → NO-GO, no mount; a `.tmp-` run marker → no mount) and a disarm switch.
+- **Why this is a governance act and not a shell detail.** Session 1 ran under the same bypass and
+  its Probe entry (directly below) accepted it *only* because that session submitted nothing, and
+  said so: "not to be reused for sessions 2 or 3". Session 2 places 8 marketable limits in the
+  15:30 closing auction and opens legs held 16 sessions, so the same mechanism now covers a
+  different risk and the acceptance has to be taken again. KTD1 of the plan makes a changed
+  decision its own recorded governance act, and the suspend-vs-amend convention
+  (`docs/solutions/conventions/suspend-vs-amend-frozen-governance-artifacts.md`) requires it
+  recorded where the next operator will look, never implied. Hence this entry, dated and
+  committed **before** the mount, and the queue supersede below.
+- **What is NOT bypassed.** Everything mechanical runs exactly as it would under an operator: the
+  paper interlock (66), the nonce TTL (600 s), every pre-build precheck (71: envelope, keepalive
+  present, D+2 deposit ≥ `min_deposit_krw`, the book probe, the 15:15 mount cutoff), the session
+  breaker (`session_max_loss_krw`), the trip sink, the fail-closed teardown and its positive book
+  confirmation. What is removed is a human at the keyboard able to kill the process mid-session.
+  **Accepted consequence:** a trip that fires with nobody present stands until
+  `--rehearsal-clear-trip`, which is U12 item 4's drill in any case; the driver posts a macOS
+  notification at mount and at exit so the operator is reachable, not present.
+- **Scope.** This delegation covers **session 2 only**. Session 3 (the opening-book probe) needs
+  its own recorded decision before any driver mounts it. Nothing about the 2026-09-16 stand-down
+  changes: driver falsification only, `rehearsal: true`, `paper_stage: false`, no rung evidence,
+  and the finite scope of U12 items 2 and 4.
+- **Disarm.** Before 14:50 KST: `touch data/rehearsal-daily/automation/mount-20260918.disarm`, or
+  kill the pid recorded in `mount-20260918.pid`. After the mount the session is the driver's until
+  15:33; stopping the process is the fail-closed teardown either way.
+- **Attribution and signature.** The delegation is the operator's choice; the recording shape
+  (this entry, the queue supersede, the runbook note) and the driver are the agent's. The merge of
+  this entry is the operator's signature. The driver is armed on the same morning, before the
+  merge, so that the session is not lost to review timing — that ordering is itself recorded here.
+- **Queue and docs.** `rehearsal-attended-sessions-and-acceptance-stand-down` — whose title and
+  notes say "attended" and "operator-only" — is superseded by
+  `rehearsal-attended-sessions-delegated-mount-stand-down`, carrying the delegation, its scope and
+  the stand-down boundary in its own notes (the queue has no verb that edits a title or notes).
+  `RUNBOOK-rehearsal-daily.md` § "Under the 2026-09-16 stand-down" re-points to the new row and
+  gains a dated note on the two recorded bypasses; its "never runs unattended" line is left as the
+  design rule it is.
+
 ## Probe — daily paper REHEARSAL session 1 of 3 (`--stop-before-orders`): **clean, exit 0** — the driver mounted, resolved the 15:20 decision (8 quoted, 8 taken), delivered no bar, submitted nothing, and tore down with the book confirmed; but the observation this session exists to make is NOT in any artifact (2026-09-17)
 
 - **Scope.** U12 item 2, session 1, under the 2026-09-16 stand-down: `rehearsal: true`,
