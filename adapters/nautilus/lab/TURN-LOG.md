@@ -91,6 +91,103 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Probe — daily paper REHEARSAL session 2 of 3 (ORDER-SUBMITTING): **ABNORMAL, exit 72** — 8 taken, 8 orders accepted, **7 filled at the close and HELD**, 1 unfilled and canceled; the teardown could not confirm the intended 8-leg book against the 7-leg account, so `book.json` was NOT rewritten; the t8407 decision-vs-close observation landed (8 rows) and two of them disagree with the actual fills; the 7 legs reach session 3 only through the operator's `adopt` (2026-09-18) — queue `rehearsal-attended-sessions-delegated-mount-stand-down`, findings `rehearsal-session2-driver-findings`
+
+- **Scope.** U12 item 2, session 2, under the 2026-09-16 stand-down: `rehearsal: true`,
+  `paper_stage: false`, driver falsification only, no rung evidence. Ran under the delegation
+  recorded in the Governance entry directly below (PR #344, merged `3778bc8` at 09:25 KST — five
+  hours before the mount).
+- **Morning chain — not as automated, twice.** The launchd 10:30 run **STOOD DOWN** (exit 40) at
+  4/352: the ingest hit `IGW00201` at once (the warm cumulative budget spent by 2026-09-17's two
+  ingests and session 1's t8407 sweep) and settled into "3–4 symbols, then a 120 s backoff"; the
+  pace gate extrapolated that into a 15:04 finish and killed a healthy ingest. The 12:30 retry was
+  doomed before it ran: a same-day re-run cannot pass step [5] once the calendar is activated
+  (0-entry diff — the trap of 2026-09-17, bitten a second time). Remedy, machine-local
+  `automation/morning-manual-20260918.sh` under the same `morning.running` lock: restore
+  `state/krx.calendar.json.archive-20260918` → `session-morning.sh --catch-up` (pace gate OFF)
+  11:26–12:52, 352/352, exit 41 — throughput ~1.1 symbols/min until ~12:00, then the budget
+  loosened to ~5.6/min → restore again → the normal run, **GO** at 12:53 (exit 0): universe 352
+  ranked / 345 tradable under `momentum_12x1`, all watermarks at 2026-09-17, book stamped
+  2026-09-17 with 0 legs, 141 min to the cutoff. The credential was never rotated.
+- **Driver swap — a recorded deviation from the Governance entry's hash.** With the universe's
+  arrival uncertain, the v1 driver (sha256 `0b2d868d…`, "refuse at 14:50 if absent") was disarmed
+  at 11:32 by the agent through the disarm file (the log line reads "DISARMED by operator"; it was
+  the agent) and replaced by `mount-session2-v2.sh` (sha256
+  `cdd948bd7997dbbb1762c6e99e4f38b2effe8bedd55be86ee35b80fde0f50762`), which waits for the
+  universe from 14:50 to 15:08 and mounts on the manual chain's "pass 2 exit 0". Nothing bypassed
+  changed. Mounted **14:50:18**, nonce minted at the mount, keepalive fed every 30 s.
+- **Session.** Every pre-build gate passed; node up 14:50:33 (0 orders / 0 positions reconciled;
+  "No mass status from LS-EXEC" as in session 1). Decision **15:20:16**: 8 taken — 000990, 030530,
+  031980, 036540, 064290, 252990, 327260, 437730 — 8 MarketOrders submitted and all **Accepted**
+  within 4 s (venue orders 19451–19468). Fills **15:30:10–15:30:33**, 7 of 8:
+
+  | symbol | qty | fill | decision | t8407 post-auction read |
+  |---|---|---|---|---|
+  | 252990 | 45 | 17,320 | 17,320 | 17,320 |
+  | 000990 | 6 | 126,100 | 127,200 | 126,100 |
+  | 031980 | 4 | 159,900 | 164,500 | 159,900 |
+  | 437730 | 15 | 50,100 | 50,200 | 50,100 |
+  | 327260 | 16 | 48,600 | 48,600 | 48,600 |
+  | 036540 | 86 | **9,020** | 9,030 | 9,030 |
+  | 064290 | 16 | **46,750** | 47,000 | 47,000 |
+  | 030530 | 30 | — | 25,800 | 25,800 |
+
+  030530 never filled; it was the residual `ACCEPTED` order at the 15:33:00 stop and the teardown
+  canceled it (`canceled=true`). Event loop stopped 15:33:20 (the 10 s engine-disconnect timeout,
+  as before), `lab-live` exit **72** at 15:33:25. Finalized: `teardown_retries=0 canceled=true
+  book_confirmed=false trip=None gateway_dispatches_recorded=10`. Run
+  `20260918T055021Z-live-daily-ms-v0`, no `.tmp-` marker, `decisions.jsonl` 352 rows,
+  `performance.json` 7 open trades, no `observation.json` (by design), `inherited-book.json` = the
+  session-1 book (0 legs).
+- **Account (credential-free witness, `make r32-hold-verify`, 15:43 KST).** `held rows =
+  [000990x6, 031980x4, 036540x86, 064290x16, 252990x45, 327260x16, 437730x15]` — exactly the 7
+  fills; `cash=[sunamt=499975575 sunamt1=499976355 tappamt=5228420]`,
+  `deposit=[mnyordableamt=496194255 dps=499976355 d2dps=494747155]`. `d2dps` is down
+  **5,229,200 KRW** from the typed pre-mount `pre_mount_deposit_krw` 499,976,355. Session 2's
+  reason for existing — real paper orders — is met: the account holds 7 legs.
+- **The observation the lane exists for.** Decision price vs the post-auction t8407 read: 5 of 8
+  identical; 000990 −0.865%, 031980 −2.796%, 437730 −0.199% (the read moved to the print). But a
+  second layer only the fills reveal: for 036540 and 064290 the "post-auction" read (9,030;
+  47,000) is **not** the auction print (9,020; 46,750). `read_closes` runs at `auction_end`
+  15:30:00 while the paper server posted the fills over the next 33 s, so for those two the read
+  was still the last continuous trade. The fill is the ground truth; the row's `realized_price`
+  is not it.
+- **Findings (driver falsification — what the lane is for).**
+  1. **Partial-fill teardown.** The teardown compares the *intended* book (8 legs) with the
+     account (7) and reads "not confirmed" → exit 72 and `book.json` untouched, though the 7 legs
+     are real fills the run itself recorded and the unfilled one already carries its typed
+     `unfilled_entry` row. The stale 2026-09-17 stamp now refuses the next mount until `adopt`.
+     Whether a book of *confirmed* fills should be written on this path is the design question.
+  2. **A phantom kill switch.** The ABNORMAL note says "could not positively confirm a **flat**
+     account — the **kill switch is engaged**": on this lane the predicate is the book (the runbook
+     says so), `trip=None`, no `rehearsal/trips.jsonl` exists and nothing was persisted, so
+     `--rehearsal-clear-trip` will find nothing standing (71) while the note sends the operator
+     to it.
+  3. **No AccountState.** 22 × `[ERROR] nautilus_portfolio: Cannot update order: account not
+     found in cache: LS-<acct>` — on every order event and every fill (session 1: 0; it submitted
+     nothing). The adapter never publishes an AccountState, so nautilus's portfolio/position layer
+     was blind for the whole session. The strategy's own fill ledger and the book basis were
+     unaffected; whether any exit or stop path in session 3 reads nautilus positions is the
+     question.
+  4. **Close-read timing** (above): read after the fills settle, or record the fill as
+     `realized_price`.
+  5. **One marketable limit unfilled** (030530, k = 3 ticks, decision = read = 25,800) in the
+     closing auction on the paper server; the frozen mechanism assumes always-fill, so this
+     divergence class has no backtest counterpart. Observe across sessions before designing.
+  6. The morning chain's two traps above; `***` in two `detail` strings for 6-digit prices (the
+     scrub rule again; typed fields intact); `catalog_fingerprint` still empty in the manifest.
+- **Not evidence about the strategy.** Nothing here counts toward any rung's N, and no session
+  count is consumed under the stand-down's finite scope (remaining: session 3, and item 4).
+- **Next — the operator's, and it is exactly item 4's drill.** After 15:40 today (or before 09:00
+  on Monday, but that would stamp Monday as the entry date — today is the true one), from the
+  runbook alone: `lab-live --rehearsal-book adopt --why "<text>"` with
+  `LS_REHEARSAL_UNIVERSE_FILE` = today's universe (the ATR for the 7 derived stops). It will cancel
+  nothing (nothing rests), read the 7 holdings, and admit 7 legs the book never saw — `--why` is
+  mandatory for that. `--rehearsal-clear-trip` has nothing to clear. Session 3 = Monday
+  2026-09-21: the opening-book probe with 7 inherited legs. **Do not `make paper-reset`.**
+- **Queue.** `rehearsal-session2-driver-findings` added (findings 1–5). The rehearsal row stays
+  open (session 3 and item 4 remain).
+
 ## Governance — paper REHEARSAL session 2 mount **DELEGATED** to the agent under the recorded R3 bypass: an ORDER-SUBMITTING session will mount with a pseudo-TTY, a driver-minted nonce and an automatic keepalive; recorded BEFORE the act; scope is session 2 only (2026-09-18) — plan `2026-09-08-1215` U12 item 2, queue `rehearsal-attended-sessions-delegated-mount-stand-down`
 
 - **Decision (the operator's, 2026-09-18 morning, before the morning chain and before any
