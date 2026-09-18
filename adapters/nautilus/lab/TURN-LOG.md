@@ -91,6 +91,46 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Drill — U12 item 4, first attempt: the operator ran `--rehearsal-book adopt` unaided from the runbook and it was **REFUSED (71)** — the closing-auction order 030530 #19452 is still `접수` with 30 unfilled, because a cancel after 15:30 is rejected `01458` (모의투자 장종료) and the adapter classifies that rejection as "already gone" (fail-open); session 2's `canceled=true` was the same false report; the book cannot be adopted before Monday's open (2026-09-18) — queue `rehearsal-cancel-01458-classified-as-gone`
+
+- **What the operator did (the drill, exactly as specified).** At 17:05 KST, from a real terminal
+  and the runbook's Recovery block: `lab-live --rehearsal-book adopt --why "…"` with today's
+  universe file for the ATR. Exit **71**: "the cancel was not confirmed (adapter config error:
+  flat-start gate: 1 open (or unparseable-remaining) order(s) present …) — t0425 still does not
+  read empty after canceling 0 order(s), so the book was not rewritten". Nothing was written and
+  nothing was canceled; the drill's `adopt` half is therefore **not yet complete**, and its
+  `--rehearsal-clear-trip` half still has nothing to clear.
+- **The account, read three times (credential-free t0425, 17:1x KST).** 8 rows, single page:
+  7 × `체결` (the session-2 fills, order numbers 19451–19468) and **#19452 030530 매수 30 @ 25,950
+  `접수`, 체결 0, 미체결 30** — the marketable limit (25,800 + 3 ticks) that the closing auction
+  did not fill is still resting on the paper server, two hours after the close.
+- **Why both cancels reported success.** `nautilus_ls::execution::cancel_all_resting_on`
+  enumerates rows with `ordrem > 0`, sends `CSPAT00801` for each, and on `LsError::ApiError`
+  (a 2xx business rejection, `classify_submit_error` → `SubmitAction::Reject`) marks the order
+  *settled* — "the gateway placed nothing and the order is not resting (already filled / already
+  gone)" — without counting it. A raw, credential-safe replay of that exact cancel
+  (`make raw-probe`, `CSPAT00801` OrgOrdNo 19452 / A030530 / 30) at 17:18 answered
+  `http=200 rsp_cd=01458`: **모의투자 장종료** — the paper venue refuses cancels after the close,
+  a code this repo's order smokes already treat as "retry in-window", never as "gone". So the
+  15:33 teardown's `canceled=true` and adopt's "canceling 0 order(s)" are the same false
+  positive: a venue-closed rejection read as a cancellation. The confirm read that follows in
+  each path (the flat-start gate, same filter) then sees the order and fails closed — which is
+  the only reason this was caught.
+- **Consequence for the lane.** The order is a day order; the paper server should drop it before
+  Monday's open, and until then no `adopt` can pass its confirm gate. Saturday and Sunday are
+  not candidate sessions, so the earliest adoption is **Monday 2026-09-21 before 09:00 KST**
+  (the verb is refused 09:00–15:40), after a t0425 read shows #19452 gone; the 7 legs will then
+  carry `entry_date` 2026-09-21, one session later than the true 2026-09-18 entry — a recorded
+  shift, immaterial to driver falsification. If #19452 survives the weekend, cancel it first
+  in-window (the same verb's cancel pass will then succeed, since the venue accepts cancels from
+  the open). Session 3's mount (the opening-book probe with 7 inherited legs) follows the
+  adoption on the same morning, before 15:15.
+- **Not evidence about the strategy.** Item 4 remains open; session 3 remains open.
+- **Queue.** `rehearsal-cancel-01458-classified-as-gone` added: a cancel answered by a venue-closed
+  business rejection must not be classified as "already gone" — it is *not canceled*, and both
+  the teardown report and `adopt` currently say otherwise. Distinct from, and more severe than,
+  the five findings of the session-2 entry below (its finding 1 assumed the cancel had happened).
+
 ## Probe — daily paper REHEARSAL session 2 of 3 (ORDER-SUBMITTING): **ABNORMAL, exit 72** — 8 taken, 8 orders accepted, **7 filled at the close and HELD**, 1 unfilled and canceled; the teardown could not confirm the intended 8-leg book against the 7-leg account, so `book.json` was NOT rewritten; the t8407 decision-vs-close observation landed (8 rows) and two of them disagree with the actual fills; the 7 legs reach session 3 only through the operator's `adopt` (2026-09-18) — queue `rehearsal-attended-sessions-delegated-mount-stand-down`, findings `rehearsal-session2-driver-findings`
 
 - **Scope.** U12 item 2, session 2, under the 2026-09-16 stand-down: `rehearsal: true`,
